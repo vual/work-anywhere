@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Work Anywhere</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main>
+    <header><div><p class="eyebrow">LOCAL CONTROL PLANE</p><h1>Work Anywhere</h1></div><span id="daemon" class="badge">连接中</span></header>
+    <section class="summary"><div><small>Daemon PID</small><strong id="pid">—</strong></div><div><small>运行时间</small><strong id="uptime">—</strong></div><div><small>Codex 实例</small><strong id="count">—</strong></div></section>
+    <section><div class="section-title"><h2>Codex 实例</h2><button id="refresh">刷新</button></div><div id="instances" class="instances"></div></section>
+    <p id="error" class="error"></p>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

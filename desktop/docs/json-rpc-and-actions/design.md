@@ -1,0 +1,78 @@
+# JSON-RPC multiplexing, conversations, and actions
+
+## Goal and scope
+
+该功能在一个真实 Codex App Server 连接上隔离多个 Desktop/control frontend 的请求 ID，维护会话运行投影，并让审批、问题等 server request 可以由任一已授权 frontend exactly-once 地解决。
+
+## Current architecture and data flow
+
+daemon 解析 JSON-RPC envelope，但对未知方法和字段保持透明。Desktop 请求 ID 改写为：
+
+```text
+wa:d:<desktop-connection>:<sequence>
+```
+
+控制请求 ID 使用：
+
+```text
+wa:c:<control-client>:<sequence>
+```
+
+映射表保留原始 `json.RawMessage` ID，因此字符串和数字 ID 都能原样恢复。App Server response 到达后按前缀路由给原 frontend 并恢复原始 ID；notification 广播给相关 frontend 和控制订阅者。
+
+Turn 通知驱动会话状态：`idle`、`running`、`waiting_action`、`completed`、`failed`、`interrupted`。每个会话维护单调 `sequence` 和 `revision`；控制客户端按 cursor 读取增量，游标不可用时返回 snapshot。
+
+## Initialize virtualization
+
+- 第一个 Desktop `initialize` 发送给真实 App Server，缓存参数和响应；对应 `initialized` 正常转发。
+- 后续 Desktop 重连的 `initialize` 使用缓存 response 本地回答，`initialized` 被 daemon 吸收。
+- capability 参数不同且实例空闲时重启 App Server；运行中则保存最新参数，在安全边界后重启。
+- 多个 frontend 同时等待首次 initialize 时合并到同一次真实 initialize，并分别恢复各自 ID。
+
+## Pending actions
+
+App Server 发出的 server request 被规范化为 `PendingAction`，保留原 method、params 和 request ID，同时发往 Desktop frontend 和本机控制订阅者。Desktop 原始 response 或 `action.resolve` 的第一个有效结果通过锁内状态比较成为唯一结果：
+
+- 首个结果写回 App Server，action 标记 resolved，并广播 `action.resolved`。
+- 后续结果得到 `already_resolved`，不会再次写回 App Server。
+- `serverRequest/resolved`、Turn 完成或中断会清除相关未完成 action。
+
+## Interfaces
+
+已识别的核心官方方法/通知包括 initialize、thread/turn 生命周期、`turn/start`、`turn/interrupt`、model catalog、permission profile 和 server request。未知请求和通知仍转发；未知 notification 只记录 method 名，不因 schema 不认识而断开连接。
+
+## State and persistence
+
+请求 ID 映射和 initialize waiter 只存在内存。会话状态、Turn、timeline event 和 pending action 投影到 SQLite；payload 使用加密列。官方 App Server/官方 session 仍是完整会话的权威来源。
+
+## Security and failure handling
+
+- 控制客户端只有在实例 ready、会话 idle 且没有阻塞 action 时才能开始新 Turn。
+- Desktop 原始请求保持透明，由官方 App Server 决定并发冲突。
+- frontend 断开时移除其未完成 ID 路由；不会把 response 错送给其他连接。
+- 无法识别的 JSON-RPC envelope 返回/记录协议错误，未知业务 method 不作为协议错误。
+
+## Invariants and non-goals
+
+- request ID 在真实 App Server 连接上全局唯一，返回 frontend 时保持原类型和值。
+- action 最多向 App Server提交一次有效 resolution。
+- sequence 和 revision 对同一实例/会话单调递增。
+- 当前不保证把任意未来官方 server request 自动转换为专用 UI；它仍可作为通用 action 转发。
+
+## Code ownership
+
+- `internal/daemon/instance.go`
+- `internal/jsonrpc/message.go`
+- `internal/protocol/types.go`
+- `internal/store/store.go`
+
+## Verification
+
+- 字符串/数字 ID、乱序 response、Desktop/control 命名空间隔离测试。
+- 首次 initialize、重连虚拟化和并发 waiter 测试。
+- 审批抢答、重复 resolution、Turn 完成/中断清理测试。
+- 未知方法/字段 passthrough 测试。
+
+## Documentation update triggers
+
+修改 ID 格式、initialize 规则、会话状态、sequence/revision、action 仲裁、已识别官方方法或未知消息处理时，必须更新本文档及控制面、存储、Bridge 文档。
