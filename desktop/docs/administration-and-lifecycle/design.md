@@ -10,10 +10,10 @@ Bridge 首次需要 daemon 时会隐藏启动 `work-anywhere.exe daemon run`；�
 
 - 当前 SID ACL 的管理 Named Pipe。
 - 随机 `127.0.0.1` 端口上的嵌入式管理 HTTP/WebSocket 服务。
-- 原生 `Shell_NotifyIcon` 托盘图标。
+- 原生 `Shell_NotifyIcon` 托盘图标；图标来自仓库根目录 `waw-app-icon.svg`，构建时优先用 Chrome 原生 SVG 透明背景渲染，缺少 Chrome 时使用透明背景的 `packaging/windows/icon.png` fallback，再编译为 Windows PE icon resource。托盘通过 `LoadImageW` 显式加载 48×48 资源以保证缩放清晰度；最终显示尺寸仍由 Windows 托盘和 DPI 设置决定。
 - 用于托管官方 App Server 的 Windows Job Object。
 
-托盘菜单包括打开管理页、查看实例状态、暂停/恢复本机控制、重启错误实例和退出。管理页展示 daemon、Codex 实例、runtime、日志、连接和诊断状态，不展示聊天 Timeline 或 Prompt 输入。
+托盘菜单包括打开管理页、查看实例状态、暂停/恢复本机控制、重启错误实例和退出。管理页展示同一 `waw-app-icon.svg`、daemon、Codex 实例、runtime、日志、连接和诊断状态，不展示聊天 Timeline 或 Prompt 输入；页面同时将该 SVG 作为浏览器页签 favicon。
 
 ## Interfaces
 
@@ -47,6 +47,8 @@ daemon PID、启动时间、管理端口、一次性 token、session、托盘状
 
 - `internal/daemon/admin.go`
 - `internal/platform/tray/`
+- `internal/daemon/web/`
+- `internal/tools/iconrender/`
 - `internal/platform/process/`
 - `internal/daemon/daemon.go`
 - `internal/cli/process_windows.go`

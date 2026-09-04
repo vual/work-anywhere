@@ -117,6 +117,15 @@ cd D:\CodeSpace\work-anywhere\desktop
 
 The build script uses the pinned Go 1.26.5 toolchain under `desktop\.tools\go-sdk\go`, runs the tests, and produces a single Windows x64 executable.
 
+To create a distributable Windows installer, install Inno Setup 6 and run:
+
+```powershell
+cd D:\CodeSpace\work-anywhere\desktop
+.\scripts\build-installer.ps1 -Version 0.1.0
+```
+
+The installer is written to `desktop\dist\windows-amd64\work-anywhere-setup-0.1.0.exe`. It uses a per-user installation with no administrator privileges, installs under `%LOCALAPPDATA%\Programs\WorkAnywhere`, sets the current user's `CODEX_CLI_PATH`, backs up the previous value, and prompts you to fully exit and restart every ChatGPT Desktop instance after setup. Uninstallation attempts to stop the daemon and restore the previous environment variable, but leaves session and configuration data under `%LOCALAPPDATA%\WorkAnywhere` intact.
+
 ### 2. Run pre-installation checks
 
 ```powershell

@@ -29,6 +29,14 @@ The repository pins Go 1.26.5. Place the Windows x64 SDK at `.tools\go-sdk\go`, 
 
 Output: `dist\windows-amd64\work-anywhere.exe`.
 
+To create a per-user Windows installer, install Inno Setup 6 and run:
+
+```powershell
+.\scripts\build-installer.ps1 -Version 0.1.0
+```
+
+The installer is written to `dist\windows-amd64\work-anywhere-setup-0.1.0.exe`. It installs under `%LOCALAPPDATA%\Programs\WorkAnywhere`, writes the user-level `CODEX_CLI_PATH`, preserves the previous value for uninstall, and prompts you to fully restart ChatGPT Desktop when setup finishes.
+
 ## Try it without installing
 
 ```powershell

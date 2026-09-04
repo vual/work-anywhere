@@ -114,6 +114,15 @@ cd D:\CodeSpace\work-anywhere\desktop
 
 构建脚本使用 `desktop\.tools\go-sdk\go` 中固定的 Go 1.26.5，运行测试后生成 Windows x64 单文件 EXE。
 
+如果需要生成可分发的 Windows 安装包，请先安装 Inno Setup 6，然后执行：
+
+```powershell
+cd D:\CodeSpace\work-anywhere\desktop
+.\scripts\build-installer.ps1 -Version 0.1.0
+```
+
+安装包输出为 `desktop\dist\windows-amd64\work-anywhere-setup-0.1.0.exe`。它使用当前用户安装模式，不需要管理员权限，安装到 `%LOCALAPPDATA%\Programs\WorkAnywhere`，安装阶段自动写入用户级 `CODEX_CLI_PATH`，备份原值，并在完成页提示完全退出后重启所有 ChatGPT Desktop 实例。卸载时会尝试停止 daemon 并恢复原环境变量，但不会删除 `%LOCALAPPDATA%\WorkAnywhere` 中的会话和配置数据。
+
 ### 2. 安装前检查
 
 ```powershell

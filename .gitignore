@@ -93,6 +93,8 @@ coverage.html
 lcov.info
 .coverage
 /desktop/cmd/work-anywhere/rsrc_windows_*.syso
+/desktop/winres/
+/desktop/internal/daemon/web/waw-app-icon.svg
 
 # Framework-generated directories
 .next/

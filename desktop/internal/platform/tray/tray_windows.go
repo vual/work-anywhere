@@ -20,6 +20,8 @@ const (
 	nifMessage    = 0x00000001
 	nifIcon       = 0x00000002
 	nifTip        = 0x00000004
+	imageIcon     = 1
+	trayIconSize  = 48
 	tpmReturnCmd  = 0x0100
 	mfString      = 0x0000
 	mfSeparator   = 0x0800
@@ -79,7 +81,7 @@ var (
 	getMessage          = user32.NewProc("GetMessageW")
 	translateMessage    = user32.NewProc("TranslateMessage")
 	dispatchMessage     = user32.NewProc("DispatchMessageW")
-	loadIcon            = user32.NewProc("LoadIconW")
+	loadImage           = user32.NewProc("LoadImageW")
 	getCursorPos        = user32.NewProc("GetCursorPos")
 	setForegroundWindow = user32.NewProc("SetForegroundWindow")
 	createPopupMenu     = user32.NewProc("CreatePopupMenu")
@@ -110,7 +112,11 @@ func trayLoop(manager Controller, ready func(uintptr, error)) {
 	defer runtime.UnlockOSThread()
 	className, _ := syscall.UTF16PtrFromString("WorkAnywhereTrayWindow")
 	instance, _, _ := getModuleHandle.Call(0)
-	icon, _, _ := loadIcon.Call(0, 32512)
+	icon, _, callErr := loadImage.Call(instance, imageIcon, imageIcon, trayIconSize, trayIconSize, 0)
+	if icon == 0 {
+		ready(0, fmt.Errorf("LoadImageW tray icon: %w", callErr))
+		return
+	}
 	wndProc := syscall.NewCallback(func(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 		switch message {
 		case wmApp + 1:

@@ -14,6 +14,8 @@ desktop/dist/windows-amd64/work-anywhere.exe
 
 一个 EXE 同时包含 Bridge、daemon 和 CLI。版本、commit 和 UTC build date 通过 linker flags 写入；PE resource 保存 file/product version。
 
+Windows 分发安装包由 `scripts/build-installer.ps1` 调用 Inno Setup 6 生成。安装包采用当前用户模式，默认目录为 `%LOCALAPPDATA%\Programs\WorkAnywhere`，不申请管理员权限；安装器在文件复制完成后调用同一个 EXE 的 `install` 命令完成 `CODEX_CLI_PATH` 写入，卸载时调用 `uninstall` 恢复原值。
+
 ## Installation interfaces
 
 ```powershell
@@ -23,6 +25,15 @@ work-anywhere.exe uninstall
 ```
 
 `install` 备份当前用户级 `CODEX_CLI_PATH`，把它指向当前 EXE，并广播 Windows environment change。`uninstall` 恢复备份值。正在运行的 ChatGPT Desktop 不会自动继承新环境，安装/卸载后需要重启相关 Desktop 实例。
+
+安装包构建接口为：
+
+```powershell
+scripts/build-installer.ps1 -Version 0.1.0
+scripts/build-installer.ps1 -Version 0.1.0 -SkipBuild
+```
+
+该接口要求 Windows 环境安装 Inno Setup 6；已安装到非默认目录时通过 `-IsccPath` 指定 `ISCC.exe`。
 
 显式 runtime 覆盖使用 `WORK_ANYWHERE_CODEX_EXE`；`CODEX_REAL_EXE` 仅用于旧 Bridge 兼容。Bridge 启动真实 Codex 时覆盖子进程 `CODEX_CLI_PATH`，避免递归。
 
@@ -70,6 +81,7 @@ work-anywhere.exe uninstall
 - `self-test` 使用当前安装的官方 Codex 成功。
 - 至少使用当前 fixture 版本和一个后续官方版本验证 initialize、未知字段/通知和 fallback。
 - install/uninstall 测试备份、恢复及多 Desktop 实例重启后的路径。
+- 在 Inno Setup 6 环境构建安装包，验证 per-user 安装目录、安装后 `CODEX_CLI_PATH`、完成页重启提示和卸载恢复。
 
 ## Documentation update triggers
 
