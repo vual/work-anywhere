@@ -2,7 +2,7 @@
 
 ## Goal and scope
 
-本机控制面为未来 Relay/Mobile 提供不绑定 Codex 私有 JSON-RPC 细节的稳定入口。V1 只监听本机，并提供 CLI 和诊断管理页；不提供桌面聊天界面，也不直接暴露到公网。
+本机控制面为 Relay/Mobile 提供不绑定 Codex 私有 JSON-RPC 细节的稳定入口。V1 只监听本机，并提供 CLI 和诊断管理页；Remote connector 复用相同 manager 语义后主动出站，不把本机 listener 暴露到公网。
 
 ## Current architecture and data flow
 
@@ -28,6 +28,7 @@ daemon 将控制方法路由到实例 supervisor；Codex driver/能力描述用�
 - catalog：`catalog.models`, `catalog.permissionProfiles`
 - 附件：`attachment.begin`, `attachment.chunk`, `attachment.commit`
 - 流量：`traffic.enable`, `traffic.disable`
+- Remote：`remote.status`, `remote.configure`, `remote.enroll`, `remote.reconnect`, `remote.pair.start/list/resolve/cancel/revoke`
 
 `turn.start` 当前接受 `instanceId`、`threadId`、文字、attachment IDs、model、reasoning effort、approval policy、sandbox policy、client message ID 和 expected revision。附件中的图片被转换为官方 App Server 支持的输入项；调用必须指向已有 thread。
 
@@ -49,8 +50,8 @@ Provider capabilities 当前包含 history、live stream、text/image input、ap
 ## Invariants and non-goals
 
 - 本机控制协议使用版本化 envelope，业务错误使用稳定 code/message，而不是泄露内部 panic。
-- Relay 未来应作为控制客户端接入，不绕过 daemon 直接操作 App Server stdio。
-- V1 管理页不实现聊天、Timeline 或 Prompt UI。
+- Relay 出站连接器通过 scope allowlist 复用本控制语义，不绕过 daemon 直接操作 App Server stdio；当前实现见 [`remote-relay-connector`](../remote-relay-connector/design.md)。
+- 管理页实现 daemon/Relay/配对管理，不实现聊天、Timeline 或 Prompt UI。
 - V1 不实现网络配对、推送通知或移动端身份。
 
 ## Code ownership

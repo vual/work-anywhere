@@ -2,7 +2,7 @@
 
 ## Goal and scope
 
-Desktop daemon 以按需常驻方式运行，通过系统托盘、本机只读管理页和 CLI 提供诊断及安全退出。它不随 Windows 登录自动启动，也不提供聊天显示层。
+Desktop daemon 以按需常驻方式运行，通过系统托盘、本机管理页和 CLI 提供 Relay 配置/配对、诊断及安全退出。它不随 Windows 登录自动启动，也不提供聊天显示层。
 
 ## Current architecture and data flow
 
@@ -13,13 +13,14 @@ Bridge 首次需要 daemon 时会隐藏启动 `work-anywhere.exe daemon run`；�
 - 原生 `Shell_NotifyIcon` 托盘图标；图标来自仓库根目录 `waw-app-icon.svg`，构建时优先用 Chrome 原生 SVG 透明背景渲染，缺少 Chrome 时使用透明背景的 `packaging/windows/icon.png` fallback，再编译为 Windows PE icon resource。托盘通过 `LoadImageW` 显式加载 48×48 资源以保证缩放清晰度；最终显示尺寸仍由 Windows 托盘和 DPI 设置决定。
 - 用于托管官方 App Server 的 Windows Job Object。
 
-托盘菜单包括打开管理页、查看实例状态、暂停/恢复本机控制、重启错误实例和退出。管理页展示同一 `waw-app-icon.svg`、daemon、Codex 实例、runtime、日志、连接和诊断状态，不展示聊天 Timeline 或 Prompt 输入；页面同时将该 SVG 作为浏览器页签 favicon。
+托盘菜单包括打开管理页、查看实例状态、暂停/恢复本机控制、重启错误实例和退出。管理页展示同一 `waw-app-icon.svg`、daemon、Codex 实例、runtime、日志和连接状态，并提供 Relay 配置、enrollment、配对 URI 复制、配对审批/取消/撤销；不展示聊天 Timeline 或 Prompt 输入。页面同时将该 SVG 作为浏览器页签 favicon。
 
 ## Interfaces
 
 - `work-anywhere.exe daemon start|status|stop|force-stop`
 - `work-anywhere.exe ui`
 - 控制方法 `system.status`, `system.ui_url`, `system.control.pause/resume`, `system.shutdown`
+- 管理页通过同一受保护 WebSocket 调用 `remote.configure`, `remote.enroll`, `remote.reconnect`, `remote.pair.*`；配对决定提交后页面显示等待状态，Relay 拒绝时恢复可重试状态。
 - 托盘命令通过 daemon 内部调用执行，与 CLI 使用相同状态约束。
 
 管理页 URL 包含一次性 fragment token。页面通过 exchange 获取 HttpOnly、SameSite session 后清除 fragment；后续状态请求和 WebSocket 连接校验 session、Origin 和 CSRF。

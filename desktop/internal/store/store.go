@@ -243,6 +243,36 @@ func (s *Store) ReadAttachment(id string) (instanceID, mimeType, fileName string
 	return
 }
 
+func (s *Store) PutSetting(key string, value any) error {
+	if key == "" {
+		return errors.New("setting key is required")
+	}
+	encrypted, err := s.Encrypt(value)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`INSERT INTO settings(key,value_encrypted,updated_at) VALUES(?,?,?)
+		ON CONFLICT(key) DO UPDATE SET value_encrypted=excluded.value_encrypted,updated_at=excluded.updated_at`, key, encrypted, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func (s *Store) GetSetting(key string, target any) (bool, error) {
+	var encrypted []byte
+	err := s.db.QueryRow(`SELECT value_encrypted FROM settings WHERE key=?`, key).Scan(&encrypted)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, s.Decrypt(encrypted, target)
+}
+
+func (s *Store) DeleteSetting(key string) error {
+	_, err := s.db.Exec(`DELETE FROM settings WHERE key=?`, key)
+	return err
+}
+
 func loadOrCreateMasterKey(path string) ([]byte, error) {
 	if protected, err := os.ReadFile(path); err == nil {
 		key, unprotectErr := secrets.UnprotectForCurrentUser(protected)

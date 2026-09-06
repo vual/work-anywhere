@@ -12,6 +12,23 @@
     <header><div class="brand"><img src="/waw-app-icon.svg" alt="Work Anywhere icon"><div><p class="eyebrow">LOCAL CONTROL PLANE</p><h1>Work Anywhere</h1></div></div><span id="daemon" class="badge">连接中</span></header>
     <section class="summary"><div><small>Daemon PID</small><strong id="pid">—</strong></div><div><small>运行时间</small><strong id="uptime">—</strong></div><div><small>Codex 实例</small><strong id="count">—</strong></div></section>
     <section><div class="section-title"><h2>Codex 实例</h2><button id="refresh">刷新</button></div><div id="instances" class="instances"></div></section>
+    <section class="panel">
+      <div class="section-title"><div><h2>Relay 连接</h2><p class="meta">配置 Relay 并完成 Desktop 与移动端配对</p></div><span id="relay-connection" class="state">未连接</span></div>
+      <div class="form-grid">
+        <label>Relay 地址<input id="relay-url" type="url" placeholder="http://127.0.0.1:18080"></label>
+        <label>设备名称<input id="relay-name" type="text" placeholder="我的 Desktop"></label>
+        <label class="wide">Enrollment Token<input id="relay-token" type="password" autocomplete="off" placeholder="从 Relay 管理端生成的一次性 token"></label>
+      </div>
+      <div class="actions"><button id="relay-configure">保存地址</button><button id="relay-enroll" class="primary">注册 Desktop</button><button id="relay-reconnect">重新连接</button></div>
+      <div class="relay-meta"><span>设备指纹：<code id="relay-fingerprint">—</code></span><span>设备 ID：<code id="relay-device">—</code></span></div>
+    </section>
+    <section class="panel">
+      <div class="section-title"><div><h2>移动端配对</h2><p class="meta">生成 URI 后交给移动端；移动端提交后在这里批准</p></div><button id="pair-start" class="primary">生成配对 URI</button></div>
+      <label>当前配对 URI<textarea id="pair-uri" rows="4" readonly placeholder="点击“生成配对 URI”"></textarea></label>
+      <div class="actions"><button id="pair-copy">复制 URI</button><button id="pair-refresh">刷新配对状态</button></div>
+      <h3>待处理配对</h3><div id="pair-attempts" class="instances"></div>
+      <h3>已授权设备</h3><div id="pairings" class="instances"></div>
+    </section>
     <p id="error" class="error"></p>
   </main>
   <script src="/app.js"></script>

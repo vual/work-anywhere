@@ -27,7 +27,10 @@ runtime 路径、版本、SHA256 和 resources 只描述本次运行环境，不
 2. `WORK_ANYWHERE_CODEX_EXE`。
 3. 兼容变量 `CODEX_REAL_EXE`。
 4. Bridge 同目录的 `codex-real.exe`。
-5. `%LOCALAPPDATA%` 下已知 Portable/ChatGPT 布局的版本扫描。
+5. `%LOCALAPPDATA%\OpenAI\Codex\bin\<revision>\codex.exe` 和其兼容的用户级缓存副本，按文件修改时间优先尝试较新的版本。
+6. `%LOCALAPPDATA%` 下已知 Portable/ChatGPT 布局的版本扫描。
+
+每个候选不仅要存在，还必须能够执行 `codex.exe --version`。这一步用于跳过 Microsoft Store `WindowsApps` 中普通进程无法直接启动的受保护副本；因此 Store Desktop 可以使用其父进程路径完成发现，但 daemon 会自动采用同版本的用户级可执行副本。
 
 Electron user-data 的发现顺序：
 
@@ -45,7 +48,7 @@ Bridge 将真实路径、版本、SHA256、resources、发现来源、参数、c
 
 ## Security and failure handling
 
-- 候选路径必须存在、是文件且不能等于当前 Bridge 自身。
+- 候选路径必须存在、是文件、不能等于当前 Bridge 自身，并且必须能执行 `--version`。
 - runtime SHA256 用于升级比较和诊断，不是代码签名验证。
 - 未找到真实 Codex 时命令失败，并提示设置 `WORK_ANYWHERE_CODEX_EXE`。
 - Windows 父进程命令行读取仅用于实例发现；V1 的该实现按 Windows x64 进程布局工作。

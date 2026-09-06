@@ -25,7 +25,7 @@ func IsCommand(args []string) bool {
 		return false
 	}
 	switch args[0] {
-	case "daemon", "status", "instance", "conversation", "turn", "action", "catalog", "traffic", "call", "ui", "self-test", "install", "uninstall", "version":
+	case "daemon", "status", "instance", "conversation", "turn", "action", "catalog", "traffic", "remote", "call", "ui", "self-test", "install", "uninstall", "version":
 		return true
 	default:
 		return false
@@ -227,6 +227,62 @@ func parse(args []string) (string, json.RawMessage, bool, error) {
 		if args[1] == "off" {
 			return "traffic.disable", params, true, nil
 		}
+	case "remote":
+		if len(args) < 2 {
+			return "", nil, false, errors.New("remote requires status|configure|enroll|pair|reconnect")
+		}
+		switch args[1] {
+		case "status":
+			return "remote.status", empty, true, nil
+		case "configure":
+			if len(args) < 3 {
+				return "", nil, false, errors.New("remote configure requires relay URL")
+			}
+			enabled := true
+			if len(args) > 3 && args[3] == "off" {
+				enabled = false
+			}
+			params, _ := json.Marshal(map[string]any{"relayUrl": args[2], "enabled": enabled})
+			return "remote.configure", params, true, nil
+		case "enroll":
+			if len(args) < 3 {
+				return "", nil, false, errors.New("remote enroll requires token")
+			}
+			displayName := ""
+			if len(args) > 3 {
+				displayName = strings.Join(args[3:], " ")
+			}
+			params, _ := json.Marshal(map[string]any{"token": args[2], "displayName": displayName})
+			return "remote.enroll", params, true, nil
+		case "reconnect":
+			return "remote.reconnect", empty, true, nil
+		case "pair":
+			if len(args) < 3 {
+				return "", nil, false, errors.New("remote pair requires start|list|approve|reject|cancel|revoke")
+			}
+			switch args[2] {
+			case "start":
+				ttlSeconds := int64(300)
+				if len(args) > 3 {
+					duration, err := time.ParseDuration(args[3])
+					if err != nil {
+						return "", nil, false, err
+					}
+					ttlSeconds = int64(duration.Seconds())
+				}
+				params, _ := json.Marshal(map[string]any{"ttlSeconds": ttlSeconds})
+				return "remote.pair.start", params, true, nil
+			case "list":
+				return "remote.pair.list", empty, true, nil
+			case "approve", "reject", "cancel", "revoke":
+				if len(args) < 4 {
+					return "", nil, false, errors.New("remote pair operation requires pairing ID")
+				}
+				params, _ := json.Marshal(map[string]any{"pairingId": args[3], "approved": args[2] == "approve"})
+				method := map[string]string{"approve": "remote.pair.resolve", "reject": "remote.pair.resolve", "cancel": "remote.pair.cancel", "revoke": "remote.pair.revoke"}[args[2]]
+				return method, params, true, nil
+			}
+		}
 	case "call":
 		if len(args) < 2 {
 			return "", nil, false, errors.New("call requires a control method")
@@ -304,14 +360,12 @@ func startDaemon() error {
 }
 
 func printJSON(value any) error {
-	data, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return err
-	}
-	fmt.Println(string(data))
-	return nil
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(value)
 }
 
 func usage() error {
-	return errors.New("usage: work-anywhere daemon <run|start|status|stop|force-stop> | status | instance <list|get|restart> | conversation list | action list | catalog <models|permissions> | call <method> [json] | ui | install | uninstall | self-test | version")
+	return errors.New("usage: work-anywhere daemon <run|start|status|stop|force-stop> | status | instance <list|get|restart> | conversation list | action list | catalog <models|permissions> | remote <status|configure|enroll|pair|reconnect> | call <method> [json] | ui | install | uninstall | self-test | version")
 }

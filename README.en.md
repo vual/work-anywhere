@@ -17,10 +17,10 @@ The official ChatGPT Codex Desktop remains the only desktop presentation layer; 
 The complete product is organized into three independent modules:
 
 - `desktop`: integrates with the official ChatGPT Codex Desktop, supervises official Codex App Server processes, and exposes local control capabilities.
-- `relay`: will relay encrypted connections, task state, and notifications between Desktop daemons and mobile clients.
+- `relay`: relays encrypted connections, task state, and notifications between Desktop daemons and mobile clients.
 - `mobile`: will display task progress, handle approvals and questions, receive notifications, and continue conversations.
 
-Only **Desktop V1** is currently implemented. Relay and Mobile are not implemented, so the deployment instructions in this document apply only to Windows Desktop.
+**Desktop V1 and the single-node Relay V1 are implemented.** Desktop includes the outbound Relay connector, device enrollment, QR pairing, Noise end-to-end encryption, and the remote-control adapter. Relay can be deployed with Docker Compose and PostgreSQL. The production Mobile application is not implemented; the repository includes a browser Mobile simulator for protocol development only.
 
 ## Current capabilities
 
@@ -38,6 +38,13 @@ Desktop V1 provides:
 - A system tray, local administration page, and command-line control interface.
 - Pre-request fallback to the official Codex executable when the daemon cannot be reached, prioritizing Desktop availability.
 
+Relay V1 provides:
+
+- Ed25519 device authentication, one-time daemon enrollment, explicit QR pairing, and per-edge scopes.
+- Single-node online ciphertext routing, Noise KK end-to-end encryption, and the Desktop remote-control loop.
+- Minimal PostgreSQL persistence, River push jobs, APNs/FCM adapters, health checks, and Prometheus metrics.
+- A Linux container and local Docker Compose deployment; the browser Mobile simulator performs real pairing and encrypted control calls.
+
 ## Architecture
 
 ```text
@@ -53,7 +60,7 @@ Local CLI / Admin page ────────┘                       Desktop
                                       │                      │
                                       └──── official Codex sessions ────┘
 
-Future Mobile ◄──── encrypted connection / notifications ────► Future Relay ◄────► daemon
+Mobile / dev simulator ◄════ Noise E2EE over WSS ════► Relay ◄════ outbound WSS ════► daemon
 ```
 
 `work-anywhere.exe` is a single binary with multiple modes:
@@ -65,7 +72,7 @@ work-anywhere.exe <command>        Local control CLI
 other Codex arguments              Passed through to the real codex.exe
 ```
 
-The production path uses the official App Server stdio JSONL transport. Bridge and daemon communicate through the versioned, length-prefixed WAI1 Named Pipe protocol. The daemon owns JSON-RPC ID isolation, initialize virtualization, approval arbitration, App Server lifecycle, and the local control API.
+The production path uses the official App Server stdio JSONL transport. If Desktop prepends global options such as `-c key=value` before the `app-server` subcommand, the Bridge still recognizes and preserves them. Bridge and daemon communicate through the versioned, length-prefixed WAI1 Named Pipe protocol. The daemon owns JSON-RPC ID isolation, initialize virtualization, approval arbitration, App Server lifecycle, and the local control API.
 
 ## Repository layout
 
@@ -73,6 +80,16 @@ The production path uses the official App Server stdio JSONL transport. Bridge a
 work-anywhere/
 ├─ AGENTS.md                    Development and documentation rules
 ├─ go.work                      Go workspace
+├─ relay/
+│  ├─ cmd/relay/                Relay service, migrations, and enrollment CLI
+│  ├─ cmd/mobile-simulator/     Browser Mobile simulator for development only
+│  ├─ internal/                 Identity, pairing, routing, push, store, and observability
+│  ├─ proto/                    Owner of the Relay V1 Protobuf protocol
+│  ├─ migrations/               PostgreSQL and River migrations
+│  ├─ Dockerfile                Linux container image
+│  ├─ compose.yaml              Single-node local deployment
+│  ├─ README.md                 Relay build, deployment, and integration entrypoint
+│  └─ docs/                     Current Relay design and remaining hardening work
 └─ desktop/
    ├─ cmd/work-anywhere/        Single-binary entry point
    ├─ internal/
@@ -92,6 +109,8 @@ work-anywhere/
 Shared Bridge and daemon business logic is not copied per operating system. OS-specific behavior lives under `desktop/internal/platform/`, while release configuration lives under `desktop/packaging/<platform>/`. Windows x64 is the only runnable target today. macOS and Linux currently provide cross-compilable adapter skeletons only; see the [platform support design](desktop/docs/platform-support/design.md).
 
 ## Installation and deployment
+
+The Windows Desktop installation follows. For Docker/PostgreSQL Relay deployment and Desktop pairing, see [`relay/README.md`](relay/README.md).
 
 ### Requirements
 
@@ -302,7 +321,9 @@ See [`AGENTS.md`](AGENTS.md) for repository development rules and [`desktop/docs
 ## Current limitations
 
 - Runtime support is limited to Windows x64.
-- Relay, Mobile, remote pairing, and mobile push notifications are not implemented.
+- The production Mobile application is not implemented. The browser Mobile simulator is a protocol-development tool, not a production client.
+- Relay includes APNs/FCM providers and River jobs, but live Apple sandbox/FCM project verification requires operator credentials.
+- Relay V1 is single-node and online-only; it does not provide offline commands, multi-node routing, or Work Anywhere user accounts.
 - Codex is the only Provider. Claude Code, OpenCode, Hermes, Pi, and other drivers are not implemented.
 - `CODEX_CLI_PATH` is the currently available Desktop integration point, but it is not guaranteed to remain compatible forever.
 - Experimental WebSocket transport is available only through `app-server --standalone-ws` diagnostics. The production daemon path always uses stdio.

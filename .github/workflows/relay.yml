@@ -1,0 +1,79 @@
+name: relay
+
+on:
+  push:
+    paths:
+      - "relay/**"
+      - "desktop/internal/remote/**"
+      - "desktop/go.mod"
+      - "desktop/go.sum"
+      - "go.work"
+      - "go.work.sum"
+      - ".github/workflows/relay.yml"
+  pull_request:
+    paths:
+      - "relay/**"
+      - "desktop/internal/remote/**"
+      - "desktop/go.mod"
+      - "desktop/go.sum"
+      - "go.work"
+      - "go.work.sum"
+      - ".github/workflows/relay.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+          cache-dependency-path: |
+            relay/go.sum
+            desktop/go.sum
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: "1.57.2"
+      - name: Verify Relay formatting, tests, and vet
+        working-directory: relay
+        run: |
+          test -z "$(gofmt -l .)"
+          go test -race ./...
+          go vet ./...
+      - name: Verify Desktop connector
+        working-directory: desktop
+        run: |
+          test -z "$(gofmt -l internal/remote internal/store internal/daemon internal/cli)"
+          go test ./internal/remote/... ./internal/store/... ./internal/cli/...
+          go test -run '^$' ./internal/daemon
+          go build ./cmd/work-anywhere
+          go vet ./...
+      - name: Verify protocol generation
+        working-directory: relay
+        run: |
+          buf lint
+          buf generate
+          buf generate --template buf.gen.desktop.yaml
+          git diff --exit-code -- gen ../desktop/internal/remote/gen
+      - name: Build production image
+        working-directory: relay
+        run: docker build --tag work-anywhere-relay:test .
+
+  desktop-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+          cache-dependency-path: |
+            desktop/go.sum
+            relay/go.sum
+      - name: Verify Desktop on its supported platform
+        working-directory: desktop
+        run: |
+          go test ./...
+          go vet ./...

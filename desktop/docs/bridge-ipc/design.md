@@ -2,7 +2,7 @@
 
 ## Goal and scope
 
-Bridge 保持 ChatGPT Desktop 看到的接口仍是官方 App Server stdio JSONL，同时把原始消息转送给 daemon。它负责启动协调和安全 fallback，不负责解释业务事件或持久化会话。
+Bridge 保持 ChatGPT Desktop 看到的接口仍是官方 App Server stdio JSONL，同时把原始消息转送给 daemon。它负责启动协调和安全 fallback，不负责解释业务事件或持久化会话。官方 Desktop 可能在 `app-server` 前追加 Codex 全局选项（例如 `-c key=value`）；Bridge 和 daemon 都按子命令位置识别并保留这些选项。
 
 ## Current architecture and data flow
 
@@ -13,7 +13,7 @@ Desktop stdout ◄────────────────────�
 
 Bridge 先发现 runtime/instance，再连接当前用户管理 Pipe。连接失败时隐藏启动 `work-anywhere.exe daemon run` 并在最多五秒内重试。若在任何 Desktop frame 发出前仍失败，则持有实例级 lease 并直通 `codex.exe app-server`；发出过 frame 后连接中断则直接退出，不热切换。
 
-`app-server --standalone-ws` 是诊断兼容模式：Bridge 在随机 loopback 端口启动官方实验性 WebSocket App Server，并在 stdio JSONL 与 WebSocket text frame 之间转发。daemon 正式链路不使用该模式。
+`app-server --standalone-ws` 是诊断兼容模式：Bridge 在随机 loopback 端口启动官方实验性 WebSocket App Server，并在 stdio JSONL 与 WebSocket text frame 之间转发。daemon 正式链路不使用该模式。普通桌面启动即使带有 `-c ... app-server ...` 形式的全局选项，也会进入同一 stdio Bridge 路径。
 
 ## Interfaces
 
@@ -63,7 +63,7 @@ Bridge 只保存本连接需要的 runtime、instance、连接 ID 和“是否�
 - `internal/platform/localipc/`
 - `internal/platform/process/`
 - `internal/protocol/types.go`
-- `internal/codex/invocation.go`
+- `internal/codex/invocation.go`（识别全局选项后的 `app-server` 并规范化监听参数）
 
 ## Verification
 

@@ -23,6 +23,7 @@ func ResolveRuntime(_ []string) (protocol.RuntimeDescriptor, error) {
 	candidates := runtimeCandidates()
 	self, _ := os.Executable()
 	self = paths.CanonicalPath(self)
+	var lastError error
 	for _, candidate := range candidates {
 		candidate.Path = expandPath(candidate.Path)
 		info, err := os.Stat(candidate.Path)
@@ -30,14 +31,22 @@ func ResolveRuntime(_ []string) (protocol.RuntimeDescriptor, error) {
 			continue
 		}
 		digest, _ := fileSHA256(candidate.Path)
+		version := executableVersion(candidate.Path)
+		if version == "" {
+			lastError = fmt.Errorf("cannot execute official Codex at %s", candidate.Path)
+			continue
+		}
 		return protocol.RuntimeDescriptor{
 			RealExecutable: candidate.Path,
-			Version:        executableVersion(candidate.Path),
+			Version:        version,
 			SHA256:         digest,
 			ResourcesDir:   resourcesDirectory(candidate.Path),
 			DiscoveredBy:   candidate.Source,
 			DiscoveredAt:   time.Now().UTC(),
 		}, nil
+	}
+	if lastError != nil {
+		return protocol.RuntimeDescriptor{}, fmt.Errorf("official codex.exe was found but could not be executed: %w; set WORK_ANYWHERE_CODEX_EXE to an accessible copy", lastError)
 	}
 	return protocol.RuntimeDescriptor{}, errors.New("official codex.exe was not found; set WORK_ANYWHERE_CODEX_EXE")
 }
@@ -60,8 +69,37 @@ func runtimeCandidates() []runtimeCandidate {
 	if self, err := os.Executable(); err == nil {
 		result = append(result, runtimeCandidate{filepath.Join(filepath.Dir(self), "codex-real.exe"), "sibling_codex_real"})
 	}
+	result = append(result, scanUserCodex()...)
 	result = append(result, scanPortableCodex()...)
 	return deduplicateCandidates(result)
+}
+
+func scanUserCodex() []runtimeCandidate {
+	local := os.Getenv("LOCALAPPDATA")
+	if local == "" {
+		return nil
+	}
+	binDir := filepath.Join(local, "OpenAI", "Codex", "bin")
+	patterns := []string{
+		filepath.Join(binDir, "*", "codex.exe"),
+		filepath.Join(binDir, "codex.exe"),
+	}
+	var found []runtimeCandidate
+	for _, pattern := range patterns {
+		matches, _ := filepath.Glob(pattern)
+		for _, match := range matches {
+			found = append(found, runtimeCandidate{match, "user_codex_cache"})
+		}
+	}
+	sort.SliceStable(found, func(i, j int) bool {
+		left, leftErr := os.Stat(found[i].Path)
+		right, rightErr := os.Stat(found[j].Path)
+		if leftErr != nil || rightErr != nil {
+			return leftErr == nil
+		}
+		return left.ModTime().After(right.ModTime())
+	})
+	return found
 }
 
 func scanPortableCodex() []runtimeCandidate {

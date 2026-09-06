@@ -113,6 +113,7 @@ local.properties
 # Runtime state and diagnostics
 logs/
 data/
+.local/
 tmp/
 temp/
 *.log

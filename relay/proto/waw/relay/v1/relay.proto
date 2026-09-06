@@ -1,0 +1,261 @@
+syntax = "proto3";
+
+package waw.relay.v1;
+
+option go_package = "github.com/vual/work-anywhere/relay/gen/waw/relay/v1;relayv1";
+
+enum DeviceRole {
+  DEVICE_ROLE_UNSPECIFIED = 0;
+  DEVICE_ROLE_DAEMON = 1;
+  DEVICE_ROLE_MOBILE = 2;
+}
+
+enum TrafficClass {
+  TRAFFIC_CLASS_UNSPECIFIED = 0;
+  TRAFFIC_CLASS_CONTROL = 1;
+  TRAFFIC_CLASS_EVENT = 2;
+  TRAFFIC_CLASS_ATTACHMENT = 3;
+}
+
+enum NotificationHint {
+  NOTIFICATION_HINT_UNSPECIFIED = 0;
+  NOTIFICATION_HINT_GENERIC = 1;
+  NOTIFICATION_HINT_ACTION_REQUIRED = 2;
+  NOTIFICATION_HINT_TURN_COMPLETED = 3;
+}
+
+message ClientFrame {
+  uint32 wire_major = 1;
+  uint32 wire_minor = 2;
+  bytes message_id = 3;
+  oneof body {
+    ClientAuth client_auth = 10;
+    PairJoin pair_join = 11;
+    PairDecision pair_decision = 12;
+    SessionOpen session_open = 13;
+    SessionHandshake session_handshake = 14;
+    SessionData session_data = 15;
+    SessionClose session_close = 16;
+    DeliveryAck delivery_ack = 17;
+    PushRegister push_register = 18;
+    PushUnregister push_unregister = 19;
+    Notify notify = 20;
+    Pong pong = 21;
+    PairStart pair_start = 22;
+    PairCancel pair_cancel = 23;
+    PairRevoke pair_revoke = 24;
+  }
+}
+
+message ServerFrame {
+  uint32 wire_major = 1;
+  uint32 wire_minor = 2;
+  bytes message_id = 3;
+  oneof body {
+    ServerChallenge server_challenge = 10;
+    AuthOk auth_ok = 11;
+    PairHello pair_hello = 12;
+    PairResult pair_result = 13;
+    SessionOpen session_open = 14;
+    SessionHandshake session_handshake = 15;
+    SessionData session_data = 16;
+    SessionClose session_close = 17;
+    RouteAck route_ack = 18;
+    DeliveryAck delivery_ack = 19;
+    ProtocolError protocol_error = 20;
+    Ping ping = 21;
+    PairStarted pair_started = 22;
+    PairRevoked pair_revoked = 23;
+  }
+}
+
+message ServerChallenge {
+  bytes connection_id = 1;
+  bytes challenge = 2;
+  int64 server_time_ms = 3;
+  int64 expires_at_ms = 4;
+}
+
+message ClientAuth {
+  bytes device_id = 1;
+  DeviceRole role = 2;
+  bytes capability_hash = 3;
+  bytes signature = 4;
+}
+
+message AuthOk {
+  bytes device_id = 1;
+  uint64 connection_epoch = 2;
+  int64 server_time_ms = 3;
+}
+
+message PairJoin {
+  bytes pairing_id = 1;
+  bytes mobile_ed25519_public_key = 2;
+  bytes mobile_x25519_public_key = 3;
+  string display_name = 4;
+  bytes proof = 5;
+  bytes capability_hash = 6;
+}
+
+message PairHello {
+  bytes pairing_id = 1;
+  bytes connection_id = 2;
+  bytes challenge = 3;
+  bytes mobile_ed25519_public_key = 4;
+  bytes mobile_x25519_public_key = 5;
+  string display_name = 6;
+  bytes capability_hash = 7;
+  bytes proof = 8;
+  bytes candidate_mobile_device_id = 9;
+}
+
+message PairStart {
+  bytes pairing_id = 1;
+  int64 expires_at_ms = 2;
+}
+
+message PairCancel {
+  bytes pairing_id = 1;
+}
+
+message PairRevoke {
+  bytes pairing_id = 1;
+}
+
+message PairRevoked {
+  bytes pairing_id = 1;
+  int64 revoked_at_ms = 2;
+}
+
+message PairStarted {
+  bytes pairing_id = 1;
+  int64 expires_at_ms = 2;
+}
+
+message PairDecision {
+  bytes pairing_id = 1;
+  bool approved = 2;
+  bytes mobile_device_id = 3;
+  repeated string scopes = 4;
+  int64 grant_expires_at_ms = 5;
+  bytes grant_signature = 6;
+  string reason = 7;
+}
+
+message PairResult {
+  bytes pairing_id = 1;
+  bool approved = 2;
+  bytes daemon_device_id = 3;
+  bytes mobile_device_id = 4;
+  repeated string scopes = 5;
+  bytes daemon_ed25519_public_key = 6;
+  bytes daemon_x25519_public_key = 7;
+  string error_code = 8;
+  bytes grant_signature = 9;
+  int64 grant_expires_at_ms = 10;
+}
+
+message SessionOpen {
+  bytes pairing_id = 1;
+  bytes session_id = 2;
+  bytes recipient_device_id = 3;
+  bytes handshake = 4;
+  bytes sender_device_id = 5;
+}
+
+message SessionHandshake {
+  bytes pairing_id = 1;
+  bytes session_id = 2;
+  bytes recipient_device_id = 3;
+  bytes handshake = 4;
+  bytes sender_device_id = 5;
+}
+
+message SessionData {
+  bytes pairing_id = 1;
+  bytes session_id = 2;
+  bytes recipient_device_id = 3;
+  uint64 sender_sequence = 4;
+  TrafficClass traffic_class = 5;
+  NotificationHint notification_hint = 6;
+  int64 created_at_ms = 7;
+  int64 expires_at_ms = 8;
+  bytes ciphertext = 9;
+  bytes sender_device_id = 10;
+}
+
+message SessionClose {
+  bytes pairing_id = 1;
+  bytes session_id = 2;
+  bytes recipient_device_id = 3;
+  string reason = 4;
+  bytes sender_device_id = 5;
+}
+
+message RouteAck {
+  bytes routed_message_id = 1;
+  bool accepted = 2;
+  string error_code = 3;
+}
+
+message DeliveryAck {
+  bytes delivered_message_id = 1;
+  bytes recipient_device_id = 2;
+  bytes pairing_id = 3;
+  bytes session_id = 4;
+  bytes sender_device_id = 5;
+}
+
+message PushRegister {
+  string platform = 1;
+  string app_id = 2;
+  string environment = 3;
+  string locale = 4;
+  uint64 generation = 5;
+  bytes provider_token = 6;
+}
+
+message PushUnregister {
+  string platform = 1;
+  string app_id = 2;
+  string environment = 3;
+}
+
+message Notify {
+  bytes pairing_id = 1;
+  bytes recipient_device_id = 2;
+  bytes notification_id = 3;
+  NotificationHint hint = 4;
+  string collapse_key = 5;
+  int64 expires_at_ms = 6;
+}
+
+message Ping {
+  int64 sent_at_ms = 1;
+}
+
+message Pong {
+  int64 sent_at_ms = 1;
+}
+
+message ProtocolError {
+  string code = 1;
+  string message = 2;
+  bytes related_message_id = 3;
+}
+
+// EncryptedPayload is serialized and encrypted by the two endpoints. Relay
+// never decodes this message; it is defined here to keep endpoint bindings and
+// cross-language vectors canonical.
+message EncryptedPayload {
+  uint64 sequence = 1;
+  string content_type = 2;
+  int64 created_at_ms = 3;
+  int64 expires_at_ms = 4;
+  bytes body = 5;
+  bytes pairing_id = 6;
+  bytes session_id = 7;
+  bytes sender_device_id = 8;
+  bytes recipient_device_id = 9;
+}

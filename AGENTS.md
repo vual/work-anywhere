@@ -5,7 +5,7 @@
 ## Repository layout
 
 - `desktop/`：Windows Desktop Bridge、daemon、本机控制 API、CLI 和管理入口。
-- `relay/`：预留的 Relay 服务模块；创建该模块时必须同时建立模块文档结构。
+- `relay/`：Relay 服务模块；当前处于方案阶段，运行代码尚未实现。
 - `mobile/`：预留的移动端模块；创建该模块时必须同时建立模块文档结构。
 
 各模块必须保持独立的构建入口、依赖定义、测试和设计文档。跨模块共享协议时，应明确协议的所有者，并在所有消费模块的文档中链接同一份规范，不能复制出互相漂移的版本。
@@ -18,6 +18,8 @@
 - [`README.en.md`](README.en.md)：与根目录简体中文 README 内容对等的英文入口；修改项目介绍、架构、安装或使用方式时必须同步更新两份语言版本。
 - [`desktop/README.md`](desktop/README.md)：Desktop 模块使用、构建和命令入口。
 - [`desktop/docs/README.md`](desktop/docs/README.md)：Desktop 功能设计文档索引、文档归属和维护规则。
+- [`relay/README.md`](relay/README.md)：Relay 模块目标、边界、技术栈和实施入口。
+- [`relay/docs/README.md`](relay/docs/README.md)：Relay 功能设计文档索引、协议归属和实施顺序。
 
 新增顶层模块时必须创建并在本节明确列出：
 
@@ -78,3 +80,16 @@ cd desktop
 .\scripts\build.ps1
 .\dist\windows-amd64\work-anywhere.exe self-test
 ```
+
+## Relay validation
+
+Relay 运行代码建立后，代码或设计变更至少执行：
+
+```bash
+cd relay
+go fmt ./...
+go test ./...
+go vet ./...
+```
+
+`go fmt ./...` 后不能遗留未说明的格式改动。涉及连接注册表、并发路由或网络协议时还必须执行 `go test -race ./...`；涉及数据库、协议 schema 或发布镜像时，还必须执行对应设计文档定义的 migration、Buf compatibility、跨语言协议向量和容器 smoke test。

@@ -22,6 +22,7 @@ import (
 	platformprocess "github.com/hurf/work-anywhere/desktop/internal/platform/process"
 	"github.com/hurf/work-anywhere/desktop/internal/platform/tray"
 	"github.com/hurf/work-anywhere/desktop/internal/protocol"
+	"github.com/hurf/work-anywhere/desktop/internal/remote"
 	"github.com/hurf/work-anywhere/desktop/internal/store"
 	"github.com/hurf/work-anywhere/desktop/internal/traffic"
 )
@@ -47,6 +48,7 @@ type Manager struct {
 	uploadMu       sync.Mutex
 	uploads        map[string]*attachmentUpload
 	traffic        *traffic.Recorder
+	remote         *remote.Service
 	log            *logging.Logger
 }
 
@@ -107,6 +109,15 @@ func Run(ctx context.Context, version string) error {
 		return err
 	}
 	m := &Manager{ctx: ctx, cancel: cancel, version: version, startedAt: time.Now(), listener: listener, job: job, store: stateStore, instances: make(map[string]*Instance), subscribers: make(map[uint64]chan protocol.Event), uploads: make(map[string]*attachmentUpload), traffic: traffic.New(filepath.Join(dataDir, "logs", "traffic")), log: logger}
+	remoteService, err := remote.New(stateStore, m.control, m.subscribe, logger)
+	if err != nil {
+		listener.Close()
+		job.Close()
+		stateStore.Close()
+		return fmt.Errorf("start remote connector: %w", err)
+	}
+	m.remote = remoteService
+	go remoteService.Run(ctx)
 	m.log.Event("daemon.started", map[string]any{"version": version, "pid": os.Getpid()})
 	admin, err := startAdmin(m)
 	if err != nil {
@@ -279,7 +290,7 @@ func (m *Manager) control(request protocol.ControlRequest) protocol.ControlRespo
 	}
 	switch request.Method {
 	case "system.status":
-		response.Result = map[string]any{"version": m.version, "pid": os.Getpid(), "uptimeSeconds": int64(time.Since(m.startedAt).Seconds()), "controlPaused": m.controlPaused.Load(), "instances": m.instanceSnapshots()}
+		response.Result = map[string]any{"version": m.version, "pid": os.Getpid(), "uptimeSeconds": int64(time.Since(m.startedAt).Seconds()), "controlPaused": m.controlPaused.Load(), "instances": m.instanceSnapshots(), "remote": m.remote.Status()}
 	case "system.ui_url":
 		response.Result = map[string]string{"url": m.admin.OneTimeURL()}
 	case "system.control.pause":
@@ -471,6 +482,79 @@ func (m *Manager) control(request protocol.ControlRequest) protocol.ControlRespo
 		enabled := request.Method == "traffic.enable"
 		m.traffic.Set(params.InstanceID, enabled)
 		response.Result = map[string]any{"enabled": enabled, "directory": "logs/traffic/" + params.InstanceID}
+	case "remote.status", "remote.pair.list":
+		response.Result = m.remote.Status()
+	case "remote.configure":
+		var params struct {
+			RelayURL string `json:"relayUrl"`
+			Enabled  bool   `json:"enabled"`
+		}
+		if json.Unmarshal(request.Params, &params) != nil {
+			response.Error = &protocol.ControlError{Code: "invalid_params", Message: "relayUrl and enabled are required"}
+		} else if err := m.remote.Configure(params.RelayURL, params.Enabled); err != nil {
+			response.Error = &protocol.ControlError{Code: "invalid_remote_config", Message: err.Error()}
+		} else {
+			response.Result = m.remote.Status()
+		}
+	case "remote.enroll":
+		var params struct {
+			Token       string `json:"token"`
+			DisplayName string `json:"displayName"`
+		}
+		if json.Unmarshal(request.Params, &params) != nil || params.Token == "" {
+			response.Error = &protocol.ControlError{Code: "invalid_params", Message: "token is required"}
+		} else if err := m.remote.Enroll(m.ctx, params.Token, params.DisplayName); err != nil {
+			response.Error = &protocol.ControlError{Code: "enrollment_failed", Message: err.Error()}
+		} else {
+			response.Result = m.remote.Status()
+		}
+	case "remote.pair.start":
+		var params struct {
+			TTLSeconds int64 `json:"ttlSeconds"`
+		}
+		_ = json.Unmarshal(request.Params, &params)
+		attempt, err := m.remote.StartPairing(time.Duration(params.TTLSeconds) * time.Second)
+		if err != nil {
+			response.Error = &protocol.ControlError{Code: "pairing_failed", Message: err.Error()}
+		} else {
+			response.Result = attempt
+		}
+	case "remote.pair.resolve":
+		var params struct {
+			PairingID string   `json:"pairingId"`
+			Approved  bool     `json:"approved"`
+			Scopes    []string `json:"scopes"`
+		}
+		if json.Unmarshal(request.Params, &params) != nil || params.PairingID == "" {
+			response.Error = &protocol.ControlError{Code: "invalid_params", Message: "pairingId is required"}
+		} else if err := m.remote.ResolvePairing(params.PairingID, params.Approved, params.Scopes); err != nil {
+			response.Error = &protocol.ControlError{Code: "pairing_failed", Message: err.Error()}
+		} else {
+			response.Result = map[string]any{"submitted": true}
+		}
+	case "remote.pair.cancel":
+		var params struct {
+			PairingID string `json:"pairingId"`
+		}
+		_ = json.Unmarshal(request.Params, &params)
+		if err := m.remote.CancelPairing(params.PairingID); err != nil {
+			response.Error = &protocol.ControlError{Code: "pairing_failed", Message: err.Error()}
+		} else {
+			response.Result = map[string]any{"cancelled": true}
+		}
+	case "remote.pair.revoke":
+		var params struct {
+			PairingID string `json:"pairingId"`
+		}
+		_ = json.Unmarshal(request.Params, &params)
+		if err := m.remote.RevokePairing(params.PairingID); err != nil {
+			response.Error = &protocol.ControlError{Code: "revoke_failed", Message: err.Error()}
+		} else {
+			response.Result = map[string]any{"submitted": true}
+		}
+	case "remote.reconnect":
+		m.remote.Reconnect()
+		response.Result = map[string]any{"reconnecting": true}
 	case "system.shutdown":
 		active := 0
 		for _, item := range m.instanceSnapshots() {
@@ -495,7 +579,7 @@ func (m *Manager) control(request protocol.ControlRequest) protocol.ControlRespo
 }
 
 func isMutatingControlMethod(method string) bool {
-	return strings.HasPrefix(method, "turn.") || method == "action.resolve" || method == "instance.restart" || strings.HasPrefix(method, "attachment.") || strings.HasPrefix(method, "traffic.")
+	return strings.HasPrefix(method, "turn.") || method == "action.resolve" || method == "instance.restart" || strings.HasPrefix(method, "attachment.") || strings.HasPrefix(method, "traffic.") || (strings.HasPrefix(method, "remote.") && method != "remote.status" && method != "remote.pair.list")
 }
 
 func (m *Manager) restartErroredInstances() int {

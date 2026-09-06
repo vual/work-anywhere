@@ -11,7 +11,9 @@ work-anywhere.exe <command>         # local control CLI
 
 The bridge preserves Codex App Server JSONL bytes over a per-user ACL-protected Named Pipe. The daemon owns one official App Server process per stable logical Codex profile, multiplexes desktop/control requests, and keeps the process alive when the desktop window closes.
 
-The normal path uses the official stdio transport. `--standalone-ws` is retained only for diagnostics against Codex's experimental WebSocket transport; it is not used by the daemon architecture.
+The normal path uses the official stdio transport. The bridge recognizes `app-server` even when ChatGPT prepends global Codex options such as `-c key=value`. `--standalone-ws` is retained only for diagnostics against Codex's experimental WebSocket transport; it is not used by the daemon architecture.
+
+The daemon also contains an optional outbound Relay connector. It performs device enrollment, explicit QR-URI pairing, Noise end-to-end encryption, remote scope enforcement, event forwarding, and generic push hints without exposing the local Pipe or administration listener.
 
 Shared Bridge/daemon logic lives under `internal/`; operating-system adapters live under `internal/platform/`, and installer/signing assets belong under `packaging/<platform>/`. Windows x64 is the only currently supported runtime target. See the [platform support design](docs/platform-support/design.md) for the current capability matrix.
 
@@ -47,6 +49,8 @@ $env:WORK_ANYWHERE_CODEX_EXE = 'C:\path\to\official\resources\codex.exe'
 .\dist\windows-amd64\work-anywhere.exe ui
 ```
 
+管理页直接提供 Relay 地址、Desktop 注册、重新连接、生成/复制移动端配对 URI、批准/拒绝配对请求和撤销已授权设备。CLI 命令仍保留，适合脚本、无界面环境和诊断。
+
 ## Install for ChatGPT Desktop
 
 ```powershell
@@ -73,6 +77,11 @@ turn interrupt <instance-id> <thread-id> <turn-id>
 action list [instance-id]
 action resolve <instance-id> <request-id> <json-result>
 catalog models|permissions [instance-id]
+remote status
+remote configure <https-origin> [off]
+remote enroll <token> [display-name]
+remote pair start [ttl]|list|approve|reject|cancel|revoke
+remote reconnect
 traffic on|off <instance-id>
 call <control-method> [json-params]
 ui

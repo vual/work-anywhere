@@ -1,0 +1,9 @@
+.tools/
+dist/
+.local/
+.git/
+docs/
+scripts/
+**/*_test.go
+*.md
+.env

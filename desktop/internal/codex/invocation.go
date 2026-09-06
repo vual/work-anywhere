@@ -12,11 +12,12 @@ import (
 )
 
 func IsPlainAppServer(args []string) bool {
-	if len(args) == 0 || !strings.EqualFold(args[0], "app-server") {
+	index := appServerIndex(args)
+	if index < 0 {
 		return false
 	}
-	if len(args) > 1 {
-		switch strings.ToLower(args[1]) {
+	if index+1 < len(args) {
+		switch strings.ToLower(args[index+1]) {
 		case "generate-json-schema", "generate-ts", "daemon":
 			return false
 		}
@@ -26,21 +27,35 @@ func IsPlainAppServer(args []string) bool {
 
 func AppServerArgs(original []string) []string {
 	args := append([]string(nil), original...)
-	if len(args) == 0 || !strings.EqualFold(args[0], "app-server") {
+	index := appServerIndex(args)
+	if index < 0 {
 		args = append([]string{"app-server"}, args...)
+		index = 0
 	}
-	filtered := args[:0]
+	filtered := make([]string, 0, len(args)+2)
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--listen" && i+1 < len(args) {
+		if i > index && args[i] == "--listen" && i+1 < len(args) {
 			i++
 			continue
 		}
-		if strings.HasPrefix(args[i], "--listen=") {
+		if i > index && strings.HasPrefix(args[i], "--listen=") {
 			continue
 		}
 		filtered = append(filtered, args[i])
 	}
 	return append(filtered, "--listen", "stdio://")
+}
+
+// appServerIndex returns the position of the app-server subcommand. Codex
+// accepts global options before the subcommand (for example, `-c key=value
+// app-server`), so checking args[0] is not sufficient for desktop launches.
+func appServerIndex(args []string) int {
+	for index, arg := range args {
+		if strings.EqualFold(arg, "app-server") {
+			return index
+		}
+	}
+	return -1
 }
 
 func RunPassthrough(ctx context.Context, runtime protocol.RuntimeDescriptor, args []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {

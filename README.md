@@ -17,7 +17,7 @@ Work Anywhere(WAW) 的目标是让你在手机上也能实时与电脑端 ChatGP
 - `relay`：在 Desktop daemon 与移动端之间中继加密连接、状态和通知。
 - `mobile`：查看任务进度、处理审批/问题、接收通知并继续输入。
 
-目前只有 **Desktop V1** 已实现，Relay 和 Mobile 尚未实现，本文的安装部署步骤因此仅适用于 Windows Desktop。
+**Desktop V1 与单节点 Relay V1 已实现**。Desktop 已包含 Relay 出站连接、设备注册、二维码配对、Noise 端到端加密和远程控制适配；Relay 可使用 Docker Compose 与 PostgreSQL 部署。Mobile 正式应用尚未实现，仓库提供仅用于协议和联调的浏览器 Mobile simulator。
 
 ## 当前能力
 
@@ -35,6 +35,13 @@ Desktop V1 提供：
 - 系统托盘、本机管理页和命令行控制工具。
 - daemon 无法在请求前建立连接时直通官方 Codex，优先保证 Desktop 可用。
 
+Relay V1 提供：
+
+- Ed25519 设备认证、一次性 daemon enrollment、显式二维码配对和逐边 scope。
+- 单节点在线密文路由、Noise KK 端到端加密和 Desktop remote control 闭环。
+- PostgreSQL 最小持久化、River push job、APNs/FCM adapters、健康检查和 Prometheus 指标。
+- Linux container 与本机 Docker Compose 部署；开发浏览器 Mobile simulator 可完成真实配对和加密调用。
+
 ## 总体架构
 
 ```text
@@ -50,7 +57,7 @@ Local CLI / Admin page ────────┘                       Desktop
                                       │                      │
                                       └──── official Codex sessions ────┘
 
-Future Mobile ◄──── encrypted connection / notifications ────► Future Relay ◄────► daemon
+Mobile / dev simulator ◄════ Noise E2EE over WSS ════► Relay ◄════ outbound WSS ════► daemon
 ```
 
 `work-anywhere.exe` 是一个多模式单文件程序：
@@ -62,7 +69,7 @@ work-anywhere.exe <command>        本机控制 CLI
 其他 Codex 参数                    透传给真实 codex.exe
 ```
 
-正式链路使用官方 App Server 的 stdio JSONL。Bridge 与 daemon 之间使用带版本和长度前缀的 WAI1 Named Pipe 协议；daemon 负责 JSON-RPC ID 隔离、初始化虚拟化、审批仲裁、App Server 生命周期和本机控制 API。
+正式链路使用官方 App Server 的 stdio JSONL。官方 Desktop 在 `app-server` 前附加 `-c key=value` 等全局参数时，Bridge 仍能正确识别并保留这些参数。Bridge 与 daemon 之间使用带版本和长度前缀的 WAI1 Named Pipe 协议；daemon 负责 JSON-RPC ID 隔离、初始化虚拟化、审批仲裁、App Server 生命周期和本机控制 API。
 
 ## 仓库结构
 
@@ -70,6 +77,16 @@ work-anywhere.exe <command>        本机控制 CLI
 work-anywhere/
 ├─ AGENTS.md                    项目开发与文档维护规则
 ├─ go.work                      Go workspace
+├─ relay/
+│  ├─ cmd/relay/                Relay 服务、迁移和 enrollment CLI
+│  ├─ cmd/mobile-simulator/     仅用于联调的浏览器 Mobile simulator
+│  ├─ internal/                 身份、配对、路由、推送、存储与观测
+│  ├─ proto/                    Relay V1 Protobuf 协议所有者
+│  ├─ migrations/               PostgreSQL 与 River migration
+│  ├─ Dockerfile                Linux 容器镜像
+│  ├─ compose.yaml              单节点本机部署
+│  ├─ README.md                 Relay 构建、部署和联调入口
+│  └─ docs/                     Relay 当前实现设计与剩余加固项
 └─ desktop/
    ├─ cmd/work-anywhere/        单 EXE 入口
    ├─ internal/
@@ -89,6 +106,8 @@ work-anywhere/
 共享 Bridge/daemon 业务逻辑不按操作系统复制。系统差异集中在 `desktop/internal/platform/`，发行配置集中在 `desktop/packaging/<platform>/`。当前只有 Windows x64 可运行；macOS/Linux 仅有可交叉编译的适配骨架，详情见[平台支持设计](desktop/docs/platform-support/design.md)。
 
 ## 安装部署
+
+Desktop 的 Windows 安装如下。Relay 的 Docker/PostgreSQL 部署和 Desktop 配对步骤见 [`relay/README.md`](relay/README.md)。
 
 ### 环境要求
 
@@ -299,7 +318,9 @@ cd D:\CodeSpace\work-anywhere\desktop
 ## 当前限制
 
 - 运行支持仅限 Windows x64。
-- Relay、Mobile、远程配对和移动推送尚未实现。
+- Mobile 正式应用尚未实现；浏览器 Mobile simulator 仅用于协议联调，不是生产客户端。
+- Relay 已实现 APNs/FCM provider 和 River 队列，但真实 Apple sandbox/FCM 项目验证需要部署者提供凭据。
+- Relay V1 只支持单节点在线路由，不提供离线命令、多节点路由或 Work Anywhere 用户账号。
 - 当前只有 Codex Provider；Claude Code、OpenCode、Hermes、Pi 等 driver 尚未实现。
 - `CODEX_CLI_PATH` 是当前可用的 Desktop 接入点，但不保证官方永久保持兼容。
 - 实验性 WebSocket 仅由 `app-server --standalone-ws` 用于诊断，正式 daemon 链路始终使用 stdio。

@@ -1,0 +1,173 @@
+package remote
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/hurf/work-anywhere/desktop/internal/protocol"
+	relayv1 "github.com/hurf/work-anywhere/desktop/internal/remote/gen/waw/relay/v1"
+)
+
+type memorySettings struct {
+	mu     sync.Mutex
+	values map[string][]byte
+}
+
+func (m *memorySettings) PutSetting(key string, value any) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	data, err := json.Marshal(value)
+	if err == nil {
+		m.values[key] = data
+	}
+	return err
+}
+func (m *memorySettings) GetSetting(key string, target any) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	data := m.values[key]
+	if data == nil {
+		return false, nil
+	}
+	return true, json.Unmarshal(data, target)
+}
+func (m *memorySettings) DeleteSetting(key string) error {
+	m.mu.Lock()
+	delete(m.values, key)
+	m.mu.Unlock()
+	return nil
+}
+
+type discardLog struct{}
+
+func (discardLog) Event(string, map[string]any) {}
+
+func TestConfigureAndEnrollPersistsSecureIdentity(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/enroll/daemon" {
+			http.NotFound(w, request)
+			return
+		}
+		body, _ := io.ReadAll(request.Body)
+		if string(body) == "" || json.Valid(body) == false {
+			t.Fatal("invalid enrollment request")
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"deviceId":"fb6a9823-2632-49ab-a2e7-3df33890c179"}`))
+	}))
+	defer server.Close()
+	settings := &memorySettings{values: make(map[string][]byte)}
+	events := make(chan protocol.Event)
+	service, err := New(settings, func(request protocol.ControlRequest) protocol.ControlResponse {
+		return protocol.ControlResponse{Type: "response", ID: request.ID}
+	}, func() (<-chan protocol.Event, func()) { return events, func() {} }, discardLog{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = service.Configure(server.URL, false); err != nil {
+		t.Fatal(err)
+	}
+	if err = service.Enroll(context.Background(), "one-time-token", "desktop"); err != nil {
+		t.Fatal(err)
+	}
+	var state persistedState
+	found, err := settings.GetSetting(remoteStateKey, &state)
+	if err != nil || !found || len(state.Ed25519Private) != 64 || len(state.X25519Private) != 32 || state.DeviceID == "" {
+		t.Fatalf("identity was not persisted: found=%v state=%+v err=%v", found, state, err)
+	}
+	status := service.Status()
+	encoded, _ := json.Marshal(status)
+	if string(encoded) == "" || containsBytes(encoded, state.Ed25519Private) || containsBytes(encoded, state.X25519Private) {
+		t.Fatal("status exposed a private key")
+	}
+}
+
+func TestQRRoundTripAndScopeAllowlist(t *testing.T) {
+	payload := QRPayload{RelayURL: "https://relay.example", PairingID: "fb6a9823-2632-49ab-a2e7-3df33890c179", Secret: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", DaemonDeviceID: "bbab77cb-2e66-48bc-b72b-b817a4c3f3ab", ExpiresAtMS: time.Now().Add(time.Minute).UnixMilli()}
+	uri, err := payload.URI()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, secret, err := ParseQR(uri)
+	if err != nil || restored.PairingID != payload.PairingID || len(secret) != 32 {
+		t.Fatalf("QR roundtrip failed: restored=%+v err=%v", restored, err)
+	}
+	if !scopeAllows([]string{"turn.start"}, "turn.start") || scopeAllows([]string{"turn.start"}, "system.shutdown") {
+		t.Fatal("remote method allowlist is incorrect")
+	}
+}
+
+func TestPairingAttemptExpiryClearsSecret(t *testing.T) {
+	attempt := &PairAttempt{ID: "expired", ExpiresAt: time.Now().Add(10 * time.Millisecond), secret: []byte{1, 2, 3}, MobileEd25519: []byte{4}}
+	service := &Service{ctx: context.Background(), attempts: map[string]*PairAttempt{attempt.ID: attempt}}
+	go service.expireAttempt(attempt)
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		service.mu.RLock()
+		_, exists := service.attempts[attempt.ID]
+		service.mu.RUnlock()
+		if !exists {
+			if attempt.secret != nil || attempt.MobileEd25519 != nil {
+				t.Fatal("expired pairing material was not cleared")
+			}
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("expired pairing attempt was not removed")
+}
+
+func TestApprovedPairingResultIsValidatedBeforeAttemptIsCleared(t *testing.T) {
+	id := uuid.New()
+	signature := []byte{1, 2, 3}
+	attempt := &PairAttempt{ID: id.String(), MobileDeviceID: uuid.NewString(), MobileDisplayName: "mobile", MobileEd25519: []byte{4}, MobileX25519: []byte{5}, MobileCapability: []byte{6}, grantedScopes: []string{"status.read"}, grantExpiresAtMS: 42, grantSignature: append([]byte(nil), signature...)}
+	settings := &memorySettings{values: make(map[string][]byte)}
+	service := &Service{store: settings, attempts: map[string]*PairAttempt{id.String(): attempt}, state: persistedState{Pairings: make(map[string]Pairing)}}
+	result := &relayv1.PairResult{PairingId: id[:], Approved: true, Scopes: []string{"status.read"}, GrantExpiresAtMs: 42, GrantSignature: signature}
+	if err := service.handlePairResult(result); err != nil {
+		t.Fatal(err)
+	}
+	pairing, exists := service.state.Pairings[id.String()]
+	if !exists || len(pairing.MobileEd25519) != 1 || len(pairing.MobileX25519) != 1 || attempt.secret != nil || attempt.grantSignature != nil {
+		t.Fatalf("approved pairing was not persisted safely: exists=%v pairing=%+v", exists, pairing)
+	}
+}
+
+func TestRejectedPairingRouteAckAllowsRetry(t *testing.T) {
+	id := uuid.NewString()
+	attempt := &PairAttempt{ID: id, decisionSubmitted: true, decisionMessageID: []byte{1, 2, 3}, grantedScopes: []string{"status.read"}, grantExpiresAtMS: 42, grantSignature: []byte{4}}
+	service := &Service{attempts: map[string]*PairAttempt{id: attempt}}
+	if err := service.handleRouteAck(&relayv1.RouteAck{Accepted: false, RoutedMessageId: []byte{1, 2, 3}, ErrorCode: "invalid_pairing_decision"}); err != nil {
+		t.Fatal(err)
+	}
+	if attempt.decisionSubmitted || attempt.decisionMessageID != nil || attempt.grantedScopes != nil || attempt.grantExpiresAtMS != 0 || attempt.grantSignature != nil {
+		t.Fatalf("rejected route ack did not reset attempt: %+v", attempt)
+	}
+}
+
+func containsBytes(haystack, needle []byte) bool {
+	if len(needle) == 0 || len(haystack) < len(needle) {
+		return false
+	}
+	for index := 0; index <= len(haystack)-len(needle); index++ {
+		match := true
+		for offset := range needle {
+			if haystack[index+offset] != needle[offset] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Work Anywhere Mobile Simulator</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main>
+    <h1>Mobile Simulator</h1>
+    <p class="muted">仅用于本机协议联调。粘贴 Desktop 生成的 <code>waw://pair</code> URI，随后在 Desktop CLI 批准配对。</p>
+    <section>
+      <h2>配对</h2>
+      <textarea id="pair-uri" rows="5" placeholder="waw://pair?..." spellcheck="false"></textarea>
+      <button id="pair">连接并等待批准</button>
+      <pre id="status"></pre>
+    </section>
+    <section>
+      <h2>远程控制调用</h2>
+      <input id="method" value="system.status" aria-label="method">
+      <textarea id="params" rows="7" spellcheck="false">{}</textarea>
+      <button id="call">发送</button>
+      <pre id="result"></pre>
+    </section>
+    <section>
+      <h2>事件</h2>
+      <pre id="events"></pre>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
