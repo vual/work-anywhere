@@ -18,7 +18,7 @@ The complete product is organized into three independent modules:
 
 - `desktop`: integrates with the official ChatGPT Codex Desktop, supervises official Codex App Server processes, and exposes local control capabilities.
 - `relay`: relays encrypted connections, task state, and notifications between Desktop daemons and mobile clients.
-- `mobile`: displays task progress, handles approvals and questions, and continues conversations; the Android-first Flutter/Go Core implementation is underway and remains pre-release.
+- `mobile`: displays task progress, handles approvals and questions, and continues conversations; the Android-first Flutter/Go Core, pairing flow, and workspace are established but remain pre-release.
 
 **Desktop V1 and the single-node Relay V1 are implemented.** Desktop includes the outbound Relay connector, device enrollment, scannable QR pairing, Noise end-to-end encryption, and the Mobile control adapter. Relay can be deployed with Docker Compose and PostgreSQL. Mobile now has an Android-first Flutter app, Go endpoint core, Pigeon/Keystore host, and tester-APK CI, but physical-device, iOS, push, complete DTO, and release validation remain incomplete. The browser Mobile simulator is still only for protocol development.
 
@@ -118,7 +118,7 @@ Shared Bridge and daemon business logic is not copied per operating system. OS-s
 
 ## Installation and deployment
 
-The Windows Desktop installation follows. For Docker/PostgreSQL Relay deployment and Desktop pairing, see [`relay/README.md`](relay/README.md).
+The Windows Desktop installation follows. For Docker/PostgreSQL Relay deployment, Desktop pairing, and Mobile integration, see [`relay/README.md`](relay/README.md); for Mobile build and verification, see [`mobile/README.md`](mobile/README.md).
 
 ### Requirements
 
@@ -202,6 +202,20 @@ $wa = 'D:\CodeSpace\work-anywhere\desktop\dist\windows-amd64\work-anywhere.exe'
 ```
 
 The daemon starts on demand. It does not configure Windows login startup and does not exit automatically when Desktop closes or becomes idle. `ui` opens a local administration page bound only to `127.0.0.1`.
+
+### Relay and Mobile integration
+
+After installing Desktop, use Relay and the Android-first Mobile test client to verify the remote path:
+
+```powershell
+cd D:\CodeSpace\work-anywhere\relay
+Copy-Item .env.example .env
+# Generate RELAY_DATA_KEY as described in relay/README.md, then start Relay.
+docker compose up --build -d
+docker compose exec relay /relay enrollment create --ttl 24h --uses 1
+```
+
+Configure the Relay origin in the Desktop administration page, generate a pairing QR code, scan it in the Mobile app, and approve the pending pairing from Desktop. See [`relay/README.md`](relay/README.md) and [`mobile/README.md`](mobile/README.md) for the full commands, device-network requirements, and troubleshooting. Mobile is still a test client and is not ready for production release.
 
 ## Usage
 

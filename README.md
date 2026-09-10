@@ -15,7 +15,7 @@ Work Anywhere(WAW) 的目标是让你在手机上也能实时与电脑端 ChatGP
 
 - `desktop`：连接官方 ChatGPT Codex Desktop，托管官方 Codex App Server，并提供本机控制能力。
 - `relay`：在 Desktop daemon 与移动端之间中继加密连接、状态和通知。
-- `mobile`：查看任务进度、处理审批/问题并继续输入；Android-first Flutter/Go Core 已开始实现，当前仍处于未发布的测试前阶段。
+- `mobile`：查看任务进度、处理审批/问题并继续输入；Android-first Flutter/Go Core、配对流程和工作台已建立，当前仍处于未发布的测试前阶段。
 
 **Desktop V1 与单节点 Relay V1 已实现**。Desktop 已包含 Relay 出站连接、设备注册、真实二维码配对、Noise 端到端加密和 Mobile control adapter；Relay 可使用 Docker Compose 与 PostgreSQL 部署。Mobile 已建立 Android-first Flutter 应用、Go endpoint core、Pigeon/Keystore host 和 tester APK CI，但真机、iOS、push、完整 DTO 与发布验收尚未完成；浏览器 Mobile simulator 仍仅用于协议联调。
 
@@ -115,7 +115,7 @@ work-anywhere/
 
 ## 安装部署
 
-Desktop 的 Windows 安装如下。Relay 的 Docker/PostgreSQL 部署和 Desktop 配对步骤见 [`relay/README.md`](relay/README.md)。
+Desktop 的 Windows 安装如下。Relay 的 Docker/PostgreSQL 部署、Desktop 配对和 Mobile 联调步骤见 [`relay/README.md`](relay/README.md)；Mobile 的构建与验证步骤见 [`mobile/README.md`](mobile/README.md)。
 
 ### 环境要求
 
@@ -199,6 +199,20 @@ $wa = 'D:\CodeSpace\work-anywhere\desktop\dist\windows-amd64\work-anywhere.exe'
 ```
 
 daemon 默认按需启动，不配置 Windows 登录自启动，也不会因 Desktop 窗口关闭或空闲而自动退出。`ui` 会打开仅监听 `127.0.0.1` 的本机管理页。
+
+### Relay 与 Mobile 联调
+
+完成 Desktop 安装后，可使用 Relay 和 Android-first Mobile 测试客户端验证远程链路：
+
+```powershell
+cd D:\CodeSpace\work-anywhere\relay
+Copy-Item .env.example .env
+# 按 relay/README.md 生成 RELAY_DATA_KEY 后启动
+docker compose up --build -d
+docker compose exec relay /relay enrollment create --ttl 24h --uses 1
+```
+
+然后在 Desktop 管理页配置 Relay 地址并生成配对二维码，在 Mobile 应用中扫码，回到 Desktop 批准配对。完整命令、真机网络要求和故障排查见 [`relay/README.md`](relay/README.md) 与 [`mobile/README.md`](mobile/README.md)。当前 Mobile 仍是测试客户端，不能作为生产应用发布。
 
 ## 使用方式
 

@@ -1,6 +1,6 @@
 # Work Anywhere Relay
 
-> 状态：单节点 Relay V1 已实现。正式 Mobile 应用尚未实现；`cmd/mobile-simulator` 只用于开发联调。
+> 状态：单节点 Relay V1 已实现。Android-first Mobile 测试客户端已建立，但尚未完成真机 E2E、平台安全存储、推送和生产发布验收；`cmd/mobile-simulator` 仍只用于协议联调。
 
 Relay 位于 Desktop daemon 与 Mobile 之间，提供公网设备注册、二维码配对、在线密文路由和 APNs/FCM 通知。它不运行 Codex，也不保存或解密 Prompt、消息、工具输出、diff、审批内容和附件正文。
 
@@ -24,7 +24,7 @@ Desktop daemon ◄════ Noise_KK E2EE remote session ════► Mobi
 - River 持久化通用 APNs/FCM 通知任务；通知不包含会话正文。
 - 单节点、在线命令模式。daemon 离线时不排队执行 Turn、审批或中断。
 
-V1 不提供 Work Anywhere 用户账号、多节点路由、离线命令 mailbox、网页聊天或生产 Mobile 客户端。
+V1 不提供 Work Anywhere 用户账号、多节点路由、离线命令 mailbox、网页聊天或生产 Mobile 客户端。当前 Mobile 客户端只能继续 Desktop 已存在的 Codex thread；新增 thread、完整 action/catalog DTO 和正式发布仍不在已验收范围内。
 
 ## 技术栈
 
