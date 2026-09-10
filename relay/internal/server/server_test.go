@@ -141,6 +141,18 @@ func TestAuthenticatedConnectionsRouteCiphertext(t *testing.T) {
 	}
 }
 
+func TestOversizedCiphertextReturnsPayloadTooLarge(t *testing.T) {
+	recipient := uuid.New()
+	pairing := uuid.New()
+	frame := &relayv1.ClientFrame{Body: &relayv1.ClientFrame_SessionData{SessionData: &relayv1.SessionData{
+		PairingId: pairing[:], RecipientDeviceId: recipient[:], ExpiresAtMs: time.Now().Add(time.Minute).UnixMilli(), Ciphertext: make([]byte, waProtocol.MaxPayloadBytes+1),
+	}}}
+	_, _, _, err := forwardedFrame(uuid.New(), frame)
+	if !errors.Is(err, errPayloadTooLarge) {
+		t.Fatalf("expected payload_too_large sentinel, got %v", err)
+	}
+}
+
 func TestPairingCreatesSignedMobileIdentity(t *testing.T) {
 	state := &fakeStore{devices: make(map[uuid.UUID]store.Device)}
 	daemon := newTestDevice(t, relayv1.DeviceRole_DEVICE_ROLE_DAEMON)

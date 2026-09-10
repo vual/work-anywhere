@@ -1,0 +1,28 @@
+{
+  "type": "design",
+  "designSystems": [],
+  "primaryDesignSystem": null,
+  "assets": {
+    "WAW Mobile high-fidelity prototype": {
+      "versions": [
+        {
+          "path": "index.html",
+          "createdAt": "2026-09-08T08:39:23.895Z",
+          "status": "needs-review"
+        },
+        {
+          "path": "index-v2.html",
+          "createdAt": "2026-09-09T03:16:46.037Z",
+          "status": "needs-review"
+        },
+        {
+          "path": "index-v3.html",
+          "createdAt": "2026-09-09T03:55:33.393Z",
+          "status": "needs-review"
+        }
+      ]
+    }
+  },
+  "createdAt": "2026-09-08T08:39:23.897Z",
+  "updatedAt": "2026-09-09T09:44:19.868Z"
+}

@@ -17,6 +17,8 @@ import (
 	"github.com/coder/websocket"
 	"github.com/hurf/work-anywhere/desktop/internal/ipc"
 	"github.com/hurf/work-anywhere/desktop/internal/protocol"
+	"github.com/hurf/work-anywhere/desktop/internal/remote"
+	qrcode "github.com/skip2/go-qrcode"
 )
 
 //go:embed web/*
@@ -48,9 +50,45 @@ func startAdmin(manager *Manager) (*adminServer, error) {
 	mux.HandleFunc("POST /auth/exchange", a.exchange)
 	mux.HandleFunc("GET /api/status", a.status)
 	mux.HandleFunc("GET /api/ws", a.ws)
+	mux.HandleFunc("POST /api/pair-qr", a.pairQR)
 	a.server = &http.Server{Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 	go func() { _ = a.server.Serve(listener) }()
 	return a, nil
+}
+
+func (a *adminServer) pairQR(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.authorize(r); !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 16<<10))
+	if err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	var request struct {
+		URI string `json:"uri"`
+	}
+	if json.Unmarshal(body, &request) != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if _, secret, parseErr := remote.ParseQR(request.URI); parseErr != nil {
+		http.Error(w, "invalid pairing URI", http.StatusBadRequest)
+		return
+	} else {
+		for index := range secret {
+			secret[index] = 0
+		}
+	}
+	image, err := qrcode.Encode(request.URI, qrcode.Medium, 384)
+	if err != nil {
+		http.Error(w, "cannot render pairing QR", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "image/png")
+	_, _ = w.Write(image)
 }
 
 func (a *adminServer) Close() error {
@@ -183,7 +221,7 @@ func (a *adminServer) sameOrigin(r *http.Request) bool {
 
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' ws:")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'self' ws:")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		next.ServeHTTP(w, r)

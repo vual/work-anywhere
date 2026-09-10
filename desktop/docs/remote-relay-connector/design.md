@@ -25,7 +25,7 @@ Desktop daemon 主动连接 Relay，把已授权 Mobile 的 E2EE 请求交给现
 - remote.pair.start/list/resolve/cancel/revoke
 - remote.reconnect
 
-remote.configure 只允许 HTTPS origin，loopback 开发允许 HTTP。remote.enroll 的一次性 token 只用于当前 HTTPS request，不持久化；注册生成的新 device identity 会立即关闭旧身份的 WebSocket，待 daemon 使用新身份重新连接后才允许继续配对或发送控制帧。管理页提供 Relay 地址、设备名称、enrollment token、注册/重连操作，以及生成、复制和展示包含 secret 的 `waw://pair` URI；待 Mobile proof 到达后可在页面直接 approve/reject，已提交的决定显示为等待 Relay 确认，已授权设备可直接 revoke。CLI 仍保留全部 remote 命令用于自动化和诊断。页面不解析或持久化配对 secret。
+remote.configure 接受合法的 HTTP 或 HTTPS origin，IP 和域名均可，例如 `http://172.20.31.206:18080`、`http://relay.example:18080`。HTTP 使用明文 WS，不提供传输层机密性和完整性；公网部署仍建议使用 HTTPS/WSS。remote.enroll 的一次性 token 只用于当前 HTTP(S) request，不持久化；注册生成的新 device identity 会立即关闭旧身份的 WebSocket，待 daemon 使用新身份重新连接后才允许继续配对或发送控制帧。管理页提供 Relay 地址、设备名称、enrollment token、注册/重连操作，以及生成、复制和真实 QR 展示包含 secret 的 `waw://pair` URI；QR 由受 CSRF 保护的本机 POST 端点生成并标记 `no-store`，同时保留复制链接兜底。待 Mobile proof 到达后可在页面直接 approve/reject，已提交的决定显示为等待 Relay 确认，已授权设备可直接 revoke。CLI 仍保留全部 remote 命令用于自动化和诊断。页面仅校验 URI并清零临时 secret buffer，不持久化配对 secret。
 
 ## Identity, pairing, and storage
 
@@ -40,7 +40,8 @@ pairing secret 仅在内存，最长五分钟；pairing 保存 peer keys、capab
 Desktop 解密并验证 desktop-control-json-v1 后，仅允许：
 
 - system.status, instance.list/get
-- conversation.list/read/subscribe
+- agent.list, project.list
+- conversation.list/read/timeline.list/content.read/subscribe
 - turn.start/interrupt
 - action.list/resolve
 - catalog.models/permissionProfiles
@@ -48,7 +49,7 @@ Desktop 解密并验证 desktop-control-json-v1 后，仅允许：
 
 每个方法映射到 pairing scope，再调用与本机 CLI 相同的 daemon manager。未知方法、system.shutdown、traffic、UI、install/uninstall 和 force-stop fail closed。system.status 响应会移除 remote 字段，避免向 Mobile 回显其他 pairing metadata。
 
-现有 Desktop 不变量仍由 manager/supervisor 执行：idle 才开始新 Turn、clientMessageId/expectedRevision、action first-valid-wins、App Server/session 权威等。Relay ACK 不代表业务完成。
+现有 Desktop 不变量仍由 manager/supervisor 执行：idle 才开始新 Turn、clientMessageId/expectedRevision、action first-valid-wins、App Server/session 权威等。Relay ACK 不代表业务完成。Mobile 时间线响应在加密前已受 512 KiB 上限保护，从而为 Relay 的 1 MiB ciphertext 上限保留余量。
 
 ## Events, push, and reconnect
 
@@ -60,7 +61,7 @@ socket 断开会销毁内存 Noise sessions，不中断 Desktop Turn。重连后
 
 - production URL 必须 HTTPS/WSS，不提供跳过证书校验。
 - pairing secret、enrollment token、private key、ciphertext 和 control body不写结构化日志。
-- malformed JSON、Noise tamper、binding/sequence/expiry 或 endpoint mismatch 会拒绝 frame；无效 control request 关闭 session。Relay route ACK 明确拒绝配对决定时，daemon 清除本地 submitted 状态并允许重新提交；发送前若发现本地 device identity 与当前 WebSocket 身份不一致，则拒绝发送并要求重连。
+- malformed JSON、Noise tamper、binding/sequence/expiry 或 endpoint mismatch 会拒绝 frame；无效 control request 关闭 session。Relay route ACK 明确拒绝配对决定时，daemon 清除本地 submitted 状态并允许重新提交；response/event 的拒绝 ACK 只记录 kind 和 error code，业务消息不自动重发。发送前若发现本地 device identity 与当前 WebSocket 身份不一致，则拒绝发送并要求重连。
 - socket writes 串行化并有 10 秒 timeout；失败只影响 remote connector。
 - 当前没有独立 attachment content type、远程 traffic capture 或 Mobile 离线 queue。
 
@@ -79,7 +80,7 @@ Relay schema 主归属为 [Relay wire protocol](../../../relay/docs/wire-protoco
 
 ## 验证方式
 
-单元测试覆盖 URL、identity persistence、scope allowlist、QR/canonical inputs 和 crypto；Relay server tests 覆盖 auth/pair/route。人工 E2E 使用 browser simulator 完成 enroll、明确批准、Noise system.status、forbidden system.shutdown 和 revoke。仍需正式 Mobile、多设备 action race、图片 Turn 和长时间断网/恢复测试。
+单元测试覆盖 URL、identity persistence、scope allowlist、QR/canonical inputs、normalized Mobile summary 和 crypto；Relay server tests 覆盖 auth/pair/route。人工 E2E 使用 browser simulator 完成 enroll、明确批准、Noise system.status、forbidden system.shutdown 和 revoke。仍需 Android 真机 Mobile、多设备 action race、图片 Turn 和长时间断网/恢复测试。
 
 ## 文档更新触发
 

@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Work Anywhere" />
+    <link rel="apple-touch-icon" href="icon.png" />
+    <link rel="icon" href="icon.png" />
+    <title>Work Anywhere · Mobile concept</title>
+    <style>
+      :root {
+        --ink: #111713;
+        --muted: #6f7c73;
+        --line: #dce4dd;
+        --paper: #f6f8f4;
+        --card: #ffffff;
+        --green: #27894b;
+        --green-soft: #e4f3e8;
+        --orange: #c56e2b;
+        --orange-soft: #fff0e2;
+        --red: #bd4a45;
+        --navy: #23332c;
+        --shadow: 0 16px 40px rgba(25, 47, 34, 0.12);
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Noto Sans SC", sans-serif;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; overscroll-behavior: none; background: #17211b; }
+      body { display: grid; place-items: center; color: var(--ink); }
+      button, input { font: inherit; }
+      button { border: 0; cursor: pointer; }
+      #app { width: 100vw; height: 100vh; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); background: var(--paper); overflow: hidden; }
+      @media (min-width: 700px) {
+        #app { width: 390px; height: 844px; border-radius: 42px; box-shadow: 0 30px 90px rgba(0,0,0,.35); }
+      }
+      .shell { height: 100%; display: flex; flex-direction: column; }
+      .topbar { padding: 18px 20px 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      .eyebrow { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+      .title { margin: 4px 0 0; font-size: 27px; line-height: 1.08; letter-spacing: -.04em; font-weight: 760; }
+      .device-button { display: flex; align-items: center; gap: 8px; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 8px 10px; color: var(--ink); box-shadow: 0 4px 12px rgba(17,23,19,.04); }
+      .device-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px var(--green-soft); }
+      .device-copy { text-align: left; line-height: 1.15; }
+      .device-name { font-size: 12px; font-weight: 740; }
+      .device-state { margin-top: 2px; font-size: 10px; color: var(--green); }
+      .chevron { color: var(--muted); font-size: 16px; margin-left: 2px; }
+      .content { flex: 1; overflow: auto; padding: 0 20px 22px; scrollbar-width: none; }
+      .content::-webkit-scrollbar { display: none; }
+      .section-row { margin: 16px 0 10px; display: flex; align-items: center; justify-content: space-between; }
+      .section-label { font-size: 13px; font-weight: 750; letter-spacing: -.01em; }
+      .section-action { font-size: 12px; color: var(--green); font-weight: 680; }
+      .banner { display: flex; gap: 10px; align-items: flex-start; padding: 12px; background: var(--orange-soft); border: 1px solid #f0d3b7; border-radius: 16px; color: #7f4a20; font-size: 12px; line-height: 1.4; }
+      .banner strong { display: block; color: var(--ink); font-size: 13px; margin-bottom: 2px; }
+      .banner-icon { width: 24px; height: 24px; border-radius: 9px; background: #f2c69f; color: #7f4a20; display: grid; place-items: center; font-weight: 800; flex: 0 0 auto; }
+      .task-card { width: 100%; text-align: left; background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 15px; margin-bottom: 10px; box-shadow: 0 4px 14px rgba(25,47,34,.035); transition: transform .18s ease, box-shadow .18s ease; }
+      .task-card:active { transform: scale(.985); box-shadow: var(--shadow); }
+      .task-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+      .task-title { font-size: 16px; font-weight: 760; line-height: 1.2; letter-spacing: -.02em; }
+      .task-meta { color: var(--muted); font-size: 11px; margin-top: 7px; }
+      .status { white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; border-radius: 10px; font-size: 10px; font-weight: 750; }
+      .status.running { color: var(--green); background: var(--green-soft); }
+      .status.waiting { color: #a45d20; background: var(--orange-soft); }
+      .status.done { color: #61726a; background: #edf1ee; }
+      .status-fleck { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+      .task-preview { margin-top: 14px; padding-top: 12px; border-top: 1px solid #edf1ee; font-size: 12px; color: #53625a; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+      .task-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 13px; color: var(--muted); font-size: 11px; }
+      .progress { display: flex; align-items: center; gap: 7px; }
+      .progress-bar { width: 54px; height: 5px; border-radius: 99px; background: #e9efeb; overflow: hidden; }
+      .progress-fill { height: 100%; background: var(--green); border-radius: inherit; }
+      .nav { border-top: 1px solid var(--line); background: rgba(255,255,255,.9); backdrop-filter: blur(18px); padding: 8px 12px calc(8px + env(safe-area-inset-bottom)); display: grid; grid-template-columns: repeat(4,1fr); gap: 4px; }
+      .nav-item { min-height: 52px; color: var(--muted); background: transparent; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border-radius: 14px; font-size: 10px; font-weight: 680; }
+      .nav-item.active { color: var(--ink); background: #eef5ef; }
+      .nav-symbol { font-size: 20px; line-height: 1; font-weight: 500; }
+      .badge { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 9px; color: white; background: var(--red); font-size: 9px; display: grid; place-items: center; position: absolute; margin: -10px 0 0 16px; }
+      .nav-icon-wrap { position: relative; height: 21px; }
+      .view { animation: in .22s ease both; }
+      @keyframes in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+      .detail-top { display: flex; align-items: center; gap: 10px; padding: 18px 20px 8px; }
+      .back { width: 34px; height: 34px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); color: var(--ink); font-size: 20px; line-height: 1; }
+      .detail-top .title { font-size: 20px; margin: 0; flex: 1; }
+      .live-pill { color: var(--green); font-size: 11px; font-weight: 760; display: flex; align-items: center; gap: 6px; }
+      .live-pill i { width: 7px; height: 7px; background: var(--green); border-radius: 50%; display: block; }
+      .timeline { padding: 16px 20px 120px; overflow: auto; flex: 1; }
+      .date-rule { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; margin: 4px 0 17px; }
+      .date-rule:before, .date-rule:after { content: ''; height: 1px; background: var(--line); flex: 1; }
+      .bubble { max-width: 88%; padding: 12px 14px; border-radius: 17px; margin-bottom: 12px; font-size: 13px; line-height: 1.55; }
+      .bubble.user { margin-left: auto; background: var(--navy); color: white; border-bottom-right-radius: 5px; }
+      .bubble.agent { background: var(--card); border: 1px solid var(--line); border-bottom-left-radius: 5px; }
+      .bubble-label { font-size: 10px; color: var(--muted); margin-bottom: 5px; font-weight: 740; }
+      .bubble.user .bubble-label { color: #b9d6c3; }
+      .code-line { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: #456150; background: #f0f5f1; padding: 8px 9px; border-radius: 9px; margin-top: 9px; }
+      .approval { padding: 14px; background: var(--orange-soft); border: 1px solid #efcfaf; border-radius: 18px; margin: 4px 0 14px; }
+      .approval-top { display: flex; align-items: center; gap: 8px; color: #9b5d26; font-size: 11px; font-weight: 760; }
+      .approval-title { font-size: 15px; font-weight: 760; margin-top: 10px; }
+      .approval-copy { color: #6e5a48; font-size: 12px; line-height: 1.45; margin-top: 5px; }
+      .approval-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 13px; }
+      .btn { min-height: 42px; border-radius: 12px; font-size: 12px; font-weight: 760; }
+      .btn.secondary { background: white; color: var(--red); border: 1px solid #ebc4bd; }
+      .btn.primary { background: var(--green); color: white; }
+      .composer { position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); background: linear-gradient(transparent, var(--paper) 18%); }
+      .composer-inner { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 7px 8px 7px 13px; display: flex; align-items: center; gap: 8px; box-shadow: 0 8px 24px rgba(25,47,34,.09); }
+      .composer input { min-width: 0; flex: 1; border: 0; outline: 0; color: var(--ink); background: transparent; font-size: 13px; }
+      .composer input::placeholder { color: #9aa79f; }
+      .send { width: 34px; height: 34px; border-radius: 12px; background: var(--green); color: white; font-size: 18px; }
+      .icon-btn { width: 30px; height: 30px; border-radius: 10px; color: var(--muted); background: transparent; font-size: 18px; }
+      .list-row { display: flex; align-items: center; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+      .list-row:last-child { border-bottom: 0; }
+      .row-icon { width: 40px; height: 40px; border-radius: 14px; background: var(--green-soft); color: var(--green); display: grid; place-items: center; font-size: 19px; font-weight: 760; flex: 0 0 auto; }
+      .row-copy { flex: 1; min-width: 0; }
+      .row-title { font-size: 14px; font-weight: 740; }
+      .row-sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+      .row-arrow { color: #a1ada5; font-size: 19px; }
+      .scope-chip { display: inline-flex; margin-top: 7px; padding: 4px 7px; border-radius: 7px; background: #eef5ef; color: var(--green); font-size: 10px; font-weight: 720; }
+      .device-card { background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 16px; }
+      .device-card-head { display:flex; align-items:center; gap: 12px; }
+      .device-mark { width: 46px; height: 46px; background: var(--navy); color: #d7f2df; display: grid; place-items: center; border-radius: 15px; font-weight: 820; letter-spacing: -.08em; }
+      .device-card-name { font-size: 16px; font-weight: 780; }
+      .device-card-sub { color: var(--muted); font-size: 11px; margin-top: 4px; }
+      .device-card .scope-chip { margin-left: auto; margin-top: 0; }
+      .metric-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-top: 16px; }
+      .metric { background: #f1f5f2; border-radius: 12px; padding: 9px; }
+      .metric-value { font-size: 16px; font-weight: 780; }
+      .metric-label { font-size: 10px; color: var(--muted); margin-top: 3px; }
+      .setting-group { margin-top: 18px; }
+      .setting-title { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-weight: 760; margin-bottom: 8px; }
+      .toggle { width: 42px; height: 25px; border-radius: 99px; background: #c9d2cc; padding: 3px; transition: background .2s; }
+      .toggle.on { background: var(--green); }
+      .toggle:after { content: ''; display:block; width:19px; height:19px; border-radius:50%; background:white; box-shadow: 0 1px 4px rgba(0,0,0,.18); transition: transform .2s; }
+      .toggle.on:after { transform: translateX(17px); }
+      .toast { position: fixed; left: 50%; bottom: 100px; transform: translate(-50%, 12px); opacity: 0; pointer-events: none; background: var(--navy); color: white; border-radius: 12px; padding: 10px 13px; font-size: 12px; box-shadow: var(--shadow); transition: .2s; white-space: nowrap; }
+      .toast.show { opacity: 1; transform: translate(-50%, 0); }
+      .device-menu { position: absolute; z-index: 5; top: 68px; right: 20px; width: 205px; background: white; border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); padding: 7px; }
+      .device-menu button { width: 100%; background: transparent; text-align: left; padding: 10px; border-radius: 10px; font-size: 12px; display:flex; align-items:center; gap:8px; }
+      .device-menu button:hover { background: #f0f5f1; }
+      .hidden { display:none; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script>
+      const state = { tab: 'tasks', detail: false, deviceMenu: false, selectedDevice: 'Mac mini · Studio', toast: '', approved: false, sent: false, notifications: true };
+      const devices = ['Mac mini · Studio', 'Windows PC · Home'];
+      const tasks = [
+        { title: '重构 Relay 配对流程', meta: 'work-anywhere / desktop', status: 'waiting', statusText: '待处理', preview: '我发现 pairing grant 的过期校验还缺少一个边界场景，需要你的确认。', time: '刚刚', progress: 62 },
+        { title: '分析 mobile 状态同步', meta: 'paseo / research', status: 'running', statusText: '运行中', preview: '正在整理 snapshot、cursor 和 reconnect 的关系，预计还需要几分钟。', time: '3 分钟前', progress: 78 },
+        { title: '补充 release checklist', meta: 'work-anywhere / docs', status: 'done', statusText: '已完成', preview: '已更新 Android / iOS 发布门槛，并保留了 rollback 说明。', time: '昨天', progress: 100 }
+      ];
+      const $ = (s) => document.querySelector(s);
+      function iconFor(tab) { return { tasks: '⌂', actions: '✓', devices: '▣', settings: '⚙' }[tab]; }
+      function nav() {
+        return `<nav class="nav">${[['tasks','任务',''],['actions','待处理','2'],['devices','设备',''],['settings','设置','']].map(([id,label,badge]) => `<button class="nav-item ${state.tab===id?'active':''}" data-tab="${id}"><span class="nav-icon-wrap"><span class="nav-symbol">${iconFor(id)}</span>${badge?`<span class="badge">${badge}</span>`:''}</span><span>${label}</span></button>`).join('')}</nav>`;
+      }
+      function topbar() {
+        return `<header class="topbar"><div><div class="eyebrow">WORK ANYWHERE</div><h1 class="title">${state.tab==='tasks'?'任务':state.tab==='actions'?'待处理':state.tab==='devices'?'设备':'设置'}</h1></div><button class="device-button" id="device-trigger"><span class="device-dot"></span><span class="device-copy"><span class="device-name">${state.selectedDevice}</span><span class="device-state">在线 · 加密连接</span></span><span class="chevron">⌄</span></button>${state.deviceMenu?`<div class="device-menu">${devices.map(d=>`<button data-device="${d}"><span class="device-dot"></span>${d}</button>`).join('')}</div>`:''}</header>`;
+      }
+      function tasksView() {
+        return `<div class="view"><div class="banner"><span class="banner-icon">!</span><div><strong>1 个任务需要你的确认</strong>电脑端正在等待一个 approval，处理后任务会继续运行。</div></div><div class="section-row"><span class="section-label">${state.selectedDevice}</span><button class="section-action" data-toast="已刷新任务状态">下拉刷新</button></div>${tasks.map((t,i)=>`<button class="task-card" data-task="${i}"><div class="task-head"><div><div class="task-title">${t.title}</div><div class="task-meta">${t.meta}</div></div><span class="status ${t.status}"><i class="status-fleck"></i>${t.statusText}</span></div><div class="task-preview">${t.preview}</div><div class="task-footer"><span>${t.time}</span><span class="progress"><span>${t.progress}%</span><span class="progress-bar"><span class="progress-fill" style="width:${t.progress}%"></span></span></span></div></button>`).join('')}</div>`;
+      }
+      function actionsView() {
+        return `<div class="view"><div class="section-row"><span class="section-label">需要你的操作</span><span class="section-action">2 项</span></div><div class="task-card"><div class="task-head"><div><div class="task-title">重构 Relay 配对流程</div><div class="task-meta">Mac mini · Studio · work-anywhere</div></div><span class="status waiting"><i class="status-fleck"></i>approval</span></div><div class="task-preview">允许 Agent 修改 pairing runtime 的 grant 校验，并运行测试？</div><div class="task-footer"><span>等待 2 分钟</span><button class="section-action" data-open-detail="true">查看详情 →</button></div></div><div class="list-row"><div class="row-icon">?</div><div class="row-copy"><div class="row-title">需要补充一个选择</div><div class="row-sub">分析 mobile 状态同步 · 1 分钟前</div></div><div class="row-arrow">›</div></div><div class="section-row"><span class="section-label">处理规则</span></div><div class="banner" style="background:#eef5ef;border-color:#d2e6d6;color:#4d6d59"><span class="banner-icon" style="background:#d1e9d6;color:#27894b">i</span><div><strong>只在当前设备确认</strong>审批结果会即时同步到电脑，不会在离线时排队发送。</div></div></div>`;
+      }
+      function devicesView() {
+        return `<div class="view"><div class="device-card"><div class="device-card-head"><div class="device-mark">WAW</div><div><div class="device-card-name">${state.selectedDevice}</div><div class="device-card-sub">最后连接：刚刚 · Relay Singapore</div></div><span class="scope-chip">已授权</span></div><div class="metric-grid"><div class="metric"><div class="metric-value">在线</div><div class="metric-label">连接状态</div></div><div class="metric"><div class="metric-value">4</div><div class="metric-label">授权范围</div></div><div class="metric"><div class="metric-value">24 ms</div><div class="metric-label">往返延迟</div></div></div></div><div class="section-row"><span class="section-label">设备管理</span></div><div class="list-row"><div class="row-icon">+</div><div class="row-copy"><div class="row-title">连接另一台电脑</div><div class="row-sub">扫描二维码或粘贴配对链接</div></div><div class="row-arrow">›</div></div><div class="list-row"><div class="row-icon" style="background:#f1f5f2;color:#64756b">⌁</div><div class="row-copy"><div class="row-title">授权范围</div><div class="row-sub">读取任务 · 继续会话 · 处理待办</div></div><div class="row-arrow">›</div></div><div class="list-row"><div class="row-icon" style="background:#fff0e2;color:#a45d20">×</div><div class="row-copy"><div class="row-title">解除此设备</div><div class="row-sub">需要系统认证，解除后需重新配对</div></div><div class="row-arrow">›</div></div></div>`;
+      }
+      function settingsView() {
+        return `<div class="view"><div class="setting-group"><div class="setting-title">隐私与安全</div><div class="list-row"><div class="row-icon" style="background:#eef5ef;color:#27894b">⌁</div><div class="row-copy"><div class="row-title">应用锁</div><div class="row-sub">离开应用 1 分钟后需要 Face ID / PIN</div></div><button class="toggle on"></button></div><div class="list-row"><div class="row-icon" style="background:#f1f5f2;color:#64756b">▧</div><div class="row-copy"><div class="row-title">切后台时遮罩</div><div class="row-sub">防止任务内容出现在系统预览</div></div><button class="toggle on"></button></div></div><div class="setting-group"><div class="setting-title">通知</div><div class="list-row"><div class="row-icon" style="background:#fff0e2;color:#a45d20">◔</div><div class="row-copy"><div class="row-title">任务提醒</div><div class="row-sub">仅显示通用提示，不包含会话正文</div></div><button class="toggle ${state.notifications?'on':''}" id="notify-toggle"></button></div></div><div class="setting-group"><div class="setting-title">关于</div><div class="list-row"><div class="row-icon" style="background:#f1f5f2;color:#64756b">?</div><div class="row-copy"><div class="row-title">连接诊断</div><div class="row-sub">WAW Mobile 0.1 · Relay wire v1</div></div><div class="row-arrow">›</div></div><div class="list-row"><div class="row-icon" style="background:#f1f5f2;color:#64756b">↗</div><div class="row-copy"><div class="row-title">隐私说明</div><div class="row-sub">查看数据如何在设备、Relay 和 Desktop 间流转</div></div><div class="row-arrow">›</div></div></div></div>`;
+      }
+      function detailView() {
+        return `<div class="shell"><div class="detail-top"><button class="back" id="back">‹</button><h1 class="title">重构 Relay 配对流程</h1><span class="live-pill"><i></i>等待确认</span></div><div class="timeline"><div class="date-rule">今天 · 09:42</div><div class="bubble user"><div class="bubble-label">你</div>请检查 pairing grant 的过期校验，重点看移动端断线重连后的行为。</div><div class="bubble agent"><div class="bubble-label">Codex · 运行中</div>我已经找到连接状态机的入口。当前实现会在新的 epoch 建立后重新同步，但旧 callback 仍可能影响 UI。<div class="code-line">mobilecore/pairing_runtime.go:184</div></div>${state.approved?`<div class="bubble agent"><div class="bubble-label">Codex · 运行中</div>收到批准。我会补充 late callback 测试，并在完成后同步结果。</div>`:`<div class="approval"><div class="approval-top">◉ 需要你的确认 · approval</div><div class="approval-title">允许修改 pairing runtime？</div><div class="approval-copy">Agent 将修改 grant 校验，并运行本地单元测试。不会上传会话内容。</div><div class="approval-actions"><button class="btn secondary" id="deny">拒绝</button><button class="btn primary" id="approve">允许本次</button></div></div>`}</div><div class="composer"><div class="composer-inner"><button class="icon-btn">＋</button><input id="message" placeholder="继续告诉 Codex…" value="${state.sent?'已发送，等待电脑确认':''}" ${state.sent?'disabled':''}/><button class="send" id="send">↑</button></div></div></div>`;
+      }
+      function render() {
+        if (state.detail) { $('#app').innerHTML = detailView(); bind(); return; }
+        const content = state.tab==='tasks'?tasksView():state.tab==='actions'?actionsView():state.tab==='devices'?devicesView():settingsView();
+        $('#app').innerHTML = `<div class="shell">${topbar()}<main class="content">${content}</main>${nav()}</div><div class="toast ${state.toast?'show':''}">${state.toast}</div>`;
+        bind();
+      }
+      function showToast(message) { state.toast = message; render(); setTimeout(()=>{ state.toast=''; render(); }, 1800); }
+      function bind() {
+        document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{state.tab=b.dataset.tab; state.deviceMenu=false; render();});
+        $('#device-trigger')?.addEventListener('click',()=>{state.deviceMenu=!state.deviceMenu; render();});
+        document.querySelectorAll('[data-device]').forEach(b=>b.onclick=()=>{state.selectedDevice=b.dataset.device; state.deviceMenu=false; showToast('已切换到 '+state.selectedDevice);});
+        document.querySelectorAll('[data-toast]').forEach(b=>b.onclick=()=>showToast(b.dataset.toast));
+        document.querySelectorAll('[data-task]').forEach(b=>b.onclick=()=>{ if (b.dataset.task==='0') state.detail=true; else showToast('已打开任务详情'); render(); });
+        $('[data-open-detail]')?.addEventListener('click',()=>{state.detail=true; render();});
+        $('#back')?.addEventListener('click',()=>{state.detail=false; render();});
+        $('#approve')?.addEventListener('click',()=>{state.approved=true; showToast('已批准本次操作');});
+        $('#deny')?.addEventListener('click',()=>showToast('已拒绝，任务保持暂停'));
+        $('#send')?.addEventListener('click',()=>{const input=$('#message'); if(input?.value.trim()){state.sent=true; showToast('已提交，等待电脑确认');}});
+        $('#notify-toggle')?.addEventListener('click',()=>{state.notifications=!state.notifications; render();});
+        document.querySelectorAll('.toggle:not(#notify-toggle)').forEach(b=>b.onclick=()=>b.classList.toggle('on'));
+      }
+      render();
+    </script>
+  </body>
+</html>

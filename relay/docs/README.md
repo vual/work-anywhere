@@ -10,8 +10,8 @@
 | --- | --- | --- | --- |
 | 技术选型 | [`technology-selection/design.md`](technology-selection/design.md) | 架构、部署 | `go.mod`, `cmd/relay/`, `Dockerfile` |
 | 总体架构与信任边界 | [`architecture/design.md`](architecture/design.md) | 全部设计 | `cmd/relay/`, `internal/server/` |
-| 设备身份与二维码配对 | [`identity-and-pairing/design.md`](identity-and-pairing/design.md) | E2EE、存储、滥用防护 | `internal/server/`, `internal/store/`, `internal/protocol/` |
-| 端到端加密会话 | [`end-to-end-encryption/design.md`](end-to-end-encryption/design.md) | wire、Desktop connector | `internal/e2ee/`, `desktop/internal/remote/` |
+| 设备身份与二维码配对 | [`identity-and-pairing/design.md`](identity-and-pairing/design.md) | E2EE、存储、滥用防护 | `internal/server/`, `internal/store/`, `pkg/endpoint/protocol/` |
+| 端到端加密会话 | [`end-to-end-encryption/design.md`](end-to-end-encryption/design.md) | wire、Desktop connector | `pkg/endpoint/e2ee/`, `desktop/internal/remote/` |
 | Relay wire protocol | [`wire-protocol/design.md`](wire-protocol/design.md) | E2EE、路由、Desktop connector | `proto/waw/relay/v1/`, `internal/gen/` |
 | 在线路由与可靠性 | [`routing-and-reliability/design.md`](routing-and-reliability/design.md) | wire、部署 | `internal/routing/`, `internal/server/` |
 | 移动推送 | [`push-notifications/design.md`](push-notifications/design.md) | 存储、可靠性、运维 | `internal/push/`, `internal/jobs/` |
@@ -26,11 +26,11 @@
 - Relay 外层连接、身份、配对、路由、push 和加密 envelope 由 [`relay.proto`](../proto/waw/relay/v1/relay.proto) 定义。
 - 密文内的业务请求遵循 [Desktop 本机控制语义](../../desktop/docs/local-control/design.md)，Remote 只开放明确 allowlist。
 - Desktop 出站连接器的实现与限制见 [`desktop/docs/remote-relay-connector/design.md`](../../desktop/docs/remote-relay-connector/design.md)。
-- 正式 Mobile 模块建立时，必须创建自身 README/docs 索引，并引用本模块 wire/E2EE 规范。
+- 正式 Mobile 的方案与文档索引见 [`mobile/docs/README.md`](../../mobile/docs/README.md)；其生成代码必须继续引用本模块 wire/E2EE 规范，不得复制 schema。
 
 ## Current invariants
 
-- 双端主动 WSS；家庭网络不需要端口映射。
+- 双端主动 WS(S)；家庭网络不需要端口映射。
 - 无 WAW 用户账号；设备 Ed25519 公钥是服务身份，daemon 初始登记由 enrollment token 约束。
 - 每条 daemon—Mobile pairing 独立授权，天然支持多对多。
 - 在线业务 payload 使用双方静态身份绑定的 Noise KK 端到端加密；Relay 不持有解密 key。

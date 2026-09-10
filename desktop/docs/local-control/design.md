@@ -14,6 +14,8 @@
 {"type":"event","sequence":123,"event":"turn.started","payload":{}}
 ```
 
+Mobile 请求使用独立 contract discriminator：`{"contract":"mobile-control-v1"}`。响应回显相同 contract；未知非空值返回 `unsupported_contract`，未带 contract 的本机 CLI/管理页保持既有 raw control 语义。
+
 daemon 将控制方法路由到实例 supervisor；Codex driver/能力描述用于隔离未来不同 Provider 的功能差异。事件订阅使用有界队列，慢订阅者会被断开，客户端应使用 conversation cursor 补齐状态。
 
 ## Interfaces
@@ -22,7 +24,8 @@ daemon 将控制方法路由到实例 supervisor；Codex driver/能力描述用�
 
 - 系统：`system.status`, `system.ui_url`, `system.control.pause`, `system.control.resume`, `system.shutdown`
 - 实例：`instance.list`, `instance.get`, `instance.restart`
-- 会话：`conversation.list`, `conversation.read`, `conversation.subscribe`
+- Mobile navigation：`agent.list`, `project.list`（要求 `mobile-control-v1`）
+- 会话：`conversation.list`, `conversation.read`, `conversation.timeline.list`, `conversation.content.read`, `conversation.subscribe`
 - Turn：`turn.start`, `turn.interrupt`
 - action：`action.list`, `action.resolve`
 - catalog：`catalog.models`, `catalog.permissionProfiles`
@@ -31,6 +34,10 @@ daemon 将控制方法路由到实例 supervisor；Codex driver/能力描述用�
 - Remote：`remote.status`, `remote.configure`, `remote.enroll`, `remote.reconnect`, `remote.pair.start/list/resolve/cancel/revoke`
 
 `turn.start` 当前接受 `instanceId`、`threadId`、文字、attachment IDs、model、reasoning effort、approval policy、sandbox policy、client message ID 和 expected revision。附件中的图片被转换为官方 App Server 支持的输入项；调用必须指向已有 thread。
+
+`mobile-control-v1` 接受 `agentId` 作为 `instanceId` 的产品化别名，并把 `query` 转为 App Server `searchTerm`。`agent.list` 返回 Codex Agent summary；`project.list` 与 `conversation.list` 返回 `{items,nextCursor}` 和稳定 summary。项目过滤的正常路径使用 App Server `thread/list(projectId)`；若结果为空，Desktop 会根据同一 Project ID 解析根目录并以 `thread/list(cwd)` 回退，以兼容项目迁移前仍只保存旧项目关联或 session cwd 的历史线程。`conversation.read` 使用 `thread/read(includeTurns=false)` 读取 metadata，再用 `thread/items/list(sortDirection=desc)` 返回最近 30 项（最大 50）的稳定 `ConversationSnapshot`；归一化器解包官方 `ThreadItemEntry` 的 `{item,turnId}` 结构，并兼容旧的扁平 fixture。`conversation.timeline.list` 原样续传 App Server opaque cursor 读取更早页。单 block 超过 64 KiB 时仅内联 UTF-8 前 16 KiB，并返回 15 分钟无访问过期、绑定 agent/thread/item/block 的随机 `contentRef`；`conversation.content.read` 每次最多返回 128 KiB。引用只保存 provider 页定位，不缓存正文。
+
+Mobile control 响应序列化后上限为 512 KiB。时间线超预算时以同一 cursor 按 `30→15→7→3→1` 缩小 provider page；limit 为 1 仍超预算则进一步引用大 block。订阅事件只作为失效提示发送，不携带 provider 正文；待追赶事件超过有界窗口时返回 `snapshot=true`，由 Mobile 重新读取分页 snapshot。超限保护返回 `response_too_large`，不会把超大业务响应交给 Relay。Mobile control 结构化日志只记录 method、耗时、响应字节数和稳定错误码。
 
 CLI 对应提供 daemon、instance、conversation、turn、action、catalog、traffic、通用 `call`、`ui`、`self-test`、install/uninstall 和 version 命令。CLI 通过本机受保护管理 Pipe 调用，不自行启动第二个 App Server。
 
@@ -52,11 +59,12 @@ Provider capabilities 当前包含 history、live stream、text/image input、ap
 - 本机控制协议使用版本化 envelope，业务错误使用稳定 code/message，而不是泄露内部 panic。
 - Relay 出站连接器通过 scope allowlist 复用本控制语义，不绕过 daemon 直接操作 App Server stdio；当前实现见 [`remote-relay-connector`](../remote-relay-connector/design.md)。
 - 管理页实现 daemon/Relay/配对管理，不实现聊天、Timeline 或 Prompt UI。
-- V1 不实现网络配对、推送通知或移动端身份。
+- 本机 control 不直接实现网络身份；网络配对和 Mobile 身份由 outbound Relay connector 负责。push provider 与 action/catalog 的完整稳定 DTO 尚未完成。
 
 ## Code ownership
 
 - `internal/daemon/daemon.go`（控制路由）
+- `internal/daemon/mobile_contract.go`（Mobile DTO、时间线分页和大内容引用）
 - `internal/daemon/admin.go`（HTTP/WebSocket 与授权）
 - `internal/cli/cli.go`
 - `internal/provider/`
@@ -67,6 +75,7 @@ Provider capabilities 当前包含 history、live stream、text/image input、ap
 - CLI 查看实例/会话、启动和中断 Turn、列出/解决 action、读取 catalog。
 - 附件 begin/chunk/commit 后可用于图片输入。
 - cursor 重连补发和 snapshot fallback 测试。
+- metadata/timeline DTO、opaque cursor、自适应页大小、UTF-8 内容分块和引用越权/过期测试。
 - Origin、CSRF、一次性 token、控制暂停和慢订阅者测试。
 
 ## Documentation update triggers

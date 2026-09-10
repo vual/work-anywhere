@@ -18,9 +18,11 @@ The complete product is organized into three independent modules:
 
 - `desktop`: integrates with the official ChatGPT Codex Desktop, supervises official Codex App Server processes, and exposes local control capabilities.
 - `relay`: relays encrypted connections, task state, and notifications between Desktop daemons and mobile clients.
-- `mobile`: will display task progress, handle approvals and questions, receive notifications, and continue conversations.
+- `mobile`: displays task progress, handles approvals and questions, and continues conversations; the Android-first Flutter/Go Core implementation is underway and remains pre-release.
 
-**Desktop V1 and the single-node Relay V1 are implemented.** Desktop includes the outbound Relay connector, device enrollment, QR pairing, Noise end-to-end encryption, and the remote-control adapter. Relay can be deployed with Docker Compose and PostgreSQL. The production Mobile application is not implemented; the repository includes a browser Mobile simulator for protocol development only.
+**Desktop V1 and the single-node Relay V1 are implemented.** Desktop includes the outbound Relay connector, device enrollment, scannable QR pairing, Noise end-to-end encryption, and the Mobile control adapter. Relay can be deployed with Docker Compose and PostgreSQL. Mobile now has an Android-first Flutter app, Go endpoint core, Pigeon/Keystore host, and tester-APK CI, but physical-device, iOS, push, complete DTO, and release validation remain incomplete. The browser Mobile simulator is still only for protocol development.
+
+Mobile conversation sync uses a metadata snapshot, a recent 30-item timeline page, and incremental recovery. Older history is loaded with opaque cursors, while individual content blocks over 64 KiB are available on demand through temporary chunked references. Desktop control responses are capped at 512 KiB and Relay keeps its 1 MiB routed-payload limit.
 
 ## Current capabilities
 
@@ -90,20 +92,26 @@ work-anywhere/
 │  ├─ compose.yaml              Single-node local deployment
 │  ├─ README.md                 Relay build, deployment, and integration entrypoint
 │  └─ docs/                     Current Relay design and remaining hardening work
-└─ desktop/
-   ├─ cmd/work-anywhere/        Single-binary entry point
-   ├─ internal/
-   │  ├─ bridge/                Desktop stdio Bridge
-   │  ├─ daemon/                App Server supervisor and control plane
-   │  ├─ codex/                 Codex runtime, instance, and argument handling
-   │  ├─ jsonrpc/               JSON-RPC envelopes and IDs
-   │  ├─ provider/              Extensible Provider interface
-   │  ├─ store/                 Encrypted SQLite projection
-   │  └─ platform/              Windows/macOS/Linux platform boundary
-   ├─ packaging/                Platform installation, signing, and release assets
-   ├─ docs/                     Current-state design documentation
-   ├─ scripts/                  Build scripts
-   └─ testdata/                 Official App Server schema fixtures
+├─ desktop/
+│  ├─ cmd/work-anywhere/        Single-binary entry point
+│  ├─ internal/
+│  │  ├─ bridge/                Desktop stdio Bridge
+│  │  ├─ daemon/                App Server supervisor and control plane
+│  │  ├─ codex/                 Codex runtime, instance, and argument handling
+│  │  ├─ jsonrpc/               JSON-RPC envelopes and IDs
+│  │  ├─ provider/              Extensible Provider interface
+│  │  ├─ store/                 Encrypted SQLite projection
+│  │  └─ platform/              Windows/macOS/Linux platform boundary
+│  ├─ packaging/                Platform installation, signing, and release assets
+│  ├─ docs/                     Current-state design documentation
+│  ├─ scripts/                  Build scripts
+│  └─ testdata/                 Official App Server schema fixtures
+└─ mobile/
+   ├─ README.md                 Product scope, architecture, and delivery entrypoint
+   ├─ core/                     gomobile endpoint facade
+   ├─ app/                      Flutter, Pigeon, and Android/iOS hosts
+   ├─ scripts/                  Toolchain, test, generation, and Android build entrypoints
+   └─ docs/                     Architecture, sync, interaction, and delivery designs
 ```
 
 Shared Bridge and daemon business logic is not copied per operating system. OS-specific behavior lives under `desktop/internal/platform/`, while release configuration lives under `desktop/packaging/<platform>/`. Windows x64 is the only runnable target today. macOS and Linux currently provide cross-compilable adapter skeletons only; see the [platform support design](desktop/docs/platform-support/design.md).
@@ -316,12 +324,12 @@ cd D:\CodeSpace\work-anywhere\desktop
 .\dist\windows-amd64\work-anywhere.exe self-test
 ```
 
-See [`AGENTS.md`](AGENTS.md) for repository development rules and [`desktop/docs/README.md`](desktop/docs/README.md) for current Desktop design documentation. Functional changes must update every affected design document in the same change. Design documents describe only the current state and are not changelogs.
+See [`AGENTS.md`](AGENTS.md) for repository development rules, [`desktop/docs/README.md`](desktop/docs/README.md) for current Desktop design documentation, and [`mobile/docs/README.md`](mobile/docs/README.md) for the production Mobile plan. Functional changes must update every affected design document in the same change. Design documents describe only the current state and are not changelogs.
 
 ## Current limitations
 
 - Runtime support is limited to Windows x64.
-- The production Mobile application is not implemented. The browser Mobile simulator is a protocol-development tool, not a production client.
+- Mobile has not completed physical-device and production release validation. The browser Mobile simulator is a protocol-development tool, not a production client.
 - Relay includes APNs/FCM providers and River jobs, but live Apple sandbox/FCM project verification requires operator credentials.
 - Relay V1 is single-node and online-only; it does not provide offline commands, multi-node routing, or Work Anywhere user accounts.
 - Codex is the only Provider. Claude Code, OpenCode, Hermes, Pi, and other drivers are not implemented.

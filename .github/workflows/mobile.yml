@@ -1,0 +1,71 @@
+name: Mobile
+
+on:
+  push:
+    paths:
+      - "mobile/**"
+      - "relay/gen/**"
+      - "relay/pkg/endpoint/**"
+      - "relay/internal/devmobile/**"
+      - ".github/workflows/mobile.yml"
+  pull_request:
+    paths:
+      - "mobile/**"
+      - "relay/gen/**"
+      - "relay/pkg/endpoint/**"
+      - "relay/internal/devmobile/**"
+      - ".github/workflows/mobile.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+          cache-dependency-path: |
+            relay/go.sum
+            mobile/core/go.sum
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.2"
+          channel: stable
+          cache: true
+
+      - name: Test shared endpoint and Mobile Core
+        run: |
+          go test ./relay/pkg/endpoint/...
+          go test ./mobile/core/...
+
+      - name: Build Android Go Core
+        working-directory: mobile/core
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20260908204917-8b95e45f8d3e
+          go install golang.org/x/mobile/cmd/gobind@v0.0.0-20260908204917-8b95e45f8d3e
+          gomobile init
+          mkdir -p ../app/android/app/libs
+          gomobile bind -target=android -androidapi 29 -o ../app/android/app/libs/mobilecore.aar ./mobilecore
+
+      - name: Verify Flutter and build tester APK
+        working-directory: mobile/app
+        run: |
+          flutter pub get
+          dart run pigeon --input pigeons/mobile_core.dart --dart_out lib/core/mobile_core.g.dart --kotlin_out android/app/src/main/kotlin/io/workanywhere/work_anywhere/MobileCore.g.kt --kotlin_package io.workanywhere.work_anywhere --swift_out ios/Runner/MobileCore.g.swift
+          git diff --exit-code -- lib/core/mobile_core.g.dart android/app/src/main/kotlin/io/workanywhere/work_anywhere/MobileCore.g.kt ios/Runner/MobileCore.g.swift
+          flutter analyze
+          flutter test
+          flutter build apk --debug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: work-anywhere-android-tester
+          path: mobile/app/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error

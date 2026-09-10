@@ -80,8 +80,8 @@ func (c Config) Validate() error {
 		return errors.New("RELAY_PUBLIC_URL is required")
 	}
 	parsed, err := url.Parse(c.PublicURL)
-	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && !(parsed.Scheme == "http" && parsed.Hostname() == "127.0.0.1")) {
-		return errors.New("RELAY_PUBLIC_URL must use https, except for 127.0.0.1 development")
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return errors.New("RELAY_PUBLIC_URL must be an HTTP or HTTPS origin without path, query, or fragment")
 	}
 	switch c.EnrollmentMode {
 	case "invite", "open", "disabled":

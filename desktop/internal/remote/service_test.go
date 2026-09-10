@@ -90,6 +90,33 @@ func TestConfigureAndEnrollPersistsSecureIdentity(t *testing.T) {
 	}
 }
 
+func TestNormalizeRelayURLAllowsPrivateIPDevelopment(t *testing.T) {
+	allowed := []string{
+		"http://127.0.0.1:18080",
+		"http://172.20.31.206:18080",
+		"http://192.168.1.20:18080/",
+		"http://203.0.113.20:18080",
+		"http://relay.example:18080",
+		"http://[fd00::20]:18080",
+		"https://203.0.113.20:18080",
+		"https://relay.example:18080",
+	}
+	for _, value := range allowed {
+		if _, err := normalizeRelayURL(value); err != nil {
+			t.Errorf("normalizeRelayURL(%q) returned error: %v", value, err)
+		}
+	}
+
+	denied := []string{
+		"ftp://relay.example:18080",
+	}
+	for _, value := range denied {
+		if _, err := normalizeRelayURL(value); err == nil {
+			t.Errorf("normalizeRelayURL(%q) unexpectedly allowed unsupported scheme", value)
+		}
+	}
+}
+
 func TestQRRoundTripAndScopeAllowlist(t *testing.T) {
 	payload := QRPayload{RelayURL: "https://relay.example", PairingID: "fb6a9823-2632-49ab-a2e7-3df33890c179", Secret: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", DaemonDeviceID: "bbab77cb-2e66-48bc-b72b-b817a4c3f3ab", ExpiresAtMS: time.Now().Add(time.Minute).UnixMilli()}
 	uri, err := payload.URI()

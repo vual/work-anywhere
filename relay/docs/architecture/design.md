@@ -9,9 +9,9 @@ Relay 为 NAT/防火墙后的 Desktop daemon 和 Mobile 提供设备认证、配
 ## 当前架构与数据流
 
 ```text
-Desktop daemon ── WSS ──┐
+Desktop daemon ── WS(S) ──┐
                          ├─ Go Relay ── pgx/PostgreSQL
-Mobile ───────── WSS ───┘       └──── River ── APNs / FCM
+Mobile ───────── WS(S) ───┘       └──── River ── APNs / FCM
 
 daemon ◄════ Noise-authenticated E2EE session ════► Mobile
                  Relay routes ciphertext
@@ -29,7 +29,7 @@ daemon ◄════ Noise-authenticated E2EE session ════► Mobile
 - PostgreSQL/备份：可见设备关系、时间和 push token 密文，不应出现 Prompt/消息。
 - APNs/FCM：只获得通用通知和平台要求字段。
 
-公网 TLS/WSS 保护外层认证与元数据；Noise E2EE 保护 daemon—Mobile 控制正文。开发环境只允许 loopback HTTP/WS。
+HTTPS/WSS 可保护外层认证与元数据；HTTP/WS 可用于明确配置的 IP/域名部署，但不提供传输层机密性和完整性；Noise E2EE 保护 daemon—Mobile 控制正文。
 
 ## 公开接口
 

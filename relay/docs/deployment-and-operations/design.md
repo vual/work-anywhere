@@ -41,7 +41,7 @@ APNS_TEAM_ID / APNS_KEY_ID / APNS_KEY_FILE
 FCM_CREDENTIALS_FILE
 ```
 
-`RELAY_DATA_KEY` 解码后必须恰好 32 bytes。生产应使用 `RELAY_DATA_KEY_FILE` 和 read-only secret mount；该 key 必须稳定备份，否则已有 push token 无法解密。当前没有 KMS adapter。APNs 三个参数必须同时设置。
+`RELAY_PUBLIC_URL` 接受 HTTP 或 HTTPS 的 IP/域名 origin，但 HTTP 不提供传输层机密性和完整性，公网部署应使用 HTTPS/WSS。`RELAY_DATA_KEY` 解码后必须恰好 32 bytes。生产应使用 `RELAY_DATA_KEY_FILE` 和 read-only secret mount；该 key 必须稳定备份，否则已有 push token 无法解密。当前没有 KMS adapter。APNs 三个参数必须同时设置。
 
 `RELAY_MAX_CONNECTIONS` 限制 authenticated registry 中的设备连接数。`TRUSTED_PROXY_CIDRS` 当前只完成配置解析，尚未接入 forwarded-IP 判定；连接/IP 策略应由反向代理和应用现有直接 socket-IP limiter 共同承担。
 
@@ -65,7 +65,7 @@ SIGTERM 取消 server 和 River context，并在配置 timeout 内关闭；客�
 
 ## Compose and production boundary
 
-[`compose.yaml`](../../compose.yaml) 提供 PostgreSQL 18、migration 和 loopback-only Relay，默认地址 `http://127.0.0.1:18080`，只用于本机开发。公网必须配置真实 HTTPS origin、证书、WebSocket idle timeout、请求/连接限制和受控的 proxy-to-Relay 网络；PostgreSQL不得暴露公网。
+[`compose.yaml`](../../compose.yaml) 提供 PostgreSQL 18、migration 和默认 loopback-only Relay，默认地址 `http://127.0.0.1:18080`。需要从其他机器访问时设置 `RELAY_HOST_BIND_IP=0.0.0.0` 并放行端口；`RELAY_PUBLIC_URL` 可使用 HTTP 或 HTTPS 的 IP/域名，但公网应配置 HTTPS/WSS、证书、WebSocket idle timeout、请求/连接限制和受控的 proxy-to-Relay 网络；PostgreSQL 不得暴露公网。
 
 生产备份、PITR、恢复演练、SBOM、镜像漏洞扫描、credential rotation、data-key rotation 和 alert 尚不是仓库自动化能力，部署者需在上线前补齐。
 
@@ -82,7 +82,7 @@ V1 不要求 Kubernetes、Redis、NATS、Kafka、对象存储或多区域数据�
 
 ## 验证方式
 
-运行 fmt/test/vet/race、Buf generation diff、Docker build、Compose migration、ready/metrics probe 和 Desktop/simulator WSS smoke。生产发布前另做 backup restore、credential rotation、load/soak 和 TLS expiry 演练。
+运行 fmt/test/vet/race、Buf generation diff、Docker build、Compose migration、ready/metrics probe 和 Desktop/Mobile WSS smoke。路由回归必须覆盖 1 MiB 超限的 `payload_too_large`、peer offline、queue full、拒绝 ACK 立即完成和迟到 ACK 隔离。生产发布前另做 backup restore、credential rotation、load/soak 和 TLS expiry 演练。
 
 ## 文档更新触发
 

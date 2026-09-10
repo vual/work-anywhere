@@ -6,10 +6,12 @@ Relay 位于 Desktop daemon 与 Mobile 之间，提供公网设备注册、二�
 
 ## 当前能力与边界
 
+Relay 保持 2 MiB WebSocket frame 与 1 MiB routed ciphertext 上限；超限路由返回 `payload_too_large`。Mobile endpoint 会按外层 message ID 处理 route ACK，因此 peer offline、queue full 或超限拒绝会立即结束请求，不再等待业务超时。
+
 ```text
-Desktop daemon ── outbound WSS ──┐
+Desktop daemon ── outbound WS(S) ──┐
                                  ├─ Go Relay ── River/PostgreSQL ── APNs / FCM
-Mobile app ───── outbound WSS ───┘
+Mobile app ───── outbound WS(S) ───┘
 
 Desktop daemon ◄════ Noise_KK E2EE remote session ════► Mobile app
 ```
@@ -46,7 +48,7 @@ docker compose exec relay /relay migrate status
 Invoke-RestMethod http://127.0.0.1:18080/health/ready
 ```
 
-Compose 只把端口绑定到 loopback，适合本机联调。公网部署必须把 `RELAY_PUBLIC_URL` 设置为真实 `https://` origin，并由反向代理提供受信任 TLS/WSS；PostgreSQL、`/metrics` 和管理命令不得暴露公网。生产环境应通过 read-only secret 文件提供 `RELAY_DATA_KEY_FILE`、APNs 和 FCM 凭据，不能把 `.env` 提交到仓库。
+Compose 默认只把端口绑定到 loopback，适合本机联调。需要从其他机器访问时，在 `.env` 设置 `RELAY_HOST_BIND_IP=0.0.0.0`，并确保防火墙放行 `RELAY_HOST_PORT`。`RELAY_PUBLIC_URL` 接受 HTTP 或 HTTPS 的 IP/域名 origin；HTTP 是明文连接，公网部署仍建议使用受信任 TLS/WSS。PostgreSQL、`/metrics` 和管理命令不得暴露公网。生产环境应通过 read-only secret 文件提供 `RELAY_DATA_KEY_FILE`、APNs 和 FCM 凭据，不能把 `.env` 提交到仓库。
 
 创建一次性 daemon enrollment token：
 

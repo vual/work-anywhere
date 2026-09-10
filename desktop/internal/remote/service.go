@@ -110,15 +110,17 @@ type Service struct {
 	lastError    string
 	wake         chan struct{}
 	writeMu      sync.Mutex
+	sentControl  map[string]string
 }
 
 type sessionState struct {
 	pairing Pairing
 	secure  *secureSession
+	writeMu sync.Mutex
 }
 
 func New(stateStore settingsStore, control func(protocol.ControlRequest) protocol.ControlResponse, subscribe func() (<-chan protocol.Event, func()), logger logSink) (*Service, error) {
-	service := &Service{store: stateStore, control: control, subscribe: subscribe, log: logger, attempts: make(map[string]*PairAttempt), sessions: make(map[string]*sessionState), wake: make(chan struct{}, 1)}
+	service := &Service{store: stateStore, control: control, subscribe: subscribe, log: logger, attempts: make(map[string]*PairAttempt), sessions: make(map[string]*sessionState), wake: make(chan struct{}, 1), sentControl: make(map[string]string)}
 	service.state.Pairings = make(map[string]Pairing)
 	if found, err := stateStore.GetSetting(remoteStateKey, &service.state); err != nil {
 		return nil, err
@@ -153,6 +155,7 @@ func (s *Service) Run(ctx context.Context) {
 		s.conn = nil
 		s.connDeviceID = uuid.Nil
 		s.sessions = make(map[string]*sessionState)
+		s.sentControl = make(map[string]string)
 		s.mu.Unlock()
 		if err != nil {
 			s.log.Event("remote.disconnected", map[string]any{"error": err.Error()})
@@ -469,11 +472,13 @@ func (s *Service) handleFrame(frame *relayv1.ServerFrame) error {
 }
 
 func (s *Service) handleRouteAck(ack *relayv1.RouteAck) error {
+	s.mu.Lock()
+	kind := s.sentControl[string(ack.RoutedMessageId)]
+	delete(s.sentControl, string(ack.RoutedMessageId))
 	if ack.Accepted {
+		s.mu.Unlock()
 		return nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	for _, attempt := range s.attempts {
 		if same(attempt.decisionMessageID, ack.RoutedMessageId) {
 			attempt.decisionSubmitted = false
@@ -482,8 +487,13 @@ func (s *Service) handleRouteAck(ack *relayv1.RouteAck) error {
 			attempt.grantExpiresAtMS = 0
 			attempt.grantSignature = nil
 			s.lastError = "Relay rejected pairing decision: " + ack.ErrorCode
+			s.mu.Unlock()
 			return nil
 		}
+	}
+	s.mu.Unlock()
+	if kind != "" {
+		s.log.Event("remote.delivery_rejected", map[string]any{"kind": kind, "errorCode": ack.ErrorCode})
 	}
 	return nil
 }
@@ -619,7 +629,7 @@ func (s *Service) handleSessionData(data *relayv1.SessionData) error {
 		return errors.New("invalid remote control request")
 	}
 	if !scopeAllows(session.pairing.Scopes, request.Method) {
-		return s.sendControl(session, protocol.ControlResponse{Type: "response", ID: request.ID, Error: &protocol.ControlError{Code: "forbidden", Message: "pairing scope does not allow method"}})
+		return s.sendControl(session, protocol.ControlResponse{Type: "response", ID: request.ID, Contract: request.Contract, Error: &protocol.ControlError{Code: "forbidden", Message: "pairing scope does not allow method"}})
 	}
 	response := s.control(request)
 	if request.Method == "system.status" && response.Error == nil {
@@ -641,6 +651,11 @@ func (s *Service) sendControl(session *sessionState, value any) error {
 	if err != nil {
 		return err
 	}
+	// Encrypting advances the Noise send sequence. Keep encryption and the
+	// corresponding Relay write together so concurrent responses/events cannot
+	// put a later sequence number on the wire first.
+	session.writeMu.Lock()
+	defer session.writeMu.Unlock()
 	ciphertext, sequence, err := session.secure.encrypt(body, time.Now().Add(time.Minute))
 	if err != nil {
 		return err
@@ -648,7 +663,24 @@ func (s *Service) sendControl(session *sessionState, value any) error {
 	pairingID, _ := uuid.Parse(session.pairing.ID)
 	mobileID, _ := uuid.Parse(session.pairing.MobileDeviceID)
 	sessionID := session.secure.binding.SessionID
-	return s.send(&relayv1.ClientFrame{WireMajor: wireMajor, WireMinor: wireMinor, MessageId: newMessageID(), Body: &relayv1.ClientFrame_SessionData{SessionData: &relayv1.SessionData{PairingId: pairingID[:], SessionId: sessionID, RecipientDeviceId: mobileID[:], SenderSequence: sequence, TrafficClass: relayv1.TrafficClass_TRAFFIC_CLASS_CONTROL, CreatedAtMs: time.Now().UnixMilli(), ExpiresAtMs: time.Now().Add(time.Minute).UnixMilli(), Ciphertext: ciphertext}}})
+	messageID := newMessageID()
+	kind := "response"
+	if _, ok := value.(protocol.Event); ok {
+		kind = "event"
+	}
+	s.mu.Lock()
+	if s.sentControl == nil {
+		s.sentControl = make(map[string]string)
+	}
+	s.sentControl[string(messageID)] = kind
+	s.mu.Unlock()
+	err = s.send(&relayv1.ClientFrame{WireMajor: wireMajor, WireMinor: wireMinor, MessageId: messageID, Body: &relayv1.ClientFrame_SessionData{SessionData: &relayv1.SessionData{PairingId: pairingID[:], SessionId: sessionID, RecipientDeviceId: mobileID[:], SenderSequence: sequence, TrafficClass: relayv1.TrafficClass_TRAFFIC_CLASS_CONTROL, CreatedAtMs: time.Now().UnixMilli(), ExpiresAtMs: time.Now().Add(time.Minute).UnixMilli(), Ciphertext: ciphertext}}})
+	if err != nil {
+		s.mu.Lock()
+		delete(s.sentControl, string(messageID))
+		s.mu.Unlock()
+	}
+	return err
 }
 
 func (s *Service) closeSession(sessionID []byte) {
@@ -666,6 +698,12 @@ func (s *Service) forwardEvents(ctx context.Context, events <-chan protocol.Even
 			if !ok {
 				return
 			}
+			event.Contract = protocol.MobileControlContract
+			// Events are invalidation hints for Mobile. The next bounded snapshot
+			// carries the authoritative timeline, so never send provider payloads
+			// (which can contain large command output/diffs) over the relay event
+			// path.
+			event.Payload = nil
 			s.mu.RLock()
 			sessions := make([]*sessionState, 0, len(s.sessions))
 			for _, session := range s.sessions {
@@ -762,8 +800,9 @@ func (s *Service) signalWake() {
 
 func scopeAllows(scopes []string, method string) bool {
 	required := map[string]string{
-		"system.status": "status.read", "instance.list": "status.read", "instance.get": "status.read",
-		"conversation.list": "conversation.read", "conversation.read": "conversation.read", "conversation.subscribe": "conversation.read",
+		"system.status": "status.read", "instance.list": "status.read", "instance.get": "status.read", "agent.list": "status.read",
+		"project.list":      "conversation.read",
+		"conversation.list": "conversation.read", "conversation.read": "conversation.read", "conversation.timeline.list": "conversation.read", "conversation.content.read": "conversation.read", "conversation.subscribe": "conversation.read",
 		"turn.start": "turn.start", "turn.interrupt": "turn.interrupt",
 		"action.list": "action.read", "action.resolve": "action.resolve",
 		"attachment.begin": "attachment.write", "attachment.chunk": "attachment.write", "attachment.commit": "attachment.write",
@@ -818,8 +857,8 @@ func normalizeRelayURL(value string) (string, error) {
 	if err != nil || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
 		return "", errors.New("relay URL must be an origin without path, query, or fragment")
 	}
-	if parsed.Scheme != "https" && !(parsed.Scheme == "http" && (parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "localhost")) {
-		return "", errors.New("relay URL must use HTTPS except for loopback development")
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", errors.New("relay URL must use HTTP or HTTPS")
 	}
 	return strings.TrimRight(parsed.String(), "/"), nil
 }

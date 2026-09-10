@@ -1,0 +1,6 @@
+/.tools/
+!/core/
+!/core/**
+/app/android/app/libs/*.aar
+/app/android/app/libs/*.jar
+/app/android/app/src/main/jniLibs/

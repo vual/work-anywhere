@@ -5,7 +5,10 @@ import (
 	"time"
 )
 
-const APIRevision = "v1"
+const (
+	APIRevision           = "v1"
+	MobileControlContract = "mobile-control-v1"
+)
 
 type Hello struct {
 	Role        string             `json:"role"`
@@ -41,17 +44,19 @@ type RuntimeDescriptor struct {
 }
 
 type ControlRequest struct {
-	Type   string          `json:"type"`
-	ID     string          `json:"id"`
-	Method string          `json:"method"`
-	Params json.RawMessage `json:"params,omitempty"`
+	Type     string          `json:"type"`
+	ID       string          `json:"id"`
+	Contract string          `json:"contract,omitempty"`
+	Method   string          `json:"method"`
+	Params   json.RawMessage `json:"params,omitempty"`
 }
 
 type ControlResponse struct {
-	Type   string        `json:"type"`
-	ID     string        `json:"id"`
-	Result any           `json:"result,omitempty"`
-	Error  *ControlError `json:"error,omitempty"`
+	Type     string        `json:"type"`
+	ID       string        `json:"id"`
+	Contract string        `json:"contract,omitempty"`
+	Result   any           `json:"result,omitempty"`
+	Error    *ControlError `json:"error,omitempty"`
 }
 
 type ControlError struct {
@@ -61,6 +66,7 @@ type ControlError struct {
 
 type Event struct {
 	Type           string `json:"type"`
+	Contract       string `json:"contract,omitempty"`
 	Sequence       int64  `json:"sequence"`
 	Event          string `json:"event"`
 	InstanceID     string `json:"instanceId,omitempty"`

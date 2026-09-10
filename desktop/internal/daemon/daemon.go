@@ -47,6 +47,8 @@ type Manager struct {
 	nextSubscriber uint64
 	uploadMu       sync.Mutex
 	uploads        map[string]*attachmentUpload
+	contentRefMu   sync.Mutex
+	contentRefs    map[string]mobileContentRef
 	traffic        *traffic.Recorder
 	remote         *remote.Service
 	log            *logging.Logger
@@ -108,7 +110,7 @@ func Run(ctx context.Context, version string) error {
 		stateStore.Close()
 		return err
 	}
-	m := &Manager{ctx: ctx, cancel: cancel, version: version, startedAt: time.Now(), listener: listener, job: job, store: stateStore, instances: make(map[string]*Instance), subscribers: make(map[uint64]chan protocol.Event), uploads: make(map[string]*attachmentUpload), traffic: traffic.New(filepath.Join(dataDir, "logs", "traffic")), log: logger}
+	m := &Manager{ctx: ctx, cancel: cancel, version: version, startedAt: time.Now(), listener: listener, job: job, store: stateStore, instances: make(map[string]*Instance), subscribers: make(map[uint64]chan protocol.Event), uploads: make(map[string]*attachmentUpload), contentRefs: make(map[string]mobileContentRef), traffic: traffic.New(filepath.Join(dataDir, "logs", "traffic")), log: logger}
 	remoteService, err := remote.New(stateStore, m.control, m.subscribe, logger)
 	if err != nil {
 		listener.Close()
@@ -282,8 +284,31 @@ func (m *Manager) handleControl(conn *clientConn) {
 	}
 }
 
-func (m *Manager) control(request protocol.ControlRequest) protocol.ControlResponse {
-	response := protocol.ControlResponse{Type: "response", ID: request.ID}
+func (m *Manager) control(request protocol.ControlRequest) (response protocol.ControlResponse) {
+	started := time.Now()
+	response = protocol.ControlResponse{Type: "response", ID: request.ID, Contract: request.Contract}
+	defer func() {
+		if request.Contract != protocol.MobileControlContract {
+			return
+		}
+		encoded, _ := json.Marshal(response)
+		if len(encoded) > mobileControlResponseBytes {
+			response.Result = nil
+			response.Error = &protocol.ControlError{Code: "response_too_large", Message: "control response exceeds 512 KiB"}
+			encoded, _ = json.Marshal(response)
+		}
+		if m.log != nil {
+			code := ""
+			if response.Error != nil {
+				code = response.Error.Code
+			}
+			m.log.Event("mobile.control", map[string]any{"method": request.Method, "durationMs": time.Since(started).Milliseconds(), "responseBytes": len(encoded), "errorCode": code})
+		}
+	}()
+	if request.Contract != "" && request.Contract != protocol.MobileControlContract {
+		response.Error = &protocol.ControlError{Code: "unsupported_contract", Message: "unsupported control contract: " + request.Contract}
+		return response
+	}
 	if m.controlPaused.Load() && isMutatingControlMethod(request.Method) {
 		response.Error = &protocol.ControlError{Code: "control_paused", Message: "local control is paused from the tray menu"}
 		return response
@@ -301,6 +326,12 @@ func (m *Manager) control(request protocol.ControlRequest) protocol.ControlRespo
 		response.Result = map[string]any{"paused": false}
 	case "instance.list":
 		response.Result = m.instanceSnapshots()
+	case "agent.list":
+		if request.Contract != protocol.MobileControlContract {
+			response.Error = &protocol.ControlError{Code: "contract_required", Message: "agent.list requires mobile-control-v1"}
+		} else {
+			response.Result = m.mobileAgents()
+		}
 	case "instance.get":
 		var params struct {
 			InstanceID string `json:"instanceId"`
@@ -329,8 +360,55 @@ func (m *Manager) control(request protocol.ControlRequest) protocol.ControlRespo
 		} else {
 			response.Result = instance.Snapshot()
 		}
-	case "conversation.list", "conversation.read", "turn.start", "turn.interrupt", "catalog.models":
-		instance, params, err := m.controlTarget(request.Params)
+	case "project.list":
+		if request.Contract != protocol.MobileControlContract {
+			response.Error = &protocol.ControlError{Code: "contract_required", Message: "project.list requires mobile-control-v1"}
+			break
+		}
+		instance, params, err := m.mobileControlTarget(request.Params)
+		if err != nil {
+			response.Error = &protocol.ControlError{Code: "invalid_target", Message: err.Error()}
+			break
+		}
+		result, callErr := instance.Call(m.ctx, "project/list", params)
+		if callErr != nil {
+			response.Error = &protocol.ControlError{Code: "provider_error", Message: callErr.Error()}
+		} else if response.Result, callErr = normalizeProjectList(instance.descriptor.ID, result); callErr != nil {
+			response.Error = &protocol.ControlError{Code: "invalid_provider_response", Message: callErr.Error()}
+		}
+	case "conversation.read", "conversation.timeline.list", "conversation.content.read":
+		if request.Contract != protocol.MobileControlContract {
+			response.Error = &protocol.ControlError{Code: "contract_required", Message: request.Method + " requires mobile-control-v1"}
+			break
+		}
+		instance, params, err := m.mobileControlTarget(request.Params)
+		if err != nil {
+			response.Error = &protocol.ControlError{Code: "invalid_target", Message: err.Error()}
+			break
+		}
+		var result any
+		switch request.Method {
+		case "conversation.read":
+			result, err = m.mobileConversationRead(instance, params)
+		case "conversation.timeline.list":
+			result, err = m.mobileTimelineList(instance, params)
+		case "conversation.content.read":
+			result, err = m.mobileContentRead(instance, params)
+		}
+		if err != nil {
+			response.Error = mobileControlError(err)
+		} else {
+			response.Result = result
+		}
+	case "conversation.list", "turn.start", "turn.interrupt", "catalog.models":
+		var instance *Instance
+		var params json.RawMessage
+		var err error
+		if request.Contract == protocol.MobileControlContract {
+			instance, params, err = m.mobileControlTarget(request.Params)
+		} else {
+			instance, params, err = m.controlTarget(request.Params)
+		}
 		if err != nil {
 			response.Error = &protocol.ControlError{Code: "invalid_target", Message: err.Error()}
 			break
@@ -354,21 +432,45 @@ func (m *Manager) control(request protocol.ControlRequest) protocol.ControlRespo
 				break
 			}
 		}
-		result, callErr := instance.Call(m.ctx, method, params)
+		var result json.RawMessage
+		var callErr error
+		if request.Contract == protocol.MobileControlContract && request.Method == "conversation.list" {
+			result, callErr = m.mobileConversationList(instance, params)
+		} else {
+			result, callErr = instance.Call(m.ctx, method, params)
+		}
 		if callErr != nil {
 			response.Error = &protocol.ControlError{Code: "provider_error", Message: callErr.Error()}
+		} else if request.Contract == protocol.MobileControlContract && request.Method == "conversation.list" {
+			response.Result, callErr = normalizeConversationList(instance.descriptor.ID, result)
+			if callErr != nil {
+				response.Error = &protocol.ControlError{Code: "invalid_provider_response", Message: callErr.Error()}
+			}
 		} else {
 			response.Result = result
 		}
 	case "action.list":
-		instance, _, err := m.controlTarget(request.Params)
+		var instance *Instance
+		var err error
+		if request.Contract == protocol.MobileControlContract {
+			instance, _, err = m.mobileControlTarget(request.Params)
+		} else {
+			instance, _, err = m.controlTarget(request.Params)
+		}
 		if err != nil {
 			response.Error = &protocol.ControlError{Code: "invalid_target", Message: err.Error()}
 		} else {
 			response.Result = instance.Actions()
 		}
 	case "action.resolve":
-		instance, params, err := m.controlTarget(request.Params)
+		var instance *Instance
+		var params json.RawMessage
+		var err error
+		if request.Contract == protocol.MobileControlContract {
+			instance, params, err = m.mobileControlTarget(request.Params)
+		} else {
+			instance, params, err = m.controlTarget(request.Params)
+		}
 		if err != nil {
 			response.Error = &protocol.ControlError{Code: "invalid_target", Message: err.Error()}
 			break
@@ -387,7 +489,14 @@ func (m *Manager) control(request protocol.ControlRequest) protocol.ControlRespo
 			response.Result = map[string]any{"resolved": true}
 		}
 	case "catalog.permissionProfiles":
-		instance, params, err := m.controlTarget(request.Params)
+		var instance *Instance
+		var params json.RawMessage
+		var err error
+		if request.Contract == protocol.MobileControlContract {
+			instance, params, err = m.mobileControlTarget(request.Params)
+		} else {
+			instance, params, err = m.controlTarget(request.Params)
+		}
 		if err != nil {
 			response.Error = &protocol.ControlError{Code: "invalid_target", Message: err.Error()}
 			break
@@ -399,19 +508,39 @@ func (m *Manager) control(request protocol.ControlRequest) protocol.ControlRespo
 			response.Result = result
 		}
 	case "conversation.subscribe":
-		instance, params, err := m.controlTarget(request.Params)
+		var instance *Instance
+		var params json.RawMessage
+		var err error
+		if request.Contract == protocol.MobileControlContract {
+			instance, params, err = m.mobileControlTarget(request.Params)
+		} else {
+			instance, params, err = m.controlTarget(request.Params)
+		}
 		if err != nil {
 			response.Error = &protocol.ControlError{Code: "invalid_target", Message: err.Error()}
 		} else {
-			response.Result = instance.ConversationSubscription(params)
+			if request.Contract == protocol.MobileControlContract {
+				response.Result = instance.MobileConversationSubscription(params)
+			} else {
+				response.Result = instance.ConversationSubscription(params)
+			}
 		}
 	case "attachment.begin":
+		rawParams := request.Params
+		if request.Contract == protocol.MobileControlContract {
+			_, normalized, err := m.mobileControlTarget(request.Params)
+			if err != nil {
+				response.Error = &protocol.ControlError{Code: "invalid_target", Message: err.Error()}
+				break
+			}
+			rawParams = normalized
+		}
 		var params struct {
 			InstanceID, ConversationID, MimeType, FileName string
 			Size                                           int64
 		}
-		if json.Unmarshal(request.Params, &params) != nil || params.InstanceID == "" || params.MimeType == "" {
-			response.Error = &protocol.ControlError{Code: "invalid_params", Message: "instanceId and mimeType are required"}
+		if json.Unmarshal(rawParams, &params) != nil || params.InstanceID == "" || params.MimeType == "" {
+			response.Error = &protocol.ControlError{Code: "invalid_params", Message: "target and mimeType are required"}
 			break
 		}
 		if params.Size < 0 || params.Size > maxAttachmentBytes {

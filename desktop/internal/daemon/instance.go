@@ -716,7 +716,17 @@ func (i *Instance) CheckExpectedRevision(params json.RawMessage) error {
 	return nil
 }
 
+const mobileSubscriptionEventLimit = 64
+
 func (i *Instance) ConversationSubscription(params json.RawMessage) any {
+	return i.conversationSubscription(params, false)
+}
+
+func (i *Instance) MobileConversationSubscription(params json.RawMessage) any {
+	return i.conversationSubscription(params, true)
+}
+
+func (i *Instance) conversationSubscription(params json.RawMessage, mobile bool) any {
 	var request struct {
 		ThreadID string `json:"threadId"`
 		Cursor   int64  `json:"cursor"`
@@ -752,9 +762,36 @@ func (i *Instance) ConversationSubscription(params json.RawMessage) any {
 	if !cursorValid {
 		events = append([]protocol.Event(nil), projection.Events...)
 	}
+	if mobile {
+		// Mobile treats subscription events as invalidation hints and obtains
+		// authoritative content through the bounded conversation snapshot. Do
+		// not resend event payloads, which may contain command output or diffs.
+		// If the client is too far behind, force a snapshot instead of returning
+		// an unbounded replay from the in-memory/store projection.
+		if !cursorValid || len(events) > mobileSubscriptionEventLimit {
+			events = make([]protocol.Event, 0)
+			cursorValid = false
+		} else {
+			metadata := make([]protocol.Event, 0, len(events))
+			for _, event := range events {
+				event.Payload = nil
+				metadata = append(metadata, event)
+			}
+			events = metadata
+		}
+	}
 	result := map[string]any{"threadId": projection.ID, "status": projection.Status, "revision": projection.Revision, "sequence": projection.Sequence, "events": events, "snapshot": !cursorValid}
 	i.mu.Unlock()
 	return result
+}
+
+func (i *Instance) ConversationVersion(threadID string) (revision, sequence int64) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if projection := i.conversations[threadID]; projection != nil {
+		return projection.Revision, projection.Sequence
+	}
+	return 0, 0
 }
 
 func (i *Instance) Snapshot() InstanceSnapshot {

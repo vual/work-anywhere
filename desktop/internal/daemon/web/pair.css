@@ -1,0 +1,27 @@
+.pair-qr {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  margin: 18px 0;
+  padding: 18px;
+  border-radius: 18px;
+  background: #fff;
+}
+
+.pair-qr[hidden] {
+  display: none;
+}
+
+.pair-qr img {
+  display: block;
+  width: min(320px, 80vw);
+  height: auto;
+  image-rendering: pixelated;
+}
+
+.pair-qr .meta {
+  max-width: 420px;
+  margin: 0;
+  text-align: center;
+  color: #4b5563;
+}

@@ -1,0 +1,153 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+
+import '../../app/localization.dart';
+import '../../app/theme.dart';
+import '../../core/models.dart';
+import '../workspace/workspace_controller.dart';
+
+class ProjectScreen extends ConsumerStatefulWidget {
+  const ProjectScreen({required this.projectId, super.key});
+  final String projectId;
+
+  @override
+  ConsumerState<ProjectScreen> createState() => _ProjectScreenState();
+}
+
+class _ProjectScreenState extends ConsumerState<ProjectScreen> {
+  final List<ConversationSummary> _items = [];
+  String? _cursor;
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    Future<void>.microtask(_load);
+  }
+
+  Future<void> _load() async {
+    final workspace = ref.read(workspaceProvider).value;
+    if (workspace?.selectedAgentId == null) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final response = await ref.read(coreGatewayProvider).call(
+        'conversation.list',
+        {
+          'agentId': workspace!.selectedAgentId,
+          'projectId': widget.projectId,
+          'limit': 15,
+          if (_cursor != null) 'cursor': _cursor,
+          'sortKey': 'updated_at',
+          'sortDirection': 'desc',
+        },
+      );
+      final result = response['result'] as Map<String, dynamic>? ?? const {};
+      final next = ((result['items'] as List<dynamic>?) ?? const [])
+          .cast<Map<String, dynamic>>()
+          .map(ConversationSummary.fromJson);
+      setState(() {
+        _items.addAll(next);
+        _cursor = result['nextCursor'] as String?;
+      });
+    } catch (error) {
+      setState(() => _error = error.toString());
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final workspace = ref.watch(workspaceProvider).value;
+    final project = workspace?.projects
+        .where((item) => item.id == widget.projectId)
+        .firstOrNull;
+    return Scaffold(
+      appBar: AppBar(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              project?.name ?? context.l10n.project,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+            ),
+            if (project?.root.isNotEmpty == true)
+              Text(
+                project!.root,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+          ],
+        ),
+      ),
+      body: _error != null && _items.isEmpty
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(context.l10n.loadProjectFailed),
+                  TextButton(onPressed: _load, child: Text(context.l10n.retry)),
+                ],
+              ),
+            )
+          : ListView.builder(
+              padding: const EdgeInsets.only(bottom: 30),
+              itemCount: _items.length + 1,
+              itemBuilder: (context, index) {
+                if (index == _items.length) {
+                  if (_loading) {
+                    return const Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Center(child: CircularProgressIndicator()),
+                    );
+                  }
+                  if (_cursor != null) {
+                    return TextButton(
+                      onPressed: _load,
+                      child: Text(context.l10n.showMore),
+                    );
+                  }
+                  return const SizedBox(height: 24);
+                }
+                final item = _items[index];
+                return ListTile(
+                  minTileHeight: 74,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 22),
+                  title: Text(
+                    item.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: item.preview.isEmpty
+                      ? null
+                      : Text(
+                          item.preview,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                  trailing: item.running
+                      ? const SizedBox.square(
+                          dimension: 19,
+                          child: CircularProgressIndicator(
+                            color: wawBlue,
+                            strokeWidth: 2.5,
+                          ),
+                        )
+                      : null,
+                  onTap: () => context.push('/conversation/${item.id}'),
+                );
+              },
+            ),
+    );
+  }
+}
+
+extension _FirstOrNull<T> on Iterable<T> {
+  T? get firstOrNull => isEmpty ? null : first;
+}

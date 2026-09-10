@@ -17,7 +17,8 @@
 
 ## Phase 2 — production Mobile
 
-- 建立 `mobile/` 模块与文档索引，选择 iOS/Android 技术栈和 secure storage。
+- 按 [`mobile/docs/README.md`](../../../mobile/docs/README.md) 的既定方案创建 Flutter 应用工程和平台 secure storage bridge。
+- 先完成规范化 Desktop Mobile DTO、真实二维码展示和跨语言 crypto golden vectors 三个发布门槛。
 - 实现 Ed25519/X25519 identity、扫码、grant 验证、Noise session、scope UX 和 revoke。
 - 实现任务状态、完整历史、实时输出、审批/问题、interrupt、文字/图片输入、模型/思考/权限选择。
 - 实现前后台重连、cursor/snapshot 恢复和禁止 daemon offline 时提交写命令。
@@ -51,7 +52,7 @@
 
 - Relay server/protocol/deployment：`relay/cmd/relay/`, `relay/internal/`, `relay/proto/`, `relay/migrations/`
 - Desktop adapter：`desktop/internal/remote/`, `desktop/internal/daemon/`
-- Mobile：未来 `mobile/`
+- Mobile：`mobile/`（方案文档已建立，应用代码尚未实现）
 - CI/release：`.github/workflows/`, `relay/scripts/`
 
 ## 验证方式

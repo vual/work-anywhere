@@ -6,6 +6,7 @@
   <title>Work Anywhere</title>
   <link rel="icon" type="image/svg+xml" href="/waw-app-icon.svg">
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/pair.css">
 </head>
 <body>
   <main>
@@ -24,6 +25,7 @@
     </section>
     <section class="panel">
       <div class="section-title"><div><h2>移动端配对</h2><p class="meta">生成 URI 后交给移动端；移动端提交后在这里批准</p></div><button id="pair-start" class="primary">生成配对 URI</button></div>
+      <div id="pair-qr-wrap" class="pair-qr" hidden><img id="pair-qr" alt="Work Anywhere 移动端配对二维码"><p class="meta">使用 Work Anywhere Mobile 扫描；二维码包含一次性 secret，请勿分享截图。</p></div>
       <label>当前配对 URI<textarea id="pair-uri" rows="4" readonly placeholder="点击“生成配对 URI”"></textarea></label>
       <div class="actions"><button id="pair-copy">复制 URI</button><button id="pair-refresh">刷新配对状态</button></div>
       <h3>待处理配对</h3><div id="pair-attempts" class="instances"></div>

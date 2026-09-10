@@ -13,7 +13,7 @@ The bridge preserves Codex App Server JSONL bytes over a per-user ACL-protected 
 
 The normal path uses the official stdio transport. The bridge recognizes `app-server` even when ChatGPT prepends global Codex options such as `-c key=value`. `--standalone-ws` is retained only for diagnostics against Codex's experimental WebSocket transport; it is not used by the daemon architecture.
 
-The daemon also contains an optional outbound Relay connector. It performs device enrollment, explicit QR-URI pairing, Noise end-to-end encryption, remote scope enforcement, event forwarding, and generic push hints without exposing the local Pipe or administration listener.
+The daemon also contains an optional outbound Relay connector. It performs device enrollment, explicit QR-URI pairing, Noise end-to-end encryption, remote scope enforcement, paginated Mobile conversation synchronization, event forwarding, and generic push hints without exposing the local Pipe or administration listener.
 
 Shared Bridge/daemon logic lives under `internal/`; operating-system adapters live under `internal/platform/`, and installer/signing assets belong under `packaging/<platform>/`. Windows x64 is the only currently supported runtime target. See the [platform support design](docs/platform-support/design.md) for the current capability matrix.
 

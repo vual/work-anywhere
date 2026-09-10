@@ -1,6 +1,6 @@
 # End-to-end encrypted remote sessions
 
-> 状态：Go reference implementation 已完成；正式 Mobile 接入和独立安全审查尚未完成。
+> 状态：Go endpoint reference 已公开给 Mobile Core 复用并通过 round-trip/tamper tests；Android artifact E2E 与独立安全审查尚未完成。
 
 ## Goal and scope
 
@@ -67,9 +67,9 @@ outer header 只保留路由所需的 sender、recipient、pairing/session ID、
 
 ## Code ownership
 
-- Relay Go reference：`relay/internal/e2ee/`；服务端只路由 handshake/ciphertext，不解密。
+- Relay Go reference：`relay/pkg/endpoint/e2ee/`；`relay/internal/e2ee/` 仅为兼容转发层，服务端只路由 handshake/ciphertext，不解密。
 - Desktop：`desktop/internal/remote/`，长期 key 通过 Desktop 加密 settings 保存。
-- 开发 Mobile reference：`relay/internal/devmobile/`；正式 Mobile crypto adapter 尚未实现。
+- Mobile endpoint client：`relay/pkg/endpoint/client/` 对外提供 facade，当前实现由 `relay/internal/devmobile/` 承载；Android Core 位于 `mobile/core/mobilecore/`。
 
 ## Verification
 

@@ -1,0 +1,561 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Work Anywhere">
+    <link rel="apple-touch-icon" href="icon.png">
+    <link rel="icon" href="icon.png">
+    <title>Work Anywhere · Mobile prototype v2</title>
+    <style>
+      :root {
+        --canvas: #18201b;
+        --paper: #f4f3ed;
+        --surface: #fffefa;
+        --surface-2: #eceee8;
+        --ink: #142019;
+        --muted: #6e7a72;
+        --faint: #98a29b;
+        --line: #d9ded7;
+        --green: #209653;
+        --green-soft: #e1f2e6;
+        --blue: #2864dc;
+        --blue-soft: #e7efff;
+        --amber: #b96721;
+        --amber-soft: #faeadb;
+        --red: #b7423e;
+        --shadow: 0 22px 70px rgba(3, 15, 8, 0.26);
+        --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Noto Sans SC", sans-serif;
+        font-family: var(--font);
+      }
+
+      * { box-sizing: border-box; }
+      html, body { margin: 0; width: 100%; height: 100%; overscroll-behavior: none; }
+      body { display: grid; place-items: center; background: var(--canvas); color: var(--ink); }
+      button, input { font: inherit; }
+      button { border: 0; cursor: pointer; color: inherit; }
+      button:focus-visible, input:focus-visible { outline: 3px solid rgba(40, 100, 220, 0.32); outline-offset: 2px; }
+      #app {
+        width: 100vw;
+        height: 100vh;
+        padding-top: env(safe-area-inset-top);
+        padding-bottom: env(safe-area-inset-bottom);
+        background: var(--paper);
+        overflow: hidden;
+        position: relative;
+      }
+
+      @media (min-width: 700px) {
+        #app {
+          width: 390px;
+          height: 844px;
+          border-radius: 44px;
+          box-shadow: var(--shadow);
+        }
+      }
+
+      .app-shell { height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+      .screen { height: 100%; display: flex; flex-direction: column; animation: screen-in 220ms cubic-bezier(.2,.8,.2,1) both; }
+      @keyframes screen-in { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
+
+      .topbar {
+        flex: 0 0 auto;
+        min-height: 70px;
+        padding: 17px 18px 11px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        background: rgba(244, 243, 237, 0.94);
+        backdrop-filter: blur(18px);
+        position: relative;
+        z-index: 4;
+      }
+      .brand { display: flex; align-items: center; gap: 9px; min-width: 0; }
+      .brand-mark { width: 31px; height: 31px; border-radius: 10px; background: var(--ink); color: white; display: grid; place-items: center; font-size: 11px; font-weight: 850; letter-spacing: -.06em; }
+      .brand-copy { min-width: 0; }
+      .brand-name { font-size: 15px; font-weight: 790; letter-spacing: -.025em; white-space: nowrap; }
+      .brand-sub { margin-top: 2px; color: var(--muted); font-size: 10px; }
+
+      .daemon-trigger {
+        min-height: 40px;
+        max-width: 178px;
+        padding: 6px 9px;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        box-shadow: 0 3px 10px rgba(20, 32, 25, .04);
+      }
+      .daemon-trigger-copy { min-width: 0; text-align: left; }
+      .daemon-trigger-name { font-size: 12px; line-height: 1.15; font-weight: 780; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .daemon-trigger-state { margin-top: 2px; font-size: 9px; color: var(--muted); }
+      .chevron { color: var(--muted); font-size: 13px; }
+
+      .status-mark { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+      .status-mark.online { background: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
+      .status-mark.offline { background: #a7aea9; box-shadow: 0 0 0 3px #eceeeb; }
+      .spinner { width: 15px; height: 15px; border: 2px solid #d5dad6; border-top-color: var(--muted); border-radius: 50%; animation: spin 800ms linear infinite; flex: 0 0 auto; }
+      .spinner.run { width: 17px; height: 17px; border-color: #cfdcff; border-top-color: var(--blue); }
+      @keyframes spin { to { transform: rotate(360deg); } }
+
+      .agent-rail {
+        flex: 0 0 auto;
+        padding: 6px 18px 13px;
+        display: flex;
+        gap: 8px;
+        overflow-x: auto;
+        scrollbar-width: none;
+        border-bottom: 1px solid rgba(217, 222, 215, .7);
+      }
+      .agent-rail::-webkit-scrollbar { display: none; }
+      .agent-chip {
+        min-height: 38px;
+        padding: 6px 11px 6px 7px;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 13px;
+        white-space: nowrap;
+        transition: 150ms ease;
+      }
+      .agent-chip.active { background: var(--surface); border-color: var(--line); box-shadow: 0 4px 14px rgba(20, 32, 25, .05); }
+      .agent-chip:active { transform: scale(.97); }
+      .agent-monogram { width: 25px; height: 25px; border-radius: 8px; display: grid; place-items: center; font-size: 9px; font-weight: 850; background: #dde4de; color: #425047; }
+      .agent-chip.active .agent-monogram { background: var(--ink); color: white; }
+      .agent-chip.disabled .agent-monogram { background: #ece9e2; color: #888b86; }
+      .agent-label { font-size: 11px; font-weight: 720; }
+      .agent-beta { color: var(--faint); font-size: 8px; font-weight: 700; letter-spacing: .06em; }
+
+      .scroll { flex: 1; overflow-y: auto; padding: 0 18px 28px; scrollbar-width: none; overscroll-behavior-y: contain; }
+      .scroll::-webkit-scrollbar { display: none; }
+      .section { margin-top: 20px; }
+      .section-head { min-height: 28px; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 7px; }
+      .section-title { font-size: 13px; font-weight: 820; letter-spacing: -.01em; }
+      .section-note { font-size: 10px; color: var(--muted); }
+      .pending-button { padding: 6px 9px; border-radius: 10px; background: var(--amber-soft); color: var(--amber); font-size: 10px; font-weight: 760; }
+
+      .group { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; }
+      .row {
+        width: 100%;
+        min-height: 62px;
+        padding: 11px 13px;
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        text-align: left;
+        background: var(--surface);
+        border-bottom: 1px solid #e8ebe6;
+        transition: background 140ms ease;
+      }
+      .row:last-child { border-bottom: 0; }
+      .row:active { background: #f3f5f0; }
+      .row-symbol { width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; flex: 0 0 auto; background: var(--surface-2); color: #566159; font-size: 11px; font-weight: 850; }
+      .row-symbol.project { position: relative; border-radius: 9px 9px 11px 11px; background: #e7e1d5; color: #685e4f; }
+      .row-symbol.project::before { content: ""; position: absolute; width: 14px; height: 4px; border-radius: 3px 3px 0 0; top: -3px; left: 4px; background: #d7cbb8; }
+      .row-main { min-width: 0; flex: 1; }
+      .row-title { font-size: 13px; font-weight: 750; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .row-meta { margin-top: 4px; color: var(--muted); font-size: 10px; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .row-side { flex: 0 0 auto; min-width: 50px; text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+      .row-time { color: var(--faint); font-size: 9px; }
+      .running-label { color: var(--blue); font-size: 9px; font-weight: 760; }
+      .action-label { padding: 3px 6px; border-radius: 7px; color: var(--amber); background: var(--amber-soft); font-size: 8px; font-weight: 780; }
+      .row-arrow { color: #9ba49d; font-size: 17px; }
+
+      .expand-button { width: 100%; min-height: 44px; margin-top: 8px; border-radius: 13px; background: transparent; color: var(--green); font-size: 11px; font-weight: 780; }
+      .expand-button:active { background: var(--green-soft); }
+      .search-launcher { width: 100%; min-height: 50px; margin-top: 10px; padding: 0 14px; display: flex; align-items: center; gap: 10px; text-align: left; border-radius: 16px; background: var(--ink); color: white; }
+      .search-glyph { width: 23px; height: 23px; border: 2px solid rgba(255,255,255,.7); border-radius: 50%; position: relative; flex: 0 0 auto; }
+      .search-glyph::after { content: ""; width: 7px; height: 2px; background: rgba(255,255,255,.7); position: absolute; right: -5px; bottom: 1px; transform: rotate(45deg); border-radius: 2px; }
+      .search-copy { flex: 1; }
+      .search-title { font-size: 12px; font-weight: 740; }
+      .search-sub { color: #bfc8c2; font-size: 9px; margin-top: 2px; }
+
+      .offline-panel, .unsupported-panel { margin-top: 20px; padding: 22px 18px; border-radius: 20px; background: var(--surface); border: 1px solid var(--line); }
+      .panel-kicker { font-size: 10px; color: var(--muted); font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+      .panel-title { margin-top: 10px; font-size: 21px; font-weight: 820; letter-spacing: -.035em; }
+      .panel-copy { margin-top: 8px; color: var(--muted); font-size: 12px; line-height: 1.65; }
+      .primary-button, .secondary-button { min-height: 46px; border-radius: 14px; font-size: 12px; font-weight: 780; }
+      .primary-button { background: var(--ink); color: white; }
+      .secondary-button { background: var(--surface-2); color: var(--ink); }
+      .panel-actions { margin-top: 17px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+      .detail-bar { flex: 0 0 auto; min-height: 66px; padding: 15px 17px 10px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--line); }
+      .back-button { width: 38px; height: 38px; border-radius: 13px; background: var(--surface); border: 1px solid var(--line); font-size: 21px; display: grid; place-items: center; }
+      .detail-heading { min-width: 0; flex: 1; }
+      .detail-title { font-size: 15px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .detail-sub { margin-top: 3px; color: var(--muted); font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .running-pill { display: flex; align-items: center; gap: 6px; color: var(--blue); font-size: 10px; font-weight: 770; }
+
+      .project-summary { margin: 15px 0 4px; display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: end; }
+      .project-name { font-size: 23px; font-weight: 830; letter-spacing: -.04em; }
+      .project-path { margin-top: 5px; font-size: 10px; color: var(--muted); }
+      .project-count { font-size: 10px; color: var(--muted); }
+
+      .timeline { flex: 1; overflow-y: auto; padding: 17px 17px 118px; scrollbar-width: none; }
+      .timeline::-webkit-scrollbar { display: none; }
+      .time-rule { margin: 5px 0 16px; text-align: center; color: var(--faint); font-size: 9px; }
+      .bubble { max-width: 89%; margin-bottom: 12px; padding: 11px 13px; border-radius: 17px; font-size: 12px; line-height: 1.62; }
+      .bubble.user { margin-left: auto; color: white; background: var(--ink); border-bottom-right-radius: 5px; }
+      .bubble.agent { background: var(--surface); border: 1px solid var(--line); border-bottom-left-radius: 5px; }
+      .bubble-label { margin-bottom: 5px; color: var(--muted); font-size: 9px; font-weight: 800; }
+      .bubble.user .bubble-label { color: #b9c8bf; }
+      .tool-block { margin-top: 9px; padding: 9px 10px; border-radius: 10px; background: #eef1ec; color: #48554c; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+      .approval-card { margin: 2px 0 14px; padding: 13px; border-radius: 17px; background: var(--amber-soft); border: 1px solid #eccfb4; }
+      .approval-kicker { color: var(--amber); font-size: 9px; font-weight: 820; letter-spacing: .04em; }
+      .approval-title { margin-top: 8px; font-size: 14px; font-weight: 800; }
+      .approval-copy { margin-top: 5px; color: #725a45; font-size: 11px; line-height: 1.55; }
+      .approval-actions { margin-top: 12px; display: grid; grid-template-columns: 1fr 1.25fr; gap: 8px; }
+      .approval-actions button { min-height: 41px; border-radius: 12px; font-size: 11px; font-weight: 800; }
+      .deny { color: var(--red); background: rgba(255,255,255,.7); border: 1px solid #e9c7c1; }
+      .approve { color: white; background: var(--ink); }
+
+      .composer { position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 14px calc(11px + env(safe-area-inset-bottom)); background: linear-gradient(transparent, var(--paper) 22%); }
+      .composer-inner { min-height: 51px; padding: 7px 8px 7px 9px; display: flex; align-items: center; gap: 7px; background: var(--surface); border: 1px solid var(--line); border-radius: 17px; box-shadow: 0 8px 28px rgba(20,32,25,.11); }
+      .composer input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 12px; }
+      .attach-button, .send-button { width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; font-size: 18px; }
+      .attach-button { background: transparent; color: var(--muted); }
+      .send-button { background: var(--green); color: white; }
+
+      .sheet-backdrop { position: absolute; inset: 0; z-index: 20; background: rgba(10,17,13,.34); animation: fade 160ms ease both; }
+      @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+      .sheet { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 21; max-height: 78%; overflow-y: auto; padding: 10px 10px calc(13px + env(safe-area-inset-bottom)); background: var(--surface); border-radius: 24px 24px 34px 34px; box-shadow: var(--shadow); animation: sheet-in 220ms cubic-bezier(.2,.8,.2,1) both; }
+      @keyframes sheet-in { from { transform: translateY(28px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+      .sheet-handle { width: 34px; height: 4px; border-radius: 4px; background: #d7dcd7; margin: 2px auto 12px; }
+      .sheet-title { padding: 0 7px 8px; font-size: 16px; font-weight: 820; }
+      .daemon-option { width: 100%; min-height: 57px; padding: 9px 10px; display: flex; align-items: center; gap: 11px; text-align: left; border-radius: 14px; background: transparent; }
+      .daemon-option.selected { background: #eef2ec; }
+      .daemon-option-copy { min-width: 0; flex: 1; }
+      .daemon-option-name { font-size: 13px; font-weight: 760; }
+      .daemon-option-state { margin-top: 3px; font-size: 9px; color: var(--muted); }
+      .check { color: var(--green); font-size: 15px; font-weight: 900; }
+      .sheet-actions { margin-top: 8px; padding-top: 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 7px; border-top: 1px solid var(--line); }
+      .sheet-actions button { min-height: 44px; border-radius: 13px; background: #eef1ec; font-size: 11px; font-weight: 760; }
+
+      .search-screen { position: absolute; inset: 0; z-index: 30; background: var(--paper); display: flex; flex-direction: column; animation: screen-in 180ms ease both; }
+      .search-top { padding: 17px 16px 11px; display: flex; align-items: center; gap: 9px; border-bottom: 1px solid var(--line); }
+      .search-field { flex: 1; min-height: 43px; padding: 0 13px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); font-size: 12px; }
+      .cancel-search { min-height: 43px; padding: 0 7px; background: transparent; color: var(--green); font-size: 11px; font-weight: 780; }
+      .search-results { flex: 1; overflow-y: auto; padding: 0 17px 28px; }
+      .empty-search { padding: 54px 20px; text-align: center; color: var(--muted); font-size: 12px; line-height: 1.7; }
+
+      .pair-screen { padding: 22px 20px 24px; justify-content: space-between; background: var(--paper); }
+      .pair-brand { display: flex; align-items: center; gap: 9px; }
+      .pair-stage { margin-top: 30px; }
+      .pair-visual { height: 176px; position: relative; display: grid; place-items: center; }
+      .pair-ring { width: 152px; height: 152px; border: 1px solid #ced6cf; border-radius: 50%; display: grid; place-items: center; position: relative; }
+      .pair-ring::before, .pair-ring::after { content: ""; position: absolute; border: 1px solid #dde3dc; border-radius: 50%; }
+      .pair-ring::before { width: 112px; height: 112px; }
+      .pair-ring::after { width: 72px; height: 72px; }
+      .pair-core { width: 42px; height: 42px; border-radius: 14px; background: var(--ink); color: white; display: grid; place-items: center; font-size: 11px; font-weight: 850; z-index: 1; }
+      .pair-node { width: 12px; height: 12px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 5px var(--green-soft); position: absolute; right: 18px; top: 44px; }
+      .pair-title { margin: 18px 0 0; font-size: 31px; line-height: 1.08; letter-spacing: -.055em; font-weight: 850; }
+      .pair-copy { margin-top: 12px; max-width: 320px; color: var(--muted); font-size: 13px; line-height: 1.7; }
+      .pair-actions { display: grid; gap: 9px; }
+      .pair-actions button { min-height: 52px; border-radius: 16px; font-size: 12px; font-weight: 800; }
+      .pair-hint { margin-top: 11px; text-align: center; color: var(--muted); font-size: 9px; line-height: 1.5; }
+      .candidate { margin-top: 22px; padding: 15px; border-radius: 18px; background: var(--surface); border: 1px solid var(--line); }
+      .candidate-row { padding: 10px 0; display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid #e9ece7; font-size: 11px; }
+      .candidate-row:last-child { border-bottom: 0; }
+      .candidate-row span:first-child { color: var(--muted); }
+      .candidate-row span:last-child { font-weight: 740; text-align: right; }
+
+      .toast { position: absolute; z-index: 60; left: 50%; bottom: 24px; transform: translate(-50%, 12px); padding: 10px 13px; border-radius: 12px; background: var(--ink); color: white; font-size: 10px; white-space: nowrap; opacity: 0; pointer-events: none; transition: 180ms ease; }
+      .toast.visible { opacity: 1; transform: translate(-50%, 0); }
+      .hidden { display: none; }
+
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script>
+      const daemons = [
+        { id: "home", name: "Home PC", state: "online", detail: "在线 · 安全连接" },
+        { id: "studio", name: "Studio", state: "connecting", detail: "正在连接" },
+        { id: "laptop", name: "Travel laptop", state: "offline", detail: "离线 · 18 分钟前" }
+      ];
+
+      const agents = [
+        { id: "codex-1", name: "Codex 1", mark: "C1", supported: true },
+        { id: "codex-2", name: "Codex 2", mark: "C2", supported: true },
+        { id: "claude", name: "Claude Code", mark: "CC", supported: false },
+        { id: "hermes", name: "Hermes", mark: "H", supported: false, navigation: "bots" },
+        { id: "opencode", name: "OpenCode", mark: "O", supported: false },
+        { id: "pi", name: "Pi", mark: "P", supported: false }
+      ];
+
+      const projects = [
+        ["work-anywhere", "D:/CodeSpace/work-anywhere", "24 个对话 · 2 个运行中", "刚刚"],
+        ["northstar-api", "D:/CodeSpace/northstar-api", "18 个对话 · 1 个运行中", "8 分钟"],
+        ["quiet-reader", "D:/Labs/quiet-reader", "9 个对话", "31 分钟"],
+        ["atlas-console", "D:/Client/atlas-console", "14 个对话", "今天"],
+        ["relay-benchmark", "D:/Labs/relay-benchmark", "7 个对话", "昨天"],
+        ["docs-portal", "D:/CodeSpace/docs-portal", "12 个对话", "周一"],
+        ["mobile-sandbox", "D:/Labs/mobile-sandbox", "6 个对话", "周一"],
+        ["invoice-agent", "D:/Client/invoice-agent", "11 个对话", "上周"],
+        ["edge-observer", "D:/CodeSpace/edge-observer", "5 个对话", "上周"],
+        ["sandbox-policy", "D:/Labs/sandbox-policy", "8 个对话", "8月28日"],
+        ["command-center", "D:/Client/command-center", "16 个对话", "8月26日"],
+        ["prompt-fixtures", "D:/Labs/prompt-fixtures", "4 个对话", "8月24日"],
+        ["release-tools", "D:/CodeSpace/release-tools", "10 个对话", "8月20日"],
+        ["timeline-kit", "D:/Labs/timeline-kit", "3 个对话", "8月18日"]
+      ].map((p, index) => ({ id: `p${index + 1}`, name: p[0], path: p[1], meta: p[2], time: p[3] }));
+
+      const conversationTitles = [
+        "重做 Mobile 单工作台原型", "梳理 Agent 与 Project DTO", "修复 Relay 重连后的旧回调", "审查配对二维码安全边界", "补齐 Android Keystore 测试",
+        "优化 conversation cursor 恢复", "对比 gomobile AAR 包体", "设计项目分页查询", "检查 action first-valid-wins", "重构 Desktop Provider adapter",
+        "分析 Noise transport vectors", "补充 iOS 前后台恢复", "整理 APNs token rotation", "修复 Markdown renderer 链接策略", "验证 48 MiB 图片上传",
+        "准备 Codex project 聚合", "添加 daemon 状态探测", "统一错误码本地化", "检查 protobuf breaking baseline", "压测 10k WSS 连接",
+        "完善隐私遮罩交互", "设计 Hermes Bot capability", "清理旧 simulator 文案", "更新 release checklist", "核对 Windows installer",
+        "审查 scope allowlist", "补充 project 搜索 fixture", "处理 action 推送冷启动", "复核 sequence gap 行为", "生成 threat model 清单",
+        "整理本周架构决策", "验证 Desktop 多实例", "改进 timeline tool block", "修复项目排序并列", "准备真机 E2E 脚本"
+      ];
+
+      const conversations = conversationTitles.map((title, index) => ({
+        id: `c${index + 1}`,
+        title,
+        projectId: projects[index % projects.length].id,
+        project: projects[index % projects.length].name,
+        time: index === 0 ? "刚刚" : index < 4 ? `${index * 3} 分钟` : index < 12 ? "今天" : index < 22 ? "昨天" : "上周",
+        running: [0, 2, 6, 16].includes(index),
+        action: [3, 8].includes(index)
+      }));
+
+      const state = {
+        screen: "home",
+        paired: true,
+        pairingStep: "start",
+        selectedDaemon: "home",
+        selectedAgentByDaemon: { home: "codex-1", studio: "codex-2", laptop: "codex-1" },
+        daemonSheet: false,
+        expandedProjects: false,
+        project: null,
+        projectExpanded: false,
+        conversation: null,
+        conversationBack: "home",
+        searchOpen: false,
+        searchQuery: "",
+        approved: false,
+        sent: false,
+        toast: ""
+      };
+
+      const app = document.getElementById("app");
+      let searchRenderTimer = null;
+      const currentDaemon = () => daemons.find((daemon) => daemon.id === state.selectedDaemon) || daemons[0];
+      const currentAgent = () => agents.find((agent) => agent.id === state.selectedAgentByDaemon[state.selectedDaemon]) || agents[0];
+      const escapeAttribute = (value) => String(value).replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+      const statusVisual = (daemon, withText = false) => {
+        if (daemon.state === "connecting") return `<span class="spinner" aria-hidden="true"></span>${withText ? `<span>${daemon.detail}</span>` : ""}`;
+        return `<span class="status-mark ${daemon.state}" aria-hidden="true"></span>${withText ? `<span>${daemon.detail}</span>` : ""}`;
+      };
+
+      function topbar() {
+        const daemon = currentDaemon();
+        return `<header class="topbar">
+          <div class="brand"><span class="brand-mark">W·A</span><span class="brand-copy"><span class="brand-name">Work Anywhere</span><span class="brand-sub">本机 Agent 控制台</span></span></div>
+          <button class="daemon-trigger" id="daemon-trigger" aria-label="当前电脑 ${daemon.name}，${daemon.detail}">
+            ${statusVisual(daemon)}
+            <span class="daemon-trigger-copy"><span class="daemon-trigger-name">${daemon.name}</span><span class="daemon-trigger-state">${daemon.detail}</span></span>
+            <span class="chevron">⌄</span>
+          </button>
+        </header>`;
+      }
+
+      function agentRail() {
+        const selected = currentAgent();
+        return `<div class="agent-rail" aria-label="Agent 列表">${agents.map((agent) => `<button class="agent-chip ${selected.id === agent.id ? "active" : ""} ${agent.supported ? "" : "disabled"}" data-agent="${agent.id}" aria-pressed="${selected.id === agent.id}"><span class="agent-monogram">${agent.mark}</span><span class="agent-label">${agent.name}</span>${agent.supported ? "" : `<span class="agent-beta">预留</span>`}</button>`).join("")}</div>`;
+      }
+
+      function daemonSheet() {
+        if (!state.daemonSheet) return "";
+        return `<button class="sheet-backdrop" id="close-sheet" aria-label="关闭电脑列表"></button><section class="sheet" aria-label="选择电脑"><div class="sheet-handle"></div><div class="sheet-title">选择 Daemon</div>${daemons.map((daemon) => `<button class="daemon-option ${daemon.id === state.selectedDaemon ? "selected" : ""}" data-daemon="${daemon.id}">${statusVisual(daemon)}<span class="daemon-option-copy"><span class="daemon-option-name">${daemon.name}</span><span class="daemon-option-state">${daemon.detail}</span></span>${daemon.id === state.selectedDaemon ? `<span class="check">✓</span>` : ""}</button>`).join("")}<div class="sheet-actions"><button id="add-daemon">＋ 添加电脑</button><button id="manage-daemons">管理与设置</button></div></section>`;
+      }
+
+      function projectRows(limit) {
+        return projects.slice(0, limit).map((project) => `<button class="row" data-project="${project.id}"><span class="row-symbol project">${project.name.slice(0, 1).toUpperCase()}</span><span class="row-main"><span class="row-title">${project.name}</span><span class="row-meta">${project.path} · ${project.meta}</span></span><span class="row-side"><span class="row-time">${project.time}</span><span class="row-arrow">›</span></span></button>`).join("");
+      }
+
+      function conversationRows(items) {
+        return items.map((conversation) => `<button class="row" data-conversation="${conversation.id}"><span class="row-symbol">${conversation.title.slice(0, 1)}</span><span class="row-main"><span class="row-title">${conversation.title}</span><span class="row-meta">${conversation.project} · ${conversation.time}</span></span><span class="row-side">${conversation.running ? `<span class="spinner run" aria-hidden="true"></span><span class="running-label">运行中</span>` : conversation.action ? `<span class="action-label">待处理</span>` : `<span class="row-arrow">›</span>`}</span></button>`).join("");
+      }
+
+      function homeContent() {
+        const daemon = currentDaemon();
+        const agent = currentAgent();
+        if (daemon.state === "offline") {
+          return `<main class="scroll"><section class="offline-panel"><div class="panel-kicker">Daemon offline</div><div class="panel-title">电脑暂时离线</div><div class="panel-copy">Travel laptop 当前不可达。Work Anywhere 不会在离线时缓存命令，重新连接后会从电脑读取最新状态。</div><div class="panel-actions"><button class="primary-button" data-toast="正在重新探测 Travel laptop">重新连接</button><button class="secondary-button" id="offline-switch">切换电脑</button></div></section></main>`;
+        }
+        if (daemon.state === "connecting") {
+          return `<main class="scroll"><section class="offline-panel"><div class="panel-kicker">Secure session</div><div class="panel-title">正在建立安全连接</div><div class="panel-copy">验证设备身份、协商 Noise session，并同步 Studio 上的 Agent。完成前不会开放任何写操作。</div><div class="panel-actions"><button class="primary-button" id="finish-connect">模拟连接完成</button><button class="secondary-button" id="offline-switch">切换电脑</button></div></section></main>`;
+        }
+        if (!agent.supported) {
+          const noun = agent.navigation === "bots" ? "Bot" : "项目";
+          return `<main class="scroll"><section class="unsupported-panel"><div class="panel-kicker">Provider discovered</div><div class="panel-title">${agent.name} 已发现</div><div class="panel-copy">此 Agent 已由 Daemon 发现，但 Mobile V1 优先完成 Codex。${agent.name === "Hermes" ? `Hermes 将在这里展示 ${noun} 列表，而不是复用 Codex 项目模型。` : "项目、对话与写操作尚未开放。"}</div><div class="panel-actions"><button class="primary-button" data-agent="codex-1">返回 Codex 1</button><button class="secondary-button" data-toast="已记录后续适配意向">了解</button></div></section></main>`;
+        }
+
+        const projectLimit = state.expandedProjects ? projects.length : 10;
+        return `<main class="scroll" id="home-scroll">
+          <section class="section"><div class="section-head"><span class="section-title">最近项目</span><span class="section-note">按最后活动排序</span></div><div class="group">${projectRows(projectLimit)}</div>${projects.length > 10 ? `<button class="expand-button" id="expand-projects">${state.expandedProjects ? "收起项目" : `展开更多项目 · 还有 ${projects.length - 10} 个`}</button>` : ""}</section>
+          <section class="section"><div class="section-head"><span class="section-title">最近对话</span><button class="pending-button" id="pending-actions">2 个待处理</button></div><div class="group">${conversationRows(conversations.slice(0, 30))}</div></section>
+          <section class="section"><div class="section-head"><span class="section-title">查找更早内容</span><span class="section-note">项目与对话</span></div><button class="search-launcher" id="open-search"><span class="search-glyph" aria-hidden="true"></span><span class="search-copy"><span class="search-title">搜索项目和对话</span><span class="search-sub">搜索当前 Agent 的全部可访问记录</span></span><span class="row-arrow">›</span></button></section>
+        </main>`;
+      }
+
+      function homeScreen() {
+        return `<section class="screen" data-screen-label="工作台">${topbar()}${agentRail()}${homeContent()}${daemonSheet()}</section>`;
+      }
+
+      function projectScreen() {
+        const project = state.project;
+        const projectItems = Array.from({ length: 18 }, (_, index) => ({
+          id: `${project.id}-c${index + 1}`,
+          title: index === 0 ? `完善 ${project.name} 的 Mobile 适配` : `${project.name} · ${["审查实现边界", "补充回归测试", "整理接口契约", "修复状态恢复", "更新交付说明"][index % 5]} ${index + 1}`,
+          projectId: project.id,
+          project: project.name,
+          time: index < 2 ? `${index * 6 + 2} 分钟` : index < 7 ? "今天" : "本周",
+          running: index === 0 || index === 5,
+          action: index === 3
+        }));
+        const limit = state.projectExpanded ? 18 : 15;
+        return `<section class="screen" data-screen-label="项目对话列表"><header class="detail-bar"><button class="back-button" id="back-home" aria-label="返回工作台">‹</button><span class="detail-heading"><span class="detail-title">项目对话</span><span class="detail-sub">${currentDaemon().name} · ${currentAgent().name}</span></span></header><main class="scroll"><div class="project-summary"><div><div class="project-name">${project.name}</div><div class="project-path">${project.path}</div></div><div class="project-count">最近 ${limit} 条</div></div><section class="section"><div class="group">${conversationRows(projectItems.slice(0, limit))}</div>${limit < projectItems.length ? `<button class="expand-button" id="more-project-conversations">显示更多 · 还有 ${projectItems.length - limit} 条</button>` : ""}</section></main></section>`;
+      }
+
+      function conversationScreen() {
+        const conversation = state.conversation;
+        const isRunning = conversation.running !== false;
+        return `<section class="screen" data-screen-label="对话详情"><header class="detail-bar"><button class="back-button" id="back-list" aria-label="返回列表">‹</button><span class="detail-heading"><span class="detail-title">${conversation.title}</span><span class="detail-sub">${conversation.project} · ${currentAgent().name}</span></span>${isRunning ? `<span class="running-pill"><span class="spinner run" aria-hidden="true"></span>运行中</span>` : ""}</header><main class="timeline"><div class="time-rule">今天 · 10:18</div><div class="bubble user"><div class="bubble-label">你</div>请按新的单工作台结构调整 Mobile 原型，重点检查 Daemon、Agent、项目和对话之间的层级。</div><div class="bubble agent"><div class="bubble-label">Codex · 运行中</div>我已经把底部导航移除，并将 Daemon selector 固定在右上角。当前正在校验项目分页和跨项目搜索的状态恢复。<div class="tool-block">mobile/docs/product-interaction/design.md</div></div>${state.approved ? `<div class="bubble agent"><div class="bubble-label">Codex · 已继续</div>已收到确认。我会继续更新交互测试，并保持其他 Provider 为未适配状态。</div>` : `<section class="approval-card"><div class="approval-kicker">APPROVAL · 需要确认</div><div class="approval-title">允许更新 Mobile 交互测试？</div><div class="approval-copy">将增加 Daemon/Agent 恢复、10/30/15 列表数量和搜索状态的验证。</div><div class="approval-actions"><button class="deny" id="deny-action">拒绝</button><button class="approve" id="approve-action">允许本次</button></div></section>`}<div class="bubble agent"><div class="bubble-label">同步状态</div>${state.sent ? "新指令已提交，正在等待电脑确认。" : "会话通过 snapshot + sequence 保持同步。"}</div></main><div class="composer"><div class="composer-inner"><button class="attach-button" data-toast="图片选择器将在正式 App 中打开" aria-label="添加图片">＋</button><input id="message-input" placeholder="继续告诉 Codex…"><button class="send-button" id="send-message" aria-label="发送">↑</button></div></div></section>`;
+      }
+
+      function searchScreen() {
+        const query = state.searchQuery.trim().toLowerCase();
+        const matchedProjects = query ? projects.filter((project) => `${project.name} ${project.path}`.toLowerCase().includes(query)) : [];
+        const matchedConversations = query ? conversations.filter((conversation) => `${conversation.title} ${conversation.project}`.toLowerCase().includes(query)) : [];
+        return `<section class="search-screen" data-screen-label="联合搜索"><header class="search-top"><input class="search-field" id="search-input" value="${escapeAttribute(state.searchQuery)}" placeholder="搜索项目和对话" autocomplete="off"><button class="cancel-search" id="close-search">取消</button></header><main class="search-results">${!query ? `<div class="empty-search">输入项目名、路径或对话标题<br>搜索当前 ${currentAgent().name} 的全部记录</div>` : `<section class="section"><div class="section-head"><span class="section-title">项目</span><span class="section-note">${matchedProjects.length} 个结果</span></div>${matchedProjects.length ? `<div class="group">${matchedProjects.map((project) => `<button class="row" data-project="${project.id}"><span class="row-symbol project">${project.name.slice(0,1).toUpperCase()}</span><span class="row-main"><span class="row-title">${project.name}</span><span class="row-meta">${project.path}</span></span><span class="row-arrow">›</span></button>`).join("")}</div>` : `<div class="section-note">没有匹配项目</div>`}</section><section class="section"><div class="section-head"><span class="section-title">对话</span><span class="section-note">${matchedConversations.length} 个结果</span></div>${matchedConversations.length ? `<div class="group">${conversationRows(matchedConversations)}</div>` : `<div class="section-note">没有匹配对话</div>`}</section>`}</main></section>`;
+      }
+
+      function pairScreen() {
+        if (state.pairingStep === "candidate") {
+          return `<section class="screen pair-screen" data-screen-label="确认配对"><div><div class="pair-brand"><span class="brand-mark">W·A</span><span class="brand-name">Work Anywhere</span></div><div class="pair-stage"><div class="panel-kicker">Unverified candidate</div><h1 class="pair-title">向这台电脑<br>发起连接？</h1><p class="pair-copy">二维码在电脑确认之前并不代表信任。请核对 Relay 和短指纹，再在 Desktop 上批准。</p><div class="candidate"><div class="candidate-row"><span>Relay</span><span>relay.example.com</span></div><div class="candidate-row"><span>短指纹</span><span>7C3A · 91F2</span></div><div class="candidate-row"><span>有效期</span><span>04:42</span></div></div></div></div><div class="pair-actions"><button class="primary-button" id="request-pair">向电脑发起连接</button><button class="secondary-button" id="cancel-pair">取消</button></div></section>`;
+        }
+        if (state.pairingStep === "waiting") {
+          return `<section class="screen pair-screen" data-screen-label="等待电脑确认"><div><div class="pair-brand"><span class="brand-mark">W·A</span><span class="brand-name">Work Anywhere</span></div><div class="pair-stage"><div class="pair-visual"><div class="pair-ring"><div class="pair-core">PC</div><span class="pair-node"></span></div></div><div class="panel-kicker">Secure pairing</div><h1 class="pair-title">等待电脑确认</h1><p class="pair-copy">请在 Work Anywhere Desktop 中核对指纹并批准。配对成功后会自动进入工作台。</p></div></div><div class="pair-actions"><button class="secondary-button" id="cancel-pair">取消</button></div></section>`;
+        }
+        return `<section class="screen pair-screen" data-screen-label="添加配对"><div><div class="pair-brand"><span class="brand-mark">W·A</span><span class="brand-name">Work Anywhere</span></div><div class="pair-stage"><div class="pair-visual"><div class="pair-ring"><div class="pair-core">W·A</div><span class="pair-node"></span></div></div><div class="panel-kicker">Your computer, within reach</div><h1 class="pair-title">连接你的<br>第一台电脑</h1><p class="pair-copy">扫描 Desktop 生成的二维码。会话内容使用端到端加密，Relay 只负责转发密文。</p></div></div><div><div class="pair-actions"><button class="primary-button" id="scan-pair">扫描二维码</button><button class="secondary-button" id="paste-pair">粘贴配对链接</button></div><div class="pair-hint">配对必须在电脑端明确批准 · 不使用云端账号</div></div></section>`;
+      }
+
+      function managementScreen() {
+        return `<section class="screen" data-screen-label="Daemon 管理"><header class="detail-bar"><button class="back-button" id="back-home" aria-label="返回工作台">‹</button><span class="detail-heading"><span class="detail-title">电脑与设置</span><span class="detail-sub">配对、通知和隐私</span></span></header><main class="scroll"><section class="section"><div class="section-head"><span class="section-title">已配对电脑</span><span class="section-note">${daemons.length} 台</span></div><div class="group">${daemons.map((daemon) => `<div class="row">${statusVisual(daemon)}<span class="row-main"><span class="row-title">${daemon.name}</span><span class="row-meta">${daemon.detail} · Noise E2EE</span></span><span class="row-arrow">›</span></div>`).join("")}</div></section><section class="section"><div class="section-head"><span class="section-title">设置</span></div><div class="group"><button class="row" data-toast="通知设置已打开"><span class="row-symbol">N</span><span class="row-main"><span class="row-title">通用通知</span><span class="row-meta">不在锁屏显示任务正文</span></span><span class="row-arrow">›</span></button><button class="row" data-toast="应用锁设置已打开"><span class="row-symbol">L</span><span class="row-main"><span class="row-title">应用锁与隐私遮罩</span><span class="row-meta">离开应用 1 分钟后锁定</span></span><span class="row-arrow">›</span></button><button class="row" id="preview-unpaired"><span class="row-symbol">P</span><span class="row-main"><span class="row-title">预览首次打开</span><span class="row-meta">临时进入无 Daemon 的添加配对界面</span></span><span class="row-arrow">›</span></button></div></section></main></section>`;
+      }
+
+      function toast() {
+        return `<div class="toast ${state.toast ? "visible" : ""}">${state.toast}</div>`;
+      }
+
+      function render() {
+        let content;
+        if (!state.paired || state.screen === "pair") content = pairScreen();
+        else if (state.screen === "project") content = projectScreen();
+        else if (state.screen === "conversation") content = conversationScreen();
+        else if (state.screen === "management") content = managementScreen();
+        else content = homeScreen();
+        app.innerHTML = `<div class="app-shell">${content}${state.searchOpen ? searchScreen() : ""}${toast()}</div>`;
+        bind();
+      }
+
+      function showToast(message) {
+        state.toast = message;
+        render();
+        window.clearTimeout(showToast.timer);
+        showToast.timer = window.setTimeout(() => { state.toast = ""; render(); }, 1600);
+      }
+
+      function selectProject(id) {
+        state.project = projects.find((project) => project.id === id) || projects[0];
+        state.projectExpanded = false;
+        state.searchOpen = false;
+        state.screen = "project";
+        render();
+      }
+
+      function selectConversation(id) {
+        state.conversationBack = state.screen === "project" ? "project" : "home";
+        const projectConversation = state.project ? projectConversations(state.project).find((conversation) => conversation.id === id) : null;
+        state.conversation = conversations.find((conversation) => conversation.id === id) || projectConversation || { id, title: "项目内对话", project: state.project?.name || "work-anywhere", running: true };
+        state.searchOpen = false;
+        state.screen = "conversation";
+        render();
+      }
+
+      function bind() {
+        document.getElementById("daemon-trigger")?.addEventListener("click", () => { state.daemonSheet = true; render(); });
+        document.getElementById("close-sheet")?.addEventListener("click", () => { state.daemonSheet = false; render(); });
+        document.querySelectorAll("[data-daemon]").forEach((button) => button.addEventListener("click", () => {
+          state.selectedDaemon = button.dataset.daemon;
+          state.daemonSheet = false;
+          state.screen = "home";
+          render();
+        }));
+        document.querySelectorAll("[data-agent]").forEach((button) => button.addEventListener("click", () => {
+          state.selectedAgentByDaemon[state.selectedDaemon] = button.dataset.agent;
+          state.screen = "home";
+          render();
+        }));
+        document.getElementById("expand-projects")?.addEventListener("click", () => { state.expandedProjects = !state.expandedProjects; render(); });
+        document.querySelectorAll("[data-project]").forEach((button) => button.addEventListener("click", () => selectProject(button.dataset.project)));
+        document.querySelectorAll("[data-conversation]").forEach((button) => button.addEventListener("click", () => selectConversation(button.dataset.conversation)));
+        document.getElementById("more-project-conversations")?.addEventListener("click", () => { state.projectExpanded = true; render(); });
+        document.getElementById("back-home")?.addEventListener("click", () => { state.screen = "home"; render(); });
+        document.getElementById("back-list")?.addEventListener("click", () => { state.screen = state.conversationBack; render(); });
+        document.getElementById("open-search")?.addEventListener("click", () => { state.searchOpen = true; state.searchQuery = ""; render(); window.setTimeout(() => document.getElementById("search-input")?.focus(), 40); });
+        document.getElementById("close-search")?.addEventListener("click", () => { state.searchOpen = false; state.searchQuery = ""; render(); });
+        document.getElementById("search-input")?.addEventListener("input", (event) => {
+          state.searchQuery = event.target.value;
+          window.clearTimeout(searchRenderTimer);
+          searchRenderTimer = window.setTimeout(() => {
+            render();
+            const input = document.getElementById("search-input");
+            input?.focus();
+            input?.setSelectionRange(input.value.length, input.value.length);
+          }, 160);
+        });
+        document.getElementById("pending-actions")?.addEventListener("click", () => selectConversation("c4"));
+        document.getElementById("approve-action")?.addEventListener("click", () => { state.approved = true; showToast("已批准本次操作"); });
+        document.getElementById("deny-action")?.addEventListener("click", () => showToast("已拒绝，任务保持暂停"));
+        document.getElementById("send-message")?.addEventListener("click", () => {
+          const input = document.getElementById("message-input");
+          if (input?.value.trim()) { state.sent = true; showToast("已提交，等待电脑确认"); }
+        });
+        document.getElementById("offline-switch")?.addEventListener("click", () => { state.daemonSheet = true; render(); });
+        document.getElementById("finish-connect")?.addEventListener("click", () => { currentDaemon().state = "online"; currentDaemon().detail = "在线 · 安全连接"; showToast("Studio 已连接"); });
+        document.getElementById("add-daemon")?.addEventListener("click", () => { state.daemonSheet = false; state.screen = "pair"; state.pairingStep = "start"; render(); });
+        document.getElementById("manage-daemons")?.addEventListener("click", () => { state.daemonSheet = false; state.screen = "management"; render(); });
+        document.getElementById("preview-unpaired")?.addEventListener("click", () => { state.paired = false; state.screen = "pair"; state.pairingStep = "start"; render(); });
+        document.getElementById("scan-pair")?.addEventListener("click", () => { state.pairingStep = "candidate"; render(); });
+        document.getElementById("paste-pair")?.addEventListener("click", () => { state.pairingStep = "candidate"; render(); });
+        document.getElementById("request-pair")?.addEventListener("click", () => {
+          state.pairingStep = "waiting";
+          render();
+          window.setTimeout(() => { state.paired = true; state.pairingStep = "start"; state.screen = "home"; state.selectedDaemon = "home"; showToast("Home PC 配对成功"); }, 1500);
+        });
+        document.getElementById("cancel-pair")?.addEventListener("click", () => {
+          if (state.paired) { state.screen = "home"; } else { state.pairingStep = "start"; }
+          render();
+        });
+        document.querySelectorAll("[data-toast]").forEach((button) => button.addEventListener("click", () => showToast(button.dataset.toast)));
+      }
+
+      render();
+    </script>
+  </body>
+</html>

@@ -32,7 +32,8 @@ ping / pong
 
 Remote allowlist：
 
-- `system.status`, `instance.list/get`
+- `system.status`, `instance.list/get`, `agent.list`
+- `project.list`
 - `conversation.list/read/subscribe`
 - `turn.start/interrupt`
 - `action.list/resolve`
@@ -49,9 +50,9 @@ Remote allowlist：
 - socket ping：25 秒，write/ping timeout 10 秒。
 - auth challenge：30 秒；pairing TTL：10 秒到 5 分钟；notify expiry：最多 1 小时。
 
-route 是 at-most-once。`route_ack.accepted` 只表示 frame 进入目标内存队列；`delivery_ack` 可表示 endpoint 接收；业务完成只能由 E2EE response/event 表达。offline、queue full、expired 和 pairing failure 不持久化。
+route 是 at-most-once。`route_ack.accepted` 只表示 frame 进入目标内存队列；`delivery_ack` 可表示 endpoint 接收；业务完成只能由 E2EE response/event 表达。Mobile endpoint 以外层 `message_id` 关联 route ACK，拒绝时立即结束对应请求；断线、迟到 ACK 和未知 ID 不得迁移到新 connection。Desktop 对被拒绝的 response/event 只记录 kind 与错误码，不自动重发业务结果。offline、queue full、expired 和 pairing failure 不持久化。
 
-当前 server 对 auth/pairing/push 提供细分 error code；一般 route failure 除 queue full 外会折叠为 `temporarily_unavailable`。更完整稳定错误分类属于发布加固项。
+server 对 auth/pairing/push 提供细分 error code；route 明确区分 `payload_too_large`、`peer_offline`、`queue_full`，其余不可用错误为 `temporarily_unavailable`。routed ciphertext 仍保持 1 MiB，不能通过提高上限承载完整会话历史。
 
 ## 兼容与安全不变量
 
@@ -60,7 +61,8 @@ field number 只能追加，不得重解释；删除字段必须 reserved。Rela
 ## 代码归属
 
 - schema：`proto/waw/relay/v1/relay.proto`
-- canonical transcript/constants：`internal/protocol/`
+- canonical transcript/constants：`pkg/endpoint/protocol/`；`internal/protocol/` 是兼容转发层
+- endpoint Noise/client：`pkg/endpoint/e2ee/`, `pkg/endpoint/client/`
 - generated Relay：`gen/waw/relay/v1/`
 - generated Desktop：`desktop/internal/remote/gen/waw/relay/v1/`
 - generation：`buf*.yaml`, `scripts/generate.ps1`

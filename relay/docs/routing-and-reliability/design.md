@@ -20,7 +20,7 @@ route 是 online-only、bounded、at-most-once。ACK 只表示 enqueue，不表�
 
 ## Backpressure and limits
 
-- WebSocket read limit 2 MiB；pair socket 64 KiB。
+- WebSocket read limit 2 MiB；pair socket 64 KiB。Relay server 和 `internal/devmobile` connect client 都必须显式设置该上限，不能依赖 WebSocket 库默认的 32 KiB 消息限制。
 - routed ciphertext 上限由 protocol 常量限制为 1 MiB。
 - outbound queue 最多 256 frames 或 4 MiB，任一达到即失败。
 - queue full 时 recipient connection 被关闭，sender 收到 `queue_full`。

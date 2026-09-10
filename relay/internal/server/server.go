@@ -466,7 +466,12 @@ func (s *Server) readLoop(ws *websocket.Conn, connection *routing.Connection) er
 		if err = s.route(connection, &frame); err != nil {
 			s.metrics.RouteFailure.Add(1)
 			code := "temporarily_unavailable"
-			if errors.Is(err, routing.ErrQueueFull) {
+			switch {
+			case errors.Is(err, errPayloadTooLarge):
+				code = "payload_too_large"
+			case errors.Is(err, errPeerOffline):
+				code = "peer_offline"
+			case errors.Is(err, routing.ErrQueueFull):
 				code = "queue_full"
 			}
 			_ = s.enqueue(connection, routeAck(frame.MessageId, false, code))
@@ -698,7 +703,7 @@ func (s *Server) route(sender *routing.Connection, frame *relayv1.ClientFrame) e
 	}
 	target, ok := s.registry.Get(recipient)
 	if !ok {
-		return errors.New("peer offline")
+		return errPeerOffline
 	}
 	raw, err := proto.Marshal(forwarded)
 	if err != nil {
@@ -712,6 +717,11 @@ func (s *Server) route(sender *routing.Connection, frame *relayv1.ClientFrame) e
 	}
 	return nil
 }
+
+var (
+	errPayloadTooLarge = errors.New("payload too large")
+	errPeerOffline     = errors.New("peer offline")
+)
 
 func peerIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -733,7 +743,10 @@ func forwardedFrame(sender uuid.UUID, frame *relayv1.ClientFrame) ([]byte, []byt
 		result.Body = &relayv1.ServerFrame_SessionHandshake{SessionHandshake: body.SessionHandshake}
 		return body.SessionHandshake.RecipientDeviceId, body.SessionHandshake.PairingId, result, nil
 	case *relayv1.ClientFrame_SessionData:
-		if len(body.SessionData.Ciphertext) > waProtocol.MaxPayloadBytes || body.SessionData.ExpiresAtMs < time.Now().UnixMilli() {
+		if len(body.SessionData.Ciphertext) > waProtocol.MaxPayloadBytes {
+			return nil, nil, nil, errPayloadTooLarge
+		}
+		if body.SessionData.ExpiresAtMs < time.Now().UnixMilli() {
 			return nil, nil, nil, errors.New("invalid session data")
 		}
 		body.SessionData.SenderDeviceId = sender[:]

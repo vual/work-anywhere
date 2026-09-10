@@ -20,9 +20,9 @@ Relay 只保存公钥。daemon 私钥由 Desktop 平台 secret store 保护（Wi
 公网 Relay 默认使用 `invite` enrollment mode：
 
 1. 运维方生成一次性、高熵 enrollment token，Relay 只保存 token hash、expiry 和剩余次数。
-2. daemon 通过 HTTPS 提交 token、两组公钥、显示名称和协议能力。
+2. daemon 通过 HTTP(S) 提交 token、两组公钥、显示名称和协议能力。
 3. Relay 原子消费 token，创建 `daemon` device，返回随机 daemon ID。
-4. 此后 daemon 不使用长期 bearer token，而是在每次 WSS 连接中签署 server challenge。
+4. 此后 daemon 不使用长期 bearer token，而是在每次 WS(S) 连接中签署 server challenge。
 
 开发环境可显式启用 `open` enrollment 并强制严格 IP/device rate limit；生产默认禁止 open。`disabled` 模式只允许已有 daemon 重连。
 

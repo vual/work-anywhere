@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Work Anywhere app icon</title>
+  <desc id="desc">White connected WAW lettermark and green center dot on black.</desc>
+  <defs>
+    <filter id="shadow" x="-32" y="-32" width="1088" height="1088" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="220" fill="#0A0A0A" stroke="#0A0A0A" stroke-width="4" filter="url(#shadow)"/>
+  <g transform="translate(104 342) scale(4.8)">
+    <path d="M8 18L19 51C20.8 57 24.3 57.4 27.4 51.6L34 38C36.8 32.1 39.6 32.1 42.4 38L49 51.6C52.1 57.4 55.6 57 58.8 51.2L78 17C81.3 11.2 86.7 11.2 90 17L109.2 51.2C112.4 57 115.9 57.4 119 51.6L125.6 38C128.4 32.1 131.2 32.1 134 38L140.6 51.6C143.7 57.4 147.2 57 149 51L160 18" fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="84" cy="41" r="5.5" fill="#34C759"/>
+  </g>
+</svg>

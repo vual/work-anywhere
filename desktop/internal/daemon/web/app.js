@@ -2,6 +2,7 @@ let csrf='';
 let socket=null;
 let socketPromise=null;
 let sequence=0;
+let pairQrObjectUrl='';
 const pending=new Map();
 const q=(id)=>document.getElementById(id);
 
@@ -78,7 +79,7 @@ function renderRemote(remote){
   q('relay-device').textContent=remote.deviceId||'—';
   if(remote.lastError)q('error').textContent=remote.lastError;
   const attempts=Array.isArray(remote.pairAttempts)?remote.pairAttempts:[];
-  if(!q('pair-uri').value&&attempts[0]&&attempts[0].uri)q('pair-uri').value=attempts[0].uri;
+  if(!q('pair-uri').value&&attempts[0]&&attempts[0].uri){q('pair-uri').value=attempts[0].uri;renderPairQR(attempts[0].uri).catch(showError);}
   q('pair-attempts').innerHTML=attempts.map(attempt=>{
     const identified=attempt.mobileDeviceId||attempt.mobileDisplayName;
     const label=identified?`移动端：${escapeHtml(attempt.mobileDisplayName||attempt.mobileDeviceId)}`:'等待移动端扫码/粘贴 URI';
@@ -89,6 +90,16 @@ function renderRemote(remote){
   q('pairings').innerHTML=pairings.map(pairing=>`<article class="card"><div><h3>${escapeHtml(pairing.displayName||pairing.mobileDeviceId)}</h3><div class="meta">权限：${escapeHtml((pairing.scopes||[]).join(', '))}</div></div><button data-pair-action="revoke" data-pair-id="${escapeHtml(pairing.id)}">撤销</button></article>`).join('')||'<div class="card meta">暂无已授权移动端</div>';
 }
 
+async function renderPairQR(uri){
+  if(!uri){q('pair-qr-wrap').hidden=true;return;}
+  const response=await fetch('/api/pair-qr',{method:'POST',headers:{'content-type':'application/json','X-WA-CSRF':csrf},body:JSON.stringify({uri})});
+  if(!response.ok)throw new Error('无法生成配对二维码');
+  if(pairQrObjectUrl)URL.revokeObjectURL(pairQrObjectUrl);
+  pairQrObjectUrl=URL.createObjectURL(await response.blob());
+  q('pair-qr').src=pairQrObjectUrl;
+  q('pair-qr-wrap').hidden=false;
+}
+
 function escapeHtml(v){return String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));}
 function showError(error){q('error').textContent=error.message||String(error);}
 async function action(fn){q('error').textContent='';try{await fn();await refresh();}catch(error){showError(error);}}
@@ -97,7 +108,7 @@ q('refresh').onclick=()=>action(async()=>{});
 q('relay-configure').onclick=()=>action(()=>call('remote.configure',{relayUrl:q('relay-url').value.trim(),enabled:true}));
 q('relay-enroll').onclick=()=>action(async()=>{await call('remote.enroll',{token:q('relay-token').value,displayName:q('relay-name').value.trim()});q('relay-token').value='';});
 q('relay-reconnect').onclick=()=>action(()=>call('remote.reconnect'));
-q('pair-start').onclick=()=>action(async()=>{const result=await call('remote.pair.start',{ttlSeconds:300});if(result&&result.uri)q('pair-uri').value=result.uri;});
+q('pair-start').onclick=()=>action(async()=>{const result=await call('remote.pair.start',{ttlSeconds:300});if(result&&result.uri){q('pair-uri').value=result.uri;await renderPairQR(result.uri);}});
 q('pair-refresh').onclick=()=>action(()=>call('remote.pair.list'));
 q('pair-copy').onclick=async()=>{try{await navigator.clipboard.writeText(q('pair-uri').value);q('error').textContent='配对 URI 已复制';}catch(error){showError(new Error('复制失败，请手动复制 URI'));}};
 q('pair-attempts').onclick=(event)=>{const button=event.target.closest('[data-pair-action]');if(!button)return;const id=button.dataset.pairId;const operation=button.dataset.pairAction;action(async()=>{if(operation==='approve'||operation==='reject'){if(operation==='reject'&&!confirm('确定拒绝这个移动端配对请求吗？'))return;await call('remote.pair.resolve',{pairingId:id,approved:operation==='approve',scopes:['status.read','conversation.read','turn.start','turn.interrupt','action.read','action.resolve','attachment.write','catalog.read']});}else if(operation==='cancel'){if(!confirm('确定取消这个待处理的配对请求吗？'))return;await call('remote.pair.cancel',{pairingId:id});}});};

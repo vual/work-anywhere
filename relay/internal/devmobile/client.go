@@ -21,8 +21,8 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	relayv1 "github.com/vual/work-anywhere/relay/gen/waw/relay/v1"
-	"github.com/vual/work-anywhere/relay/internal/e2ee"
-	waProtocol "github.com/vual/work-anywhere/relay/internal/protocol"
+	"github.com/vual/work-anywhere/relay/pkg/endpoint/e2ee"
+	waProtocol "github.com/vual/work-anywhere/relay/pkg/endpoint/protocol"
 )
 
 type QRPayload struct {
@@ -37,21 +37,35 @@ type QRPayload struct {
 }
 
 type Client struct {
-	mu        sync.Mutex
-	conn      *websocket.Conn
-	writeMu   sync.Mutex
-	secure    *e2ee.Session
-	pairingID uuid.UUID
-	deviceID  uuid.UUID
-	daemonID  uuid.UUID
-	sessionID []byte
-	scopes    []string
-	pending   map[string]chan json.RawMessage
-	events    []json.RawMessage
-	lastError string
-	connected bool
-	cancel    context.CancelFunc
+	mu            sync.Mutex
+	conn          *websocket.Conn
+	writeMu       sync.Mutex
+	secure        *e2ee.Session
+	pairingID     uuid.UUID
+	deviceID      uuid.UUID
+	daemonID      uuid.UUID
+	sessionID     []byte
+	scopes        []string
+	pending       map[string]chan json.RawMessage
+	pendingRoutes map[string]chan routeResult
+	events        []json.RawMessage
+	lastError     string
+	connected     bool
+	cancel        context.CancelFunc
+	credential    CredentialSet
 }
+
+type routeResult struct {
+	accepted bool
+	code     string
+}
+
+type CallError struct {
+	Code    string
+	Message string
+}
+
+func (e *CallError) Error() string { return e.Message }
 
 type Status struct {
 	Connected bool              `json:"connected"`
@@ -63,13 +77,34 @@ type Status struct {
 	Events    []json.RawMessage `json:"events"`
 }
 
-func New() *Client { return &Client{pending: make(map[string]chan json.RawMessage)} }
+type CredentialSet struct {
+	RelayURL         string   `json:"relayUrl"`
+	PairingID        string   `json:"pairingId"`
+	DaemonDeviceID   string   `json:"daemonDeviceId"`
+	MobileDeviceID   string   `json:"mobileDeviceId"`
+	Ed25519Private   []byte   `json:"ed25519Private"`
+	X25519Private    []byte   `json:"x25519Private"`
+	X25519Public     []byte   `json:"x25519Public"`
+	DaemonX25519     []byte   `json:"daemonX25519"`
+	DaemonCapability []byte   `json:"daemonCapability"`
+	MobileCapability []byte   `json:"mobileCapability"`
+	Scopes           []string `json:"scopes"`
+}
+
+func New() *Client {
+	return &Client{pending: make(map[string]chan json.RawMessage), pendingRoutes: make(map[string]chan routeResult)}
+}
 
 func (c *Client) Pair(ctx context.Context, uri string) error {
 	qr, secret, err := parseQR(uri)
 	if err != nil {
 		return err
 	}
+	defer func() {
+		for index := range secret {
+			secret[index] = 0
+		}
+	}()
 	if qr.ExpiresAtMS <= time.Now().UnixMilli() {
 		return errors.New("pairing QR has expired")
 	}
@@ -121,10 +156,45 @@ func (c *Client) Pair(ctx context.Context, uri string) error {
 	if result.GrantExpiresAtMs < time.Now().UnixMilli() || !ed25519.Verify(ed25519.PublicKey(daemonEd), grantInput, result.GrantSignature) {
 		return errors.New("pairing grant signature is invalid")
 	}
-	for index := range secret {
-		secret[index] = 0
+	if err = c.connect(ctx, qr.RelayURL, pairingID, daemonID, mobileID, edPrivate, xKey, daemonX, daemonCapability, mobileCapability[:], result.Scopes); err != nil {
+		return err
 	}
-	return c.connect(ctx, qr.RelayURL, pairingID, daemonID, mobileID, edPrivate, xKey, daemonX, daemonCapability, mobileCapability[:], result.Scopes)
+	c.mu.Lock()
+	wipeCredential(&c.credential)
+	c.credential = CredentialSet{RelayURL: qr.RelayURL, PairingID: pairingID.String(), DaemonDeviceID: daemonID.String(), MobileDeviceID: mobileID.String(), Ed25519Private: append([]byte(nil), edPrivate...), X25519Private: append([]byte(nil), xKey.Private...), X25519Public: append([]byte(nil), xKey.Public...), DaemonX25519: append([]byte(nil), daemonX...), DaemonCapability: append([]byte(nil), daemonCapability...), MobileCapability: append([]byte(nil), mobileCapability[:]...), Scopes: append([]string(nil), result.Scopes...)}
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *Client) ExportCredentials() ([]byte, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.credential.PairingID == "" {
+		return nil, errors.New("client has no pairing credentials")
+	}
+	return json.Marshal(c.credential)
+}
+
+func (c *Client) Restore(ctx context.Context, raw []byte) error {
+	var credential CredentialSet
+	if err := json.Unmarshal(raw, &credential); err != nil {
+		return errors.New("invalid stored pairing credentials")
+	}
+	pairingID, pairErr := uuid.Parse(credential.PairingID)
+	daemonID, daemonErr := uuid.Parse(credential.DaemonDeviceID)
+	mobileID, mobileErr := uuid.Parse(credential.MobileDeviceID)
+	if pairErr != nil || daemonErr != nil || mobileErr != nil || len(credential.Ed25519Private) != ed25519.PrivateKeySize || len(credential.X25519Private) != 32 || len(credential.X25519Public) != 32 || len(credential.DaemonX25519) != 32 || len(credential.DaemonCapability) == 0 || len(credential.MobileCapability) == 0 || credential.RelayURL == "" {
+		return errors.New("stored pairing credentials are incomplete")
+	}
+	xKey := noise.DHKey{Private: append([]byte(nil), credential.X25519Private...), Public: append([]byte(nil), credential.X25519Public...)}
+	if err := c.connect(ctx, credential.RelayURL, pairingID, daemonID, mobileID, ed25519.PrivateKey(append([]byte(nil), credential.Ed25519Private...)), xKey, credential.DaemonX25519, credential.DaemonCapability, credential.MobileCapability, credential.Scopes); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	wipeCredential(&c.credential)
+	c.credential = credential
+	c.mu.Unlock()
+	return nil
 }
 
 func (c *Client) connect(parent context.Context, relayURL string, pairingID, daemonID, mobileID uuid.UUID, edPrivate ed25519.PrivateKey, xKey noise.DHKey, daemonX, daemonCapability, mobileCapability []byte, scopes []string) error {
@@ -135,6 +205,9 @@ func (c *Client) connect(parent context.Context, relayURL string, pairingID, dae
 		cancel()
 		return err
 	}
+	// coder/websocket defaults to a 32 KiB message read limit, while control
+	// responses can be much larger than that (within the protocol frame limit).
+	connection.SetReadLimit(waProtocol.MaxFrameBytes)
 	keepConnection := false
 	defer func() {
 		if !keepConnection {
@@ -206,38 +279,110 @@ func (c *Client) Call(ctx context.Context, method string, params json.RawMessage
 		params = json.RawMessage(`{}`)
 	}
 	id := uuid.NewString()
-	request, _ := json.Marshal(map[string]any{"type": "request", "id": id, "method": method, "params": params})
+	request, _ := json.Marshal(map[string]any{"type": "request", "id": id, "contract": "mobile-control-v1", "method": method, "params": params})
 	c.mu.Lock()
 	if !c.connected || c.secure == nil {
 		c.mu.Unlock()
-		return nil, errors.New("development mobile is not connected")
+		return nil, &CallError{Code: "peer_offline", Message: "development mobile is not connected"}
 	}
 	waiter := make(chan json.RawMessage, 1)
 	c.pending[id] = waiter
 	secure, pairingID, daemonID, sessionID, connection := c.secure, c.pairingID, c.daemonID, append([]byte(nil), c.sessionID...), c.conn
 	c.mu.Unlock()
+	var routeWaiter chan routeResult
+	var routedMessageID []byte
+	c.writeMu.Lock()
 	ciphertext, sequence, err := secure.Encrypt(e2ee.ControlContentType, request, time.Now().Add(time.Minute))
 	if err == nil {
-		frame := &relayv1.ClientFrame{WireMajor: waProtocol.WireMajor, WireMinor: waProtocol.WireMinor, MessageId: newID(), Body: &relayv1.ClientFrame_SessionData{SessionData: &relayv1.SessionData{PairingId: pairingID[:], SessionId: sessionID, RecipientDeviceId: daemonID[:], SenderSequence: sequence, TrafficClass: relayv1.TrafficClass_TRAFFIC_CLASS_CONTROL, CreatedAtMs: time.Now().UnixMilli(), ExpiresAtMs: time.Now().Add(time.Minute).UnixMilli(), Ciphertext: ciphertext}}}
-		c.writeMu.Lock()
+		routedMessageID = newID()
+		routeWaiter = make(chan routeResult, 1)
+		c.mu.Lock()
+		c.pendingRoutes[string(routedMessageID)] = routeWaiter
+		c.mu.Unlock()
+		frame := &relayv1.ClientFrame{WireMajor: waProtocol.WireMajor, WireMinor: waProtocol.WireMinor, MessageId: routedMessageID, Body: &relayv1.ClientFrame_SessionData{SessionData: &relayv1.SessionData{PairingId: pairingID[:], SessionId: sessionID, RecipientDeviceId: daemonID[:], SenderSequence: sequence, TrafficClass: relayv1.TrafficClass_TRAFFIC_CLASS_CONTROL, CreatedAtMs: time.Now().UnixMilli(), ExpiresAtMs: time.Now().Add(time.Minute).UnixMilli(), Ciphertext: ciphertext}}}
 		err = writeFrame(ctx, connection, frame)
-		c.writeMu.Unlock()
 	}
+	c.writeMu.Unlock()
 	if err != nil {
 		c.mu.Lock()
 		delete(c.pending, id)
+		delete(c.pendingRoutes, string(routedMessageID))
 		c.mu.Unlock()
 		return nil, err
 	}
 	select {
-	case response := <-waiter:
+	case route, ok := <-routeWaiter:
+		if !ok {
+			c.mu.Lock()
+			delete(c.pending, id)
+			c.mu.Unlock()
+			return nil, &CallError{Code: "peer_offline", Message: "Relay connection closed before the request was routed"}
+		}
+		if !route.accepted {
+			code := route.code
+			if code == "" {
+				code = "peer_offline"
+			}
+			c.mu.Lock()
+			delete(c.pending, id)
+			c.mu.Unlock()
+			return nil, &CallError{Code: code, Message: "Relay rejected the request: " + code}
+		}
+	case <-ctx.Done():
+		c.mu.Lock()
+		delete(c.pending, id)
+		delete(c.pendingRoutes, string(routedMessageID))
+		c.mu.Unlock()
+		return nil, &CallError{Code: "request_timeout", Message: ctx.Err().Error()}
+	}
+	select {
+	case response, ok := <-waiter:
+		if !ok {
+			return nil, &CallError{Code: "peer_offline", Message: "Relay connection closed before the response was received"}
+		}
 		return response, nil
 	case <-ctx.Done():
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()
-		return nil, ctx.Err()
+		return nil, &CallError{Code: "request_timeout", Message: ctx.Err().Error()}
 	}
+}
+
+func (c *Client) Close() {
+	c.mu.Lock()
+	if c.cancel != nil {
+		c.cancel()
+		c.cancel = nil
+	}
+	if c.conn != nil {
+		c.conn.CloseNow()
+		c.conn = nil
+	}
+	if c.secure != nil {
+		c.secure.Close()
+		c.secure = nil
+	}
+	c.connected = false
+	wipeCredential(&c.credential)
+	for id, waiter := range c.pending {
+		delete(c.pending, id)
+		close(waiter)
+	}
+	for id, waiter := range c.pendingRoutes {
+		delete(c.pendingRoutes, id)
+		close(waiter)
+	}
+	c.mu.Unlock()
+}
+
+func wipeCredential(value *CredentialSet) {
+	for _, field := range [][]byte{value.Ed25519Private, value.X25519Private, value.X25519Public, value.DaemonX25519, value.DaemonCapability, value.MobileCapability} {
+		for index := range field {
+			field[index] = 0
+		}
+	}
+	*value = CredentialSet{}
 }
 
 func (c *Client) Status() Status {
@@ -257,6 +402,14 @@ func (c *Client) readLoop(ctx context.Context, connection *websocket.Conn) {
 			c.mu.Lock()
 			if c.conn == connection {
 				c.connected, c.lastError = false, err.Error()
+				for id, waiter := range c.pending {
+					delete(c.pending, id)
+					close(waiter)
+				}
+				for id, waiter := range c.pendingRoutes {
+					delete(c.pendingRoutes, id)
+					close(waiter)
+				}
 			}
 			c.mu.Unlock()
 			return
@@ -271,13 +424,21 @@ func (c *Client) readLoop(ctx context.Context, connection *websocket.Conn) {
 			connection.CloseNow()
 			return
 		}
+		if ack := frame.GetRouteAck(); ack != nil {
+			c.handleRouteAck(ack)
+			continue
+		}
 		data := frame.GetSessionData()
 		if data == nil {
 			continue
 		}
 		c.mu.Lock()
 		secure := c.secure
+		activeConnection := c.conn == connection
 		c.mu.Unlock()
+		if !activeConnection || secure == nil {
+			return
+		}
 		payload, decryptErr := secure.Decrypt(data.Ciphertext)
 		if decryptErr != nil || payload.Sequence != data.SenderSequence {
 			connection.CloseNow()
@@ -305,6 +466,18 @@ func (c *Client) readLoop(ctx context.Context, connection *websocket.Conn) {
 	}
 }
 
+func (c *Client) handleRouteAck(ack *relayv1.RouteAck) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	waiter := c.pendingRoutes[string(ack.RoutedMessageId)]
+	if waiter == nil {
+		return false
+	}
+	delete(c.pendingRoutes, string(ack.RoutedMessageId))
+	waiter <- routeResult{accepted: ack.Accepted, code: ack.ErrorCode}
+	return true
+}
+
 func parseQR(uri string) (QRPayload, []byte, error) {
 	parsed, err := url.Parse(uri)
 	if err != nil || parsed.Scheme != "waw" || parsed.Host != "pair" || parsed.Query().Get("v") != "1" {
@@ -327,8 +500,8 @@ func parseQR(uri string) (QRPayload, []byte, error) {
 
 func websocketEndpoint(origin, path string) (string, error) {
 	parsed, err := url.Parse(origin)
-	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && !(parsed.Scheme == "http" && (parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "localhost"))) {
-		return "", errors.New("invalid Relay origin")
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return "", errors.New("invalid Relay HTTP(S) origin")
 	}
 	if parsed.Scheme == "https" {
 		parsed.Scheme = "wss"

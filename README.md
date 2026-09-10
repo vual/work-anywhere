@@ -15,9 +15,11 @@ Work Anywhere(WAW) 的目标是让你在手机上也能实时与电脑端 ChatGP
 
 - `desktop`：连接官方 ChatGPT Codex Desktop，托管官方 Codex App Server，并提供本机控制能力。
 - `relay`：在 Desktop daemon 与移动端之间中继加密连接、状态和通知。
-- `mobile`：查看任务进度、处理审批/问题、接收通知并继续输入。
+- `mobile`：查看任务进度、处理审批/问题并继续输入；Android-first Flutter/Go Core 已开始实现，当前仍处于未发布的测试前阶段。
 
-**Desktop V1 与单节点 Relay V1 已实现**。Desktop 已包含 Relay 出站连接、设备注册、二维码配对、Noise 端到端加密和远程控制适配；Relay 可使用 Docker Compose 与 PostgreSQL 部署。Mobile 正式应用尚未实现，仓库提供仅用于协议和联调的浏览器 Mobile simulator。
+**Desktop V1 与单节点 Relay V1 已实现**。Desktop 已包含 Relay 出站连接、设备注册、真实二维码配对、Noise 端到端加密和 Mobile control adapter；Relay 可使用 Docker Compose 与 PostgreSQL 部署。Mobile 已建立 Android-first Flutter 应用、Go endpoint core、Pigeon/Keystore host 和 tester APK CI，但真机、iOS、push、完整 DTO 与发布验收尚未完成；浏览器 Mobile simulator 仍仅用于协议联调。
+
+Mobile 会话同步使用 metadata snapshot、最近 30 项 timeline 分页和实时增量恢复；旧历史通过 opaque cursor 加载，超过 64 KiB 的单个正文 block 通过临时引用按需分块查看。Desktop control 响应限制为 512 KiB，Relay 继续保持 1 MiB routed payload 上限。
 
 ## 当前能力
 
@@ -87,20 +89,26 @@ work-anywhere/
 │  ├─ compose.yaml              单节点本机部署
 │  ├─ README.md                 Relay 构建、部署和联调入口
 │  └─ docs/                     Relay 当前实现设计与剩余加固项
-└─ desktop/
-   ├─ cmd/work-anywhere/        单 EXE 入口
-   ├─ internal/
-   │  ├─ bridge/                Desktop stdio Bridge
-   │  ├─ daemon/                App Server supervisor 和控制面
-   │  ├─ codex/                 Codex runtime、实例和参数处理
-   │  ├─ jsonrpc/               JSON-RPC envelope 与 ID
-   │  ├─ provider/              可扩展 Provider 接口
-   │  ├─ store/                 SQLite 加密投影
-   │  └─ platform/              Windows/macOS/Linux 平台适配边界
-   ├─ packaging/                各平台安装、签名和发行配置
-   ├─ docs/                     当前状态设计文档
-   ├─ scripts/                  构建脚本
-   └─ testdata/                 官方 App Server schema fixture
+├─ desktop/
+│  ├─ cmd/work-anywhere/        单 EXE 入口
+│  ├─ internal/
+│  │  ├─ bridge/                Desktop stdio Bridge
+│  │  ├─ daemon/                App Server supervisor 和控制面
+│  │  ├─ codex/                 Codex runtime、实例和参数处理
+│  │  ├─ jsonrpc/               JSON-RPC envelope 与 ID
+│  │  ├─ provider/              可扩展 Provider 接口
+│  │  ├─ store/                 SQLite 加密投影
+│  │  └─ platform/              Windows/macOS/Linux 平台适配边界
+│  ├─ packaging/                各平台安装、签名和发行配置
+│  ├─ docs/                     当前状态设计文档
+│  ├─ scripts/                  构建脚本
+│  └─ testdata/                 官方 App Server schema fixture
+└─ mobile/
+   ├─ README.md                 Mobile 产品范围、技术方案和实施入口
+   ├─ core/                     gomobile endpoint facade
+   ├─ app/                      Flutter、Pigeon、Android/iOS host
+   ├─ scripts/                  工具链、测试、生成与 Android 构建入口
+   └─ docs/                     架构、协议同步、交互与交付设计
 ```
 
 共享 Bridge/daemon 业务逻辑不按操作系统复制。系统差异集中在 `desktop/internal/platform/`，发行配置集中在 `desktop/packaging/<platform>/`。当前只有 Windows x64 可运行；macOS/Linux 仅有可交叉编译的适配骨架，详情见[平台支持设计](desktop/docs/platform-support/design.md)。
@@ -313,12 +321,12 @@ cd D:\CodeSpace\work-anywhere\desktop
 .\dist\windows-amd64\work-anywhere.exe self-test
 ```
 
-项目开发规则见 [`AGENTS.md`](AGENTS.md)。Desktop 当前设计和功能文档索引见 [`desktop/docs/README.md`](desktop/docs/README.md)。功能实现发生变化时，必须同步更新所有相关设计文档；设计文档只保留当前最新状态，不作为变更日志。
+项目开发规则见 [`AGENTS.md`](AGENTS.md)。Desktop 当前设计和功能文档索引见 [`desktop/docs/README.md`](desktop/docs/README.md)，Mobile 生产应用方案见 [`mobile/docs/README.md`](mobile/docs/README.md)。功能实现发生变化时，必须同步更新所有相关设计文档；设计文档只保留当前最新状态，不作为变更日志。
 
 ## 当前限制
 
 - 运行支持仅限 Windows x64。
-- Mobile 正式应用尚未实现；浏览器 Mobile simulator 仅用于协议联调，不是生产客户端。
+- Mobile 尚未完成真机和生产发布验收；浏览器 Mobile simulator 仅用于协议联调，不是生产客户端。
 - Relay 已实现 APNs/FCM provider 和 River 队列，但真实 Apple sandbox/FCM 项目验证需要部署者提供凭据。
 - Relay V1 只支持单节点在线路由，不提供离线命令、多节点路由或 Work Anywhere 用户账号。
 - 当前只有 Codex Provider；Claude Code、OpenCode、Hermes、Pi 等 driver 尚未实现。

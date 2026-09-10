@@ -6,7 +6,7 @@
 
 - `desktop/`：Windows Desktop Bridge、daemon、本机控制 API、CLI 和管理入口。
 - `relay/`：Relay 服务模块；当前处于方案阶段，运行代码尚未实现。
-- `mobile/`：预留的移动端模块；创建该模块时必须同时建立模块文档结构。
+- `mobile/`：iOS/Android 客户端；当前已建立产品、架构、协议同步、交互和交付设计，应用代码尚未实现。
 
 各模块必须保持独立的构建入口、依赖定义、测试和设计文档。跨模块共享协议时，应明确协议的所有者，并在所有消费模块的文档中链接同一份规范，不能复制出互相漂移的版本。
 
@@ -20,6 +20,8 @@
 - [`desktop/docs/README.md`](desktop/docs/README.md)：Desktop 功能设计文档索引、文档归属和维护规则。
 - [`relay/README.md`](relay/README.md)：Relay 模块目标、边界、技术栈和实施入口。
 - [`relay/docs/README.md`](relay/docs/README.md)：Relay 功能设计文档索引、协议归属和实施顺序。
+- [`mobile/README.md`](mobile/README.md)：Mobile 产品范围、技术方案、交互入口和实施阶段。
+- [`mobile/docs/README.md`](mobile/docs/README.md)：Mobile 架构、协议同步、交互和交付设计索引。
 
 新增顶层模块时必须创建并在本节明确列出：
 
@@ -93,3 +95,22 @@ go vet ./...
 ```
 
 `go fmt ./...` 后不能遗留未说明的格式改动。涉及连接注册表、并发路由或网络协议时还必须执行 `go test -race ./...`；涉及数据库、协议 schema 或发布镜像时，还必须执行对应设计文档定义的 migration、Buf compatibility、跨语言协议向量和容器 smoke test。
+
+## Mobile validation
+
+Mobile Go Core 或 Flutter 代码变更至少执行：
+
+```powershell
+cd mobile
+.\scripts\test.ps1
+```
+
+Pigeon 接口或 Android Go Core 变更还必须在已配置 `ANDROID_HOME` 且接受本机 Android SDK 许可的环境执行：
+
+```powershell
+cd mobile
+.\scripts\generate.ps1
+.\scripts\build-android.ps1 -Mode debug
+```
+
+生成的 Pigeon 文件必须无 diff；`mobile/app/android/app/libs/mobilecore.aar` 是构建产物，不提交仓库。iOS XCFramework 与 no-sign build 需在 macOS runner 增加后执行，Windows 不将其标记为已验证。

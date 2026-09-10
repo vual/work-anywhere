@@ -29,7 +29,7 @@ services:
   relay:
     build: .
     ports:
-      - "127.0.0.1:${RELAY_HOST_PORT:-18080}:8080"
+      - "${RELAY_HOST_BIND_IP:-127.0.0.1}:${RELAY_HOST_PORT:-18080}:8080"
     environment:
       <<: *relay-env
       RELAY_LISTEN_ADDR: :8080
