@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:work_anywhere/core/models.dart';
 import 'package:work_anywhere/features/pairing/pairing_screen.dart';
+import 'package:work_anywhere/features/workspace/workspace_controller.dart';
+import 'package:work_anywhere/features/workspace/workspace_screen.dart';
 import 'package:work_anywhere/l10n/generated/app_localizations.dart';
 
 void main() {
@@ -36,5 +39,36 @@ void main() {
 
     expect(find.text('Scan QR code'), findsOneWidget);
     expect(find.text('Paste a waw:// pairing link'), findsOneWidget);
+  });
+
+  testWidgets('workspace top bar fits a narrow phone viewport', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    const data = WorkspaceState(
+      needsPairing: false,
+      daemons: [
+        DaemonSummary(
+          id: 'daemon-1',
+          name: 'My PC',
+          phase: ConnectionPhase.online,
+        ),
+      ],
+      selectedDaemonId: 'daemon-1',
+    );
+
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MaterialApp(
+          locale: Locale('zh', 'CN'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: WorkspaceScreen(data: data),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
   });
 }

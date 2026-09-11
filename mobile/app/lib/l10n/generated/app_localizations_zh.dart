@@ -119,6 +119,18 @@ class AppLocalizationsZh extends AppLocalizations {
   String get loadProjectFailed => '无法载入项目对话';
 
   @override
+  String get newConversation => '新建对话';
+
+  @override
+  String get createConversationFailed => '无法新建对话，请稍后重试';
+
+  @override
+  String get createConversationPermissionDenied => '当前配对没有新建对话权限，请重新配对电脑';
+
+  @override
+  String get createConversationDesktopFailed => '电脑端暂时无法新建对话，请检查 Desktop 连接';
+
+  @override
   String get showMore => '显示更多';
 
   @override
@@ -137,6 +149,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get stop => '停止';
+
+  @override
+  String get send => '发送';
 
   @override
   String get conversation => '对话';
@@ -166,6 +181,26 @@ class AppLocalizationsZh extends AppLocalizations {
   String get fullContent => '完整内容';
 
   @override
+  String get externalLinkTitle => '打开外部链接？';
+
+  @override
+  String externalLinkBody(String host) {
+    return '即将打开 $host。请确认这是你信任的网站。';
+  }
+
+  @override
+  String get unsupportedLink => '此链接类型不受支持';
+
+  @override
+  String get externalLinkFailed => '无法打开此链接';
+
+  @override
+  String get open => '打开';
+
+  @override
+  String get remoteImageBlocked => '远程图片已隐藏';
+
+  @override
   String get confirmationRequired => '需要你确认';
 
   @override
@@ -182,6 +217,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get continueWorking => '在电脑上继续工作';
+
+  @override
+  String get addAttachment => '添加附件';
 
   @override
   String get noTimeline => '暂无可显示的内容';

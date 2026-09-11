@@ -8,12 +8,12 @@ Mobile 是 Work Anywhere 的 iOS/Android 客户端。它不连接 Codex 云端�
 
 - 一台手机配对多台 Desktop daemon，一台 Desktop 也可授权多台手机。
 - 查看 Daemon/Agent 在线状态、Codex 项目、会话列表、完整时间线和实时增量；V1 优先完成 Codex，其他 Agent 先保留能力模型。
-- 处理 approval/question、发送文字与图片、选择模型/思考等级/权限配置并中断 Turn。
+- 处理 approval/question、发送文字与图片、选择模型/思考等级/权限配置并中断 Turn；在项目内新建 Codex 对话。
 - 接收只含通用提示的 APNs/FCM 通知；点击后重新建立 E2EE 会话并从 Desktop 同步权威状态。
 - 在前台维持 WSS；退到后台后不依赖长连接或静默推送保证状态同步。
 - 私钥保存在 iOS Keychain 或 Android Keystore 保护的本机密钥包中；V1 不把会话正文写入磁盘。
 
-V1 不提供 Work Anywhere 账号、云端历史、离线命令、新建 Codex thread、后台常驻连接、通知内直接审批、团队共享或 Codex 之外 Provider 的完整适配。Mobile 只能继续 Desktop 已存在的 thread；新增 thread 需先扩展 Desktop control API。Hermes 的 `Bot`、Claude Code、OpenCode、Pi 等只保留 discovery/capability 边界。
+V1 不提供 Work Anywhere 账号、云端历史、离线命令、后台常驻连接、通知内直接审批、团队共享或 Codex 之外 Provider 的完整适配。Mobile 可在已同步的 Codex 项目内新建 thread；Hermes 的 `Bot`、Claude Code、OpenCode、Pi 等只保留 discovery/capability 边界。
 
 ## Architecture
 
@@ -110,7 +110,7 @@ CI 的 `Mobile` workflow 执行 endpoint/Core tests、Pigeon no-diff、Flutter a
 - Relay wire、pairing、E2EE envelope 和 push frame 的唯一所有者是 [`relay/proto`](../relay/proto/waw/relay/v1/) 及 [Relay wire design](../relay/docs/wire-protocol/design.md)。Mobile 只提交生成代码，不复制 schema。
 - 密文内的业务方法由 [Desktop local control](../desktop/docs/local-control/design.md) 所有，Mobile 通过 pairing scopes 限制展示和操作。
 - Relay 不保存业务 ciphertext；Desktop/Codex session 是权威状态。Mobile 的内存 projection 可随时丢弃并重建。
-- Desktop 已提供 `mobile-control-v1`、`agent.list`、`project.list`、project/conversation summary、分页 timeline 和大内容引用；Desktop 管理页可生成真实 QR，Relay endpoint crypto 已成为公开复用包。完整 action/catalog DTO、server-side project search 和跨产物 golden vectors仍是发布门槛。
+- Desktop 已提供 `mobile-control-v1`、`agent.list`、`project.list`、`conversation.create`、project/conversation summary、分页 timeline 和大内容引用；Desktop 管理页可生成真实 QR，Relay endpoint crypto 已成为公开复用包。完整 action/catalog DTO、server-side project search 和跨产物 golden vectors仍是发布门槛。
 
 ## Delivery summary
 

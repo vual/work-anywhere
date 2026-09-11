@@ -55,12 +55,14 @@ type Manager struct {
 }
 
 type attachmentUpload struct {
-	ID, InstanceID, ConversationID, MimeType, FileName string
-	ExpectedSize                                       int64
-	Data                                               []byte
+	ID, InstanceID, ProjectID, ConversationID, MessageID string
+	MimeType, FileName, Path, TemporaryPath              string
+	ExpectedSize, ReceivedSize                           int64
 }
 
 const maxAttachmentBytes = 48 << 20
+const remoteAttachmentDirectory = ".work-anywhere-remote-attachments"
+const staleAttachmentPartAge = 24 * time.Hour
 
 func Run(ctx context.Context, version string) error {
 	ctx, cancel := context.WithCancel(ctx)
@@ -163,6 +165,7 @@ func (m *Manager) close() {
 	if m.stopTray != nil {
 		m.stopTray()
 	}
+	m.abortAttachmentUploads()
 	if m.store != nil {
 		_ = m.store.Close()
 	}
@@ -400,6 +403,32 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 		} else {
 			response.Result = result
 		}
+	case "conversation.create":
+		if request.Contract != protocol.MobileControlContract {
+			response.Error = &protocol.ControlError{Code: "contract_required", Message: "conversation.create requires mobile-control-v1"}
+			break
+		}
+		instance, params, err := m.mobileControlTarget(request.Params)
+		if err != nil {
+			response.Error = &protocol.ControlError{Code: "invalid_target", Message: err.Error()}
+			break
+		}
+		var requestParams struct {
+			ProjectID string `json:"projectId"`
+		}
+		if json.Unmarshal(params, &requestParams) != nil || requestParams.ProjectID == "" {
+			response.Error = &protocol.ControlError{Code: "invalid_params", Message: "projectId is required"}
+			break
+		}
+		result, callErr := instance.Call(m.ctx, "thread/start", params)
+		if callErr != nil {
+			response.Error = &protocol.ControlError{Code: "provider_error", Message: callErr.Error()}
+			break
+		}
+		response.Result, callErr = normalizeConversationCreate(result)
+		if callErr != nil {
+			response.Error = &protocol.ControlError{Code: "invalid_provider_response", Message: callErr.Error()}
+		}
 	case "conversation.list", "turn.start", "turn.interrupt", "catalog.models":
 		var instance *Instance
 		var params json.RawMessage
@@ -528,28 +557,84 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 	case "attachment.begin":
 		rawParams := request.Params
 		if request.Contract == protocol.MobileControlContract {
-			_, normalized, err := m.mobileControlTarget(request.Params)
+			instance, normalized, err := m.mobileControlTarget(request.Params)
 			if err != nil {
 				response.Error = &protocol.ControlError{Code: "invalid_target", Message: err.Error()}
 				break
 			}
-			rawParams = normalized
+			// mobileControlTarget returns provider parameters and intentionally
+			// removes the routing target. Attachments are stored before the
+			// provider call, so retain the resolved owner for the upload record.
+			var object map[string]json.RawMessage
+			if err = json.Unmarshal(normalized, &object); err != nil {
+				response.Error = &protocol.ControlError{Code: "invalid_params", Message: err.Error()}
+				break
+			}
+			object["instanceId"], _ = json.Marshal(instance.descriptor.ID)
+			rawParams, _ = json.Marshal(object)
 		}
 		var params struct {
-			InstanceID, ConversationID, MimeType, FileName string
-			Size                                           int64
+			InstanceID     string `json:"instanceId"`
+			ProjectID      string `json:"projectId"`
+			ConversationID string `json:"conversationId"`
+			MessageID      string `json:"clientMessageId"`
+			MimeType       string `json:"mimeType"`
+			FileName       string `json:"fileName"`
+			Size           int64  `json:"size"`
 		}
-		if json.Unmarshal(rawParams, &params) != nil || params.InstanceID == "" || params.MimeType == "" {
-			response.Error = &protocol.ControlError{Code: "invalid_params", Message: "target and mimeType are required"}
+		if json.Unmarshal(rawParams, &params) != nil || params.InstanceID == "" || params.MimeType == "" || params.ConversationID == "" || params.MessageID == "" {
+			response.Error = &protocol.ControlError{Code: "invalid_params", Message: "target, conversationId, clientMessageId, and mimeType are required"}
 			break
 		}
 		if params.Size < 0 || params.Size > maxAttachmentBytes {
 			response.Error = &protocol.ControlError{Code: "too_large", Message: "attachment exceeds 48 MiB"}
 			break
 		}
+		instance, err := m.instanceByID(params.InstanceID)
+		if err != nil {
+			response.Error = &protocol.ControlError{Code: "invalid_target", Message: err.Error()}
+			break
+		}
+		root, err := m.attachmentProjectRoot(instance, params.ProjectID, params.ConversationID)
+		if err != nil {
+			response.Error = &protocol.ControlError{Code: "project_not_resolved", Message: err.Error()}
+			break
+		}
+		if err = validateAttachmentSegment(params.ConversationID); err != nil {
+			response.Error = &protocol.ControlError{Code: "invalid_params", Message: "invalid conversationId"}
+			break
+		}
+		if err = validateAttachmentSegment(params.MessageID); err != nil {
+			response.Error = &protocol.ControlError{Code: "invalid_params", Message: "invalid clientMessageId"}
+			break
+		}
+		if err = validateAttachmentFileName(params.FileName); err != nil {
+			response.Error = &protocol.ControlError{Code: "invalid_params", Message: "invalid fileName"}
+			break
+		}
 		id := randomToken(18)
+		fileName := attachmentFileName(params.FileName)
+		directory := filepath.Join(root, remoteAttachmentDirectory, params.ConversationID, params.MessageID)
+		if err = os.MkdirAll(directory, 0o700); err != nil {
+			response.Error = &protocol.ControlError{Code: "attachment_store_error", Message: err.Error()}
+			break
+		}
+		cleanupStaleAttachmentParts(filepath.Join(root, remoteAttachmentDirectory))
+		ext := filepath.Ext(fileName)
+		finalPath := filepath.Join(directory, strings.TrimSuffix(fileName, ext)+"-"+id+ext)
+		temporaryPath := filepath.Join(directory, "."+id+".part")
+		file, createErr := os.OpenFile(temporaryPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if createErr != nil {
+			response.Error = &protocol.ControlError{Code: "attachment_store_error", Message: createErr.Error()}
+			break
+		}
+		if closeErr := file.Close(); closeErr != nil {
+			_ = os.Remove(temporaryPath)
+			response.Error = &protocol.ControlError{Code: "attachment_store_error", Message: closeErr.Error()}
+			break
+		}
 		m.uploadMu.Lock()
-		m.uploads[id] = &attachmentUpload{ID: id, InstanceID: params.InstanceID, ConversationID: params.ConversationID, MimeType: params.MimeType, FileName: params.FileName, ExpectedSize: params.Size}
+		m.uploads[id] = &attachmentUpload{ID: id, InstanceID: params.InstanceID, ProjectID: params.ProjectID, ConversationID: params.ConversationID, MessageID: params.MessageID, MimeType: params.MimeType, FileName: fileName, Path: finalPath, TemporaryPath: temporaryPath, ExpectedSize: params.Size}
 		m.uploadMu.Unlock()
 		response.Result = map[string]any{"attachmentId": id}
 	case "attachment.chunk":
@@ -565,17 +650,36 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 		}
 		m.uploadMu.Lock()
 		upload := m.uploads[params.AttachmentID]
-		tooLarge := upload != nil && len(upload.Data)+len(chunk) > maxAttachmentBytes
+		tooLarge := upload != nil && (upload.ReceivedSize+int64(len(chunk)) > maxAttachmentBytes || upload.ReceivedSize+int64(len(chunk)) > upload.ExpectedSize)
+		var writeErr error
 		if upload != nil && !tooLarge {
-			upload.Data = append(upload.Data, chunk...)
+			var file *os.File
+			file, writeErr = os.OpenFile(upload.TemporaryPath, os.O_WRONLY|os.O_APPEND, 0o600)
+			if writeErr == nil {
+				_, writeErr = file.Write(chunk)
+				if closeErr := file.Close(); writeErr == nil {
+					writeErr = closeErr
+				}
+			}
+			if writeErr == nil {
+				upload.ReceivedSize += int64(len(chunk))
+			}
+		}
+		if tooLarge || writeErr != nil {
+			if upload != nil {
+				delete(m.uploads, params.AttachmentID)
+				_ = os.Remove(upload.TemporaryPath)
+			}
 		}
 		m.uploadMu.Unlock()
 		if upload == nil {
 			response.Error = &protocol.ControlError{Code: "not_found", Message: "attachment upload not found"}
 		} else if tooLarge {
-			response.Error = &protocol.ControlError{Code: "too_large", Message: "attachment exceeds 48 MiB"}
+			response.Error = &protocol.ControlError{Code: "too_large", Message: "attachment exceeds declared size or 48 MiB"}
+		} else if writeErr != nil {
+			response.Error = &protocol.ControlError{Code: "attachment_store_error", Message: writeErr.Error()}
 		} else {
-			response.Result = map[string]any{"received": len(upload.Data)}
+			response.Result = map[string]any{"received": upload.ReceivedSize}
 		}
 	case "attachment.commit":
 		var params struct {
@@ -590,14 +694,36 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 			response.Error = &protocol.ControlError{Code: "not_found", Message: "attachment upload not found"}
 			break
 		}
-		if upload.ExpectedSize > 0 && int64(len(upload.Data)) != upload.ExpectedSize {
+		if upload.ReceivedSize != upload.ExpectedSize {
+			_ = os.Remove(upload.TemporaryPath)
 			response.Error = &protocol.ControlError{Code: "size_mismatch", Message: "attachment size does not match declaration"}
 			break
 		}
-		if err := m.store.SaveAttachment(upload.ID, upload.InstanceID, upload.ConversationID, upload.MimeType, upload.FileName, upload.Data); err != nil {
+		if err := os.Rename(upload.TemporaryPath, upload.Path); err != nil {
+			_ = os.Remove(upload.TemporaryPath)
+			response.Error = &protocol.ControlError{Code: "attachment_store_error", Message: err.Error()}
+			break
+		}
+		if err := m.store.SaveAttachmentMetadata(store.Attachment{ID: upload.ID, InstanceID: upload.InstanceID, ProjectID: upload.ProjectID, ConversationID: upload.ConversationID, MessageID: upload.MessageID, MimeType: upload.MimeType, FileName: upload.FileName, Path: upload.Path, Size: upload.ReceivedSize}); err != nil {
+			_ = os.Remove(upload.Path)
 			response.Error = &protocol.ControlError{Code: "store_error", Message: err.Error()}
 		} else {
-			response.Result = map[string]any{"attachmentId": upload.ID, "size": len(upload.Data)}
+			response.Result = map[string]any{"attachmentId": upload.ID, "size": upload.ReceivedSize}
+		}
+	case "attachment.abort":
+		var params struct {
+			AttachmentID string `json:"attachmentId"`
+		}
+		_ = json.Unmarshal(request.Params, &params)
+		m.uploadMu.Lock()
+		upload := m.uploads[params.AttachmentID]
+		delete(m.uploads, params.AttachmentID)
+		m.uploadMu.Unlock()
+		if upload == nil {
+			response.Result = map[string]any{"aborted": false}
+		} else {
+			_ = os.Remove(upload.TemporaryPath)
+			response.Result = map[string]any{"aborted": true}
 		}
 	case "traffic.enable", "traffic.disable":
 		var params struct {
@@ -708,7 +834,7 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 }
 
 func isMutatingControlMethod(method string) bool {
-	return strings.HasPrefix(method, "turn.") || method == "action.resolve" || method == "instance.restart" || strings.HasPrefix(method, "attachment.") || strings.HasPrefix(method, "traffic.") || (strings.HasPrefix(method, "remote.") && method != "remote.status" && method != "remote.pair.list")
+	return method == "conversation.create" || strings.HasPrefix(method, "turn.") || method == "action.resolve" || method == "instance.restart" || strings.HasPrefix(method, "attachment.") || strings.HasPrefix(method, "traffic.") || (strings.HasPrefix(method, "remote.") && method != "remote.status" && method != "remote.pair.list")
 }
 
 func (m *Manager) restartErroredInstances() int {
@@ -731,6 +857,14 @@ func (m *Manager) normalizeTurnStart(instanceID string, raw json.RawMessage) (js
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return nil, err
 	}
+	instance, err := m.instanceByID(instanceID)
+	if err != nil {
+		return nil, err
+	}
+	threadID, _ := params["threadId"].(string)
+	if threadID == "" {
+		return nil, errors.New("threadId is required")
+	}
 	if _, ok := params["input"]; !ok {
 		inputs := make([]map[string]any, 0)
 		if text, ok := params["text"].(string); ok && text != "" {
@@ -742,17 +876,43 @@ func (m *Manager) normalizeTurnStart(instanceID string, raw json.RawMessage) (js
 				if !ok {
 					continue
 				}
-				owner, mimeType, _, content, err := m.store.ReadAttachment(id)
+				attachment, err := m.store.ReadAttachment(id)
 				if err != nil {
 					return nil, fmt.Errorf("attachment %s: %w", id, err)
 				}
-				if owner != instanceID {
+				if attachment.InstanceID != instanceID {
 					return nil, errors.New("attachment belongs to another instance")
 				}
-				if !strings.HasPrefix(mimeType, "image/") {
-					return nil, fmt.Errorf("attachment %s is not an image", id)
+				if !strings.HasPrefix(attachment.MimeType, "image/") {
+					return nil, fmt.Errorf("unsupported_attachment_type: attachment %s is not an image", id)
 				}
-				inputs = append(inputs, map[string]any{"type": "image", "url": "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(content)})
+				if attachment.Path == "" {
+					conversationID := attachment.ConversationID
+					if conversationID == "" {
+						conversationID = threadID
+					}
+					root, rootErr := m.attachmentProjectRoot(instance, attachment.ProjectID, conversationID)
+					if rootErr != nil {
+						return nil, fmt.Errorf("attachment %s: project_not_resolved: %w", id, rootErr)
+					}
+					legacyMessageID := "legacy-" + id
+					if err = validateAttachmentSegment(conversationID); err != nil {
+						return nil, fmt.Errorf("attachment %s: invalid conversation id", id)
+					}
+					legacyDirectory := filepath.Join(root, remoteAttachmentDirectory, conversationID, legacyMessageID)
+					fileName := attachmentFileName(attachment.FileName)
+					ext := filepath.Ext(fileName)
+					finalPath := filepath.Join(legacyDirectory, strings.TrimSuffix(fileName, ext)+"-"+id+ext)
+					attachment, err = m.store.MaterializeLegacyAttachment(id, finalPath, attachment.ProjectID, legacyMessageID)
+					if err != nil {
+						return nil, fmt.Errorf("attachment %s: migrate legacy content: %w", id, err)
+					}
+				}
+				content, readErr := os.ReadFile(attachment.Path)
+				if readErr != nil {
+					return nil, fmt.Errorf("attachment %s: read file: %w", id, readErr)
+				}
+				inputs = append(inputs, map[string]any{"type": "image", "url": "data:" + attachment.MimeType + ";base64," + base64.StdEncoding.EncodeToString(content)})
 			}
 		}
 		params["input"] = inputs
@@ -766,10 +926,138 @@ func (m *Manager) normalizeTurnStart(instanceID string, raw json.RawMessage) (js
 	for _, key := range []string{"text", "attachmentIds", "reasoningEffort", "clientMessageId", "expectedRevision"} {
 		delete(params, key)
 	}
-	if _, ok := params["threadId"]; !ok {
-		return nil, errors.New("threadId is required")
-	}
 	return json.Marshal(params)
+}
+
+func (m *Manager) instanceByID(instanceID string) (*Instance, error) {
+	m.mu.RLock()
+	instance := m.instances[instanceID]
+	m.mu.RUnlock()
+	if instance == nil {
+		return nil, errors.New("instance not found")
+	}
+	return instance, nil
+}
+
+func (m *Manager) abortAttachmentUploads() {
+	m.uploadMu.Lock()
+	uploads := make([]*attachmentUpload, 0, len(m.uploads))
+	for id, upload := range m.uploads {
+		uploads = append(uploads, upload)
+		delete(m.uploads, id)
+	}
+	m.uploadMu.Unlock()
+	for _, upload := range uploads {
+		_ = os.Remove(upload.TemporaryPath)
+	}
+}
+
+func cleanupStaleAttachmentParts(root string) {
+	cutoff := time.Now().Add(-staleAttachmentPartAge)
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".part") {
+			return nil
+		}
+		info, infoErr := entry.Info()
+		if infoErr == nil && info.ModTime().Before(cutoff) {
+			_ = os.Remove(path)
+		}
+		return nil
+	})
+}
+
+func (m *Manager) attachmentProjectRoot(instance *Instance, projectID, conversationID string) (string, error) {
+	if projectID != "" {
+		if root, err := m.projectRoot(instance, projectID); err == nil {
+			if resolved, resolveErr := existingDirectory(root); resolveErr == nil {
+				return resolved, nil
+			}
+		}
+	}
+	if conversationID != "" {
+		params, _ := json.Marshal(map[string]any{"threadId": conversationID, "includeTurns": false})
+		if raw, err := instance.Call(m.ctx, "thread/read", params); err == nil {
+			var response struct {
+				Thread struct {
+					CWD string `json:"cwd"`
+				} `json:"thread"`
+			}
+			if json.Unmarshal(raw, &response) == nil {
+				if resolved, resolveErr := existingDirectory(response.Thread.CWD); resolveErr == nil {
+					return resolved, nil
+				}
+			}
+		}
+	}
+	instance.mu.Lock()
+	cwd := instance.cwd
+	instance.mu.Unlock()
+	if resolved, err := existingDirectory(cwd); err == nil {
+		return resolved, nil
+	}
+	return "", errors.New("project root, conversation cwd, and instance cwd are unavailable")
+}
+
+func existingDirectory(path string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", errors.New("directory is empty")
+	}
+	abs, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", errors.New("path is not a directory")
+	}
+	return abs, nil
+}
+
+func validateAttachmentSegment(value string) error {
+	if value == "" || value == "." || value == ".." || filepath.Base(value) != value || strings.ContainsAny(value, `/\\`) {
+		return errors.New("path segment is unsafe")
+	}
+	for _, character := range value {
+		if character < 0x20 {
+			return errors.New("path segment contains a control character")
+		}
+	}
+	return nil
+}
+
+func attachmentFileName(value string) string {
+	value = filepath.Base(strings.TrimSpace(value))
+	if value == "" || value == "." || value == ".." {
+		return "attachment"
+	}
+	value = strings.NewReplacer("<", "_", ">", "_", ":", "_", `"`, "_", "/", "_", "\\", "_", "|", "_", "?", "_", "*", "_").Replace(value)
+	value = strings.Trim(value, " .")
+	if value == "" {
+		return "attachment"
+	}
+	return value
+}
+
+func validateAttachmentFileName(value string) error {
+	if value == "" {
+		return nil
+	}
+	if value == "." || value == ".." || filepath.Base(value) != value || strings.ContainsAny(value, `/\\`) {
+		return errors.New("file name must be a single path segment")
+	}
+	for _, character := range value {
+		if character < 0x20 {
+			return errors.New("file name contains a control character")
+		}
+	}
+	return nil
 }
 
 func (m *Manager) subscribe() (<-chan protocol.Event, func()) {

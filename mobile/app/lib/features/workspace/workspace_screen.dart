@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -148,92 +150,152 @@ class _TopBar extends StatelessWidget {
     final daemon = data.daemons.first;
     return Padding(
       padding: const EdgeInsets.fromLTRB(22, 16, 22, 8),
-      child: SizedBox(
-        height: 72,
-        child: Row(
-          children: [
-            SvgPicture.asset('assets/waw-app-icon.svg', width: 50, height: 50),
-            if (data.runningCount == 0) ...[
-              const SizedBox(width: 12),
-              const Text(
-                'Work Any Where',
-                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
-              ),
-            ],
-            const Spacer(),
-            if (data.runningCount > 0) ...[
-              InkWell(
-                borderRadius: BorderRadius.circular(22),
-                onTap: () {
-                  final item = data.conversations.firstWhere(
-                    (item) => item.running,
-                  );
-                  context.push('/conversation/${item.id}');
-                },
-                child: Padding(
-                  padding: const EdgeInsets.all(10),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 380;
+          final selectorWidth = math.min(
+            compact ? 160.0 : 220.0,
+            constraints.maxWidth * (compact ? .52 : .48),
+          );
+          return SizedBox(
+            height: 72,
+            child: Row(
+              children: [
+                Expanded(
                   child: Row(
                     children: [
-                      const SizedBox.square(
-                        dimension: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2.4,
-                          color: wawBlue,
+                      SvgPicture.asset(
+                        'assets/waw-app-icon.svg',
+                        width: 50,
+                        height: 50,
+                      ),
+                      if (data.runningCount == 0) ...[
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Text(
+                            'Work Any Where',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                if (data.runningCount > 0) ...[
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Semantics(
+                      label: context.l10n.runningCount(data.runningCount),
+                      button: true,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(22),
+                        onTap: () {
+                          final item = data.conversations.firstWhere(
+                            (item) => item.running,
+                          );
+                          context.push('/conversation/${item.id}');
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.all(10),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const SizedBox.square(
+                                dimension: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.4,
+                                  color: wawBlue,
+                                ),
+                              ),
+                              if (!compact) ...[
+                                const SizedBox(width: 8),
+                                Flexible(
+                                  child: Text(
+                                    context.l10n.runningCount(
+                                      data.runningCount,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      Text(context.l10n.runningCount(data.runningCount)),
-                    ],
+                    ),
                   ),
-                ),
-              ),
-              const Spacer(),
-            ],
-            Semantics(
-              button: true,
-              label: context.l10n.daemonSwitchLabel(
-                daemon.name,
-                _statusLabel(context, daemon.phase),
-              ),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(28),
-                onTap: () => _showDaemons(context, data.daemons),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 17,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).cardColor,
-                    borderRadius: BorderRadius.circular(28),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _StatusDot(daemon.phase),
-                      const SizedBox(width: 10),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            daemon.name,
-                            style: const TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                          Text(
-                            _statusLabel(context, daemon.phase),
-                            style: TextStyle(fontSize: 12, color: Colors.grey),
-                          ),
-                        ],
+                ],
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: selectorWidth,
+                  child: Semantics(
+                    button: true,
+                    label: context.l10n.daemonSwitchLabel(
+                      daemon.name,
+                      _statusLabel(context, daemon.phase),
+                    ),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(28),
+                      onTap: () => _showDaemons(context, data.daemons),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 17,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).cardColor,
+                          borderRadius: BorderRadius.circular(28),
+                        ),
+                        child: Row(
+                          children: [
+                            _StatusDot(daemon.phase),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    daemon.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  Text(
+                                    _statusLabel(context, daemon.phase),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            const Icon(
+                              Icons.keyboard_arrow_down_rounded,
+                              size: 18,
+                            ),
+                          ],
+                        ),
                       ),
-                      const SizedBox(width: 10),
-                      const Icon(Icons.keyboard_arrow_down_rounded, size: 18),
-                    ],
+                    ),
                   ),
                 ),
-              ),
+              ],
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }

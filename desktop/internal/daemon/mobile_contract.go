@@ -245,6 +245,26 @@ type mobileConversationMetadata struct {
 	UpdatedAt int64  `json:"updatedAt"`
 }
 
+func normalizeConversationCreate(raw json.RawMessage) (map[string]any, error) {
+	var source struct {
+		Thread struct {
+			ID        string  `json:"id"`
+			ProjectID *string `json:"projectId"`
+		} `json:"thread"`
+	}
+	if err := json.Unmarshal(raw, &source); err != nil {
+		return nil, fmt.Errorf("decode thread/start: %w", err)
+	}
+	if source.Thread.ID == "" {
+		return nil, errors.New("thread/start response has no thread id")
+	}
+	result := map[string]any{"id": source.Thread.ID}
+	if source.Thread.ProjectID != nil && *source.Thread.ProjectID != "" {
+		result["projectId"] = *source.Thread.ProjectID
+	}
+	return result, nil
+}
+
 type mobileTimelineBlock struct {
 	Kind       string `json:"kind"`
 	Text       string `json:"text"`

@@ -11,6 +11,14 @@ final appRouter = GoRouter(
     GoRoute(path: '/', builder: (context, state) => const WorkspaceGate()),
     GoRoute(path: '/pair', builder: (context, state) => const PairingScreen()),
     GoRoute(
+      path: '/project/:id/new',
+      builder: (context, state) => ConversationScreen(
+        conversationId: null,
+        projectId: state.pathParameters['id']!,
+        projectName: state.extra as String?,
+      ),
+    ),
+    GoRoute(
       path: '/project/:id',
       builder: (context, state) =>
           ProjectScreen(projectId: state.pathParameters['id']!),

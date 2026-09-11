@@ -2,14 +2,20 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/hurf/work-anywhere/desktop/internal/protocol"
+	"github.com/hurf/work-anywhere/desktop/internal/store"
+	_ "modernc.org/sqlite"
 )
 
 type recordingMobileCaller struct {
@@ -221,5 +227,185 @@ func TestNormalizeConversationList(t *testing.T) {
 	}
 	if len(page.Items) != 1 || page.Items[0].Title != "First line" || !page.Items[0].Running || page.Items[0].Status != "waitingOnApproval" {
 		t.Fatalf("unexpected page: %#v", page)
+	}
+}
+
+func TestNormalizeConversationCreate(t *testing.T) {
+	result, err := normalizeConversationCreate(json.RawMessage(`{"thread":{"id":"t-new","projectId":"p1"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result["id"] != "t-new" || result["projectId"] != "p1" {
+		t.Fatalf("unexpected create result: %#v", result)
+	}
+	if _, err := normalizeConversationCreate(json.RawMessage(`{"thread":{}}`)); err == nil {
+		t.Fatal("expected missing thread id to be rejected")
+	}
+}
+
+func TestMobileAttachmentBeginKeepsResolvedOwner(t *testing.T) {
+	root := t.TempDir()
+	state, err := store.Open(filepath.Join(root, "state.db"), filepath.Join(root, "master.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	instance := &Instance{descriptor: protocol.InstanceDescriptor{ID: "agent-1"}}
+	instance.cwd = root
+	manager := &Manager{
+		ctx:       context.Background(),
+		store:     state,
+		instances: map[string]*Instance{"agent-1": instance},
+		uploads:   make(map[string]*attachmentUpload),
+	}
+	response := manager.control(protocol.ControlRequest{
+		Type:     "request",
+		ID:       "1",
+		Contract: protocol.MobileControlContract,
+		Method:   "attachment.begin",
+		Params:   json.RawMessage(`{"agentId":"agent-1","conversationId":"thread-1","clientMessageId":"message-1","mimeType":"image/jpeg","fileName":"photo.jpg","size":10}`),
+	})
+	if response.Error != nil {
+		t.Fatalf("attachment begin failed: %+v", response.Error)
+	}
+	result, ok := response.Result.(map[string]any)
+	if !ok || result["attachmentId"] == "" {
+		t.Fatalf("unexpected attachment result: %#v", response.Result)
+	}
+	attachmentID := result["attachmentId"].(string)
+	chunkResponse := manager.control(protocol.ControlRequest{
+		Type:     "request",
+		ID:       "2",
+		Contract: protocol.MobileControlContract,
+		Method:   "attachment.chunk",
+		Params:   json.RawMessage(fmt.Sprintf(`{"attachmentId":%q,"data":%q}`, attachmentID, base64.StdEncoding.EncodeToString([]byte("image-data")))),
+	})
+	if chunkResponse.Error != nil {
+		t.Fatalf("attachment chunk failed: %+v", chunkResponse.Error)
+	}
+	commitResponse := manager.control(protocol.ControlRequest{
+		Type:     "request",
+		ID:       "3",
+		Contract: protocol.MobileControlContract,
+		Method:   "attachment.commit",
+		Params:   json.RawMessage(fmt.Sprintf(`{"attachmentId":%q}`, attachmentID)),
+	})
+	if commitResponse.Error != nil {
+		t.Fatalf("attachment commit failed: %+v", commitResponse.Error)
+	}
+	attachment, err := state.ReadAttachment(attachmentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attachment.InstanceID != "agent-1" || attachment.ConversationID != "thread-1" || attachment.MessageID != "message-1" || attachment.MimeType != "image/jpeg" {
+		t.Fatalf("unexpected attachment metadata: %#v", attachment)
+	}
+	wantPath := filepath.Join(root, remoteAttachmentDirectory, "thread-1", "message-1")
+	if filepath.Dir(attachment.Path) != wantPath || filepath.Ext(attachment.Path) != ".jpg" {
+		t.Fatalf("attachment was stored at the wrong path: %s", attachment.Path)
+	}
+	content, err := os.ReadFile(attachment.Path)
+	if err != nil || string(content) != "image-data" {
+		t.Fatalf("stored attachment content mismatch: %q, %v", content, err)
+	}
+	database, err := sql.Open("sqlite", filepath.Join(root, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	var encrypted []byte
+	if err = database.QueryRow(`SELECT content_encrypted FROM attachments WHERE id=?`, attachmentID).Scan(&encrypted); err != nil {
+		t.Fatal(err)
+	}
+	if encrypted != nil {
+		t.Fatal("attachment content was stored in the database")
+	}
+}
+
+func TestMobileAttachmentRejectsUnsafePathAndCleansPartialUpload(t *testing.T) {
+	root := t.TempDir()
+	state, err := store.Open(filepath.Join(root, "state.db"), filepath.Join(root, "master.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	instance := &Instance{descriptor: protocol.InstanceDescriptor{ID: "agent-1"}, cwd: root}
+	manager := &Manager{
+		ctx:       context.Background(),
+		store:     state,
+		instances: map[string]*Instance{"agent-1": instance},
+		uploads:   make(map[string]*attachmentUpload),
+	}
+	unsafe := manager.control(protocol.ControlRequest{
+		Type:     "request",
+		ID:       "unsafe",
+		Contract: protocol.MobileControlContract,
+		Method:   "attachment.begin",
+		Params:   json.RawMessage(`{"agentId":"agent-1","conversationId":"../outside","clientMessageId":"message-1","mimeType":"image/jpeg","fileName":"photo.jpg","size":3}`),
+	})
+	if unsafe.Error == nil || unsafe.Error.Code != "invalid_params" {
+		t.Fatalf("expected unsafe path rejection, got %+v", unsafe.Error)
+	}
+
+	begin := manager.control(protocol.ControlRequest{
+		Type:     "request",
+		ID:       "begin",
+		Contract: protocol.MobileControlContract,
+		Method:   "attachment.begin",
+		Params:   json.RawMessage(`{"agentId":"agent-1","conversationId":"thread-1","clientMessageId":"message-1","mimeType":"image/jpeg","fileName":"photo.jpg","size":4}`),
+	})
+	if begin.Error != nil {
+		t.Fatalf("attachment begin failed: %+v", begin.Error)
+	}
+	attachmentID := begin.Result.(map[string]any)["attachmentId"].(string)
+	chunk := manager.control(protocol.ControlRequest{
+		Type:     "request",
+		ID:       "chunk",
+		Contract: protocol.MobileControlContract,
+		Method:   "attachment.chunk",
+		Params:   json.RawMessage(fmt.Sprintf(`{"attachmentId":%q,"data":%q}`, attachmentID, base64.StdEncoding.EncodeToString([]byte("abc")))),
+	})
+	if chunk.Error != nil {
+		t.Fatalf("attachment chunk failed: %+v", chunk.Error)
+	}
+	commit := manager.control(protocol.ControlRequest{
+		Type:     "request",
+		ID:       "commit",
+		Contract: protocol.MobileControlContract,
+		Method:   "attachment.commit",
+		Params:   json.RawMessage(fmt.Sprintf(`{"attachmentId":%q}`, attachmentID)),
+	})
+	if commit.Error == nil {
+		t.Fatal("expected size mismatch")
+	}
+	if _, err = os.Stat(filepath.Join(root, remoteAttachmentDirectory, "thread-1", "message-1")); err == nil {
+		entries, readErr := os.ReadDir(filepath.Join(root, remoteAttachmentDirectory, "thread-1", "message-1"))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("partial upload was not removed: %v", entries)
+		}
+	}
+}
+
+func TestNormalizeTurnStartRejectsNonImageAttachment(t *testing.T) {
+	root := t.TempDir()
+	state, err := store.Open(filepath.Join(root, "state.db"), filepath.Join(root, "master.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	path := filepath.Join(root, "document.pdf")
+	if err = os.WriteFile(path, []byte("pdf"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err = state.SaveAttachmentMetadata(store.Attachment{ID: "pdf-1", InstanceID: "agent-1", ConversationID: "thread-1", MessageID: "message-1", MimeType: "application/pdf", FileName: "document.pdf", Path: path, Size: 3}); err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{store: state, instances: map[string]*Instance{"agent-1": {descriptor: protocol.InstanceDescriptor{ID: "agent-1"}}}}
+	_, err = manager.normalizeTurnStart("agent-1", json.RawMessage(`{"threadId":"thread-1","attachmentIds":["pdf-1"]}`))
+	if err == nil || !strings.Contains(err.Error(), "unsupported_attachment_type") {
+		t.Fatalf("expected unsupported attachment error, got %v", err)
 	}
 }

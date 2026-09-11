@@ -86,8 +86,9 @@ func (s *Store) migrate() error {
 			PRIMARY KEY(instance_id, action_id)
 		)`,
 		`CREATE TABLE IF NOT EXISTS attachments (
-			id TEXT PRIMARY KEY, instance_id TEXT NOT NULL, conversation_id TEXT, mime_type TEXT,
-			file_name TEXT, size INTEGER NOT NULL DEFAULT 0, content_encrypted BLOB,
+			id TEXT PRIMARY KEY, instance_id TEXT NOT NULL, project_id TEXT, conversation_id TEXT,
+			message_id TEXT, mime_type TEXT, file_name TEXT, path TEXT,
+			size INTEGER NOT NULL DEFAULT 0, content_encrypted BLOB,
 			created_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value_encrypted BLOB, updated_at TEXT NOT NULL)`,
@@ -95,6 +96,43 @@ func (s *Store) migrate() error {
 	for _, statement := range statements {
 		if _, err := s.db.Exec(statement); err != nil {
 			return fmt.Errorf("store migration: %w", err)
+		}
+	}
+	return s.ensureAttachmentColumns()
+}
+
+func (s *Store) ensureAttachmentColumns() error {
+	rows, err := s.db.Query(`PRAGMA table_info(attachments)`)
+	if err != nil {
+		return fmt.Errorf("inspect attachment schema: %w", err)
+	}
+	defer rows.Close()
+	columns := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, primaryKey int
+		var defaultValue any
+		if err = rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return fmt.Errorf("read attachment schema: %w", err)
+		}
+		columns[name] = true
+	}
+	if err = rows.Err(); err != nil {
+		return fmt.Errorf("read attachment schema rows: %w", err)
+	}
+	for _, column := range []struct {
+		name, definition string
+	}{
+		{"project_id", "TEXT"},
+		{"message_id", "TEXT"},
+		{"path", "TEXT"},
+	} {
+		if columns[column.name] {
+			continue
+		}
+		if _, err = s.db.Exec(`ALTER TABLE attachments ADD COLUMN ` + column.name + ` ` + column.definition); err != nil {
+			return fmt.Errorf("add attachment column %s: %w", column.name, err)
 		}
 	}
 	return nil
@@ -223,24 +261,98 @@ func (s *Store) AppendEvent(instanceID, conversationID string, sequence int64, e
 	return err
 }
 
-func (s *Store) SaveAttachment(id, instanceID, conversationID, mimeType, fileName string, content []byte) error {
-	encrypted, err := s.Encrypt(content)
-	if err != nil {
-		return err
+type Attachment struct {
+	ID             string
+	InstanceID     string
+	ProjectID      string
+	ConversationID string
+	MessageID      string
+	MimeType       string
+	FileName       string
+	Path           string
+	Size           int64
+}
+
+func (s *Store) SaveAttachmentMetadata(value Attachment) error {
+	if value.ID == "" || value.InstanceID == "" || value.Path == "" {
+		return errors.New("attachment metadata is incomplete")
 	}
-	_, err = s.db.Exec(`INSERT INTO attachments(id,instance_id,conversation_id,mime_type,file_name,size,content_encrypted,created_at) VALUES(?,?,?,?,?,?,?,?)`,
-		id, instanceID, conversationID, mimeType, fileName, len(content), encrypted, time.Now().UTC().Format(time.RFC3339Nano))
+	_, err := s.db.Exec(`INSERT INTO attachments(id,instance_id,project_id,conversation_id,message_id,mime_type,file_name,path,size,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		value.ID, value.InstanceID, value.ProjectID, value.ConversationID, value.MessageID, value.MimeType, value.FileName, value.Path, value.Size, time.Now().UTC().Format(time.RFC3339Nano))
 	return err
 }
 
-func (s *Store) ReadAttachment(id string) (instanceID, mimeType, fileName string, content []byte, err error) {
-	var encrypted []byte
-	err = s.db.QueryRow(`SELECT instance_id,mime_type,file_name,content_encrypted FROM attachments WHERE id=?`, id).Scan(&instanceID, &mimeType, &fileName, &encrypted)
+func (s *Store) ReadAttachment(id string) (Attachment, error) {
+	var value Attachment
+	var projectID, messageID, path sql.NullString
+	err := s.db.QueryRow(`SELECT id,instance_id,project_id,conversation_id,message_id,mime_type,file_name,path,size FROM attachments WHERE id=?`, id).Scan(
+		&value.ID, &value.InstanceID, &projectID, &value.ConversationID, &messageID, &value.MimeType, &value.FileName, &path, &value.Size,
+	)
 	if err != nil {
-		return "", "", "", nil, err
+		return Attachment{}, err
 	}
-	err = s.Decrypt(encrypted, &content)
-	return
+	value.ProjectID, value.MessageID, value.Path = projectID.String, messageID.String, path.String
+	return value, nil
+}
+
+// MaterializeLegacyAttachment migrates an attachment written by the old
+// database-backed implementation. New uploads never use content_encrypted.
+func (s *Store) MaterializeLegacyAttachment(id, path, projectID, messageID string) (Attachment, error) {
+	value, err := s.ReadAttachment(id)
+	if err != nil {
+		return Attachment{}, err
+	}
+	if value.Path != "" {
+		return value, nil
+	}
+	var encrypted []byte
+	if err = s.db.QueryRow(`SELECT content_encrypted FROM attachments WHERE id=?`, id).Scan(&encrypted); err != nil {
+		return Attachment{}, err
+	}
+	if len(encrypted) == 0 {
+		return Attachment{}, errors.New("legacy attachment has no content")
+	}
+	var content []byte
+	if err = s.Decrypt(encrypted, &content); err != nil {
+		return Attachment{}, fmt.Errorf("decrypt legacy attachment: %w", err)
+	}
+	if err = writeAttachmentFile(path, content); err != nil {
+		return Attachment{}, err
+	}
+	_, err = s.db.Exec(`UPDATE attachments SET project_id=?,message_id=?,path=?,size=?,content_encrypted=NULL WHERE id=?`,
+		projectID, messageID, path, len(content), id)
+	if err != nil {
+		_ = os.Remove(path)
+		return Attachment{}, err
+	}
+	value.ProjectID, value.MessageID, value.Path, value.Size = projectID, messageID, path, int64(len(content))
+	return value, nil
+}
+
+func writeAttachmentFile(path string, content []byte) error {
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(directory, ".legacy-attachment-*.part")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err = temporary.Chmod(0o600); err == nil {
+		_, err = temporary.Write(content)
+	}
+	if closeErr := temporary.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	if err = os.Rename(temporaryPath, path); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *Store) PutSetting(key string, value any) error {

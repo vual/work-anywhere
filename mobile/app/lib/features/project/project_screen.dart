@@ -144,6 +144,17 @@ class _ProjectScreenState extends ConsumerState<ProjectScreen> {
                 );
               },
             ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => context.push(
+          '/project/${widget.projectId}/new',
+          extra: project?.name ?? context.l10n.project,
+        ),
+        tooltip: context.l10n.newConversation,
+        backgroundColor: wawBlue,
+        foregroundColor: Colors.white,
+        child: const Icon(Icons.edit_outlined),
+      ),
     );
   }
 }

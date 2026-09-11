@@ -40,6 +40,7 @@ type Client struct {
 	mu            sync.Mutex
 	conn          *websocket.Conn
 	writeMu       sync.Mutex
+	reconnectMu   sync.Mutex
 	secure        *e2ee.Session
 	pairingID     uuid.UUID
 	deviceID      uuid.UUID
@@ -281,9 +282,17 @@ func (c *Client) Call(ctx context.Context, method string, params json.RawMessage
 	id := uuid.NewString()
 	request, _ := json.Marshal(map[string]any{"type": "request", "id": id, "contract": "mobile-control-v1", "method": method, "params": params})
 	c.mu.Lock()
+	connected := c.connected && c.secure != nil
+	c.mu.Unlock()
+	if !connected {
+		if err := c.reconnect(ctx); err != nil {
+			return nil, &CallError{Code: "peer_offline", Message: "mobile endpoint is not connected: " + err.Error()}
+		}
+	}
+	c.mu.Lock()
 	if !c.connected || c.secure == nil {
 		c.mu.Unlock()
-		return nil, &CallError{Code: "peer_offline", Message: "development mobile is not connected"}
+		return nil, &CallError{Code: "peer_offline", Message: "mobile endpoint is not connected"}
 	}
 	waiter := make(chan json.RawMessage, 1)
 	c.pending[id] = waiter
@@ -291,6 +300,7 @@ func (c *Client) Call(ctx context.Context, method string, params json.RawMessage
 	c.mu.Unlock()
 	var routeWaiter chan routeResult
 	var routedMessageID []byte
+	routeAccepted := false
 	c.writeMu.Lock()
 	ciphertext, sequence, err := secure.Encrypt(e2ee.ControlContentType, request, time.Now().Add(time.Minute))
 	if err == nil {
@@ -328,6 +338,7 @@ func (c *Client) Call(ctx context.Context, method string, params json.RawMessage
 			c.mu.Unlock()
 			return nil, &CallError{Code: code, Message: "Relay rejected the request: " + code}
 		}
+		routeAccepted = true
 	case <-ctx.Done():
 		c.mu.Lock()
 		delete(c.pending, id)
@@ -338,6 +349,9 @@ func (c *Client) Call(ctx context.Context, method string, params json.RawMessage
 	select {
 	case response, ok := <-waiter:
 		if !ok {
+			if routeAccepted {
+				return nil, &CallError{Code: "ambiguous_write", Message: "Relay connection closed after the request was accepted; the response was not received"}
+			}
 			return nil, &CallError{Code: "peer_offline", Message: "Relay connection closed before the response was received"}
 		}
 		return response, nil
@@ -347,6 +361,36 @@ func (c *Client) Call(ctx context.Context, method string, params json.RawMessage
 		c.mu.Unlock()
 		return nil, &CallError{Code: "request_timeout", Message: ctx.Err().Error()}
 	}
+}
+
+func (c *Client) reconnect(ctx context.Context) error {
+	c.reconnectMu.Lock()
+	defer c.reconnectMu.Unlock()
+	c.mu.Lock()
+	if c.connected && c.secure != nil {
+		c.mu.Unlock()
+		return nil
+	}
+	credential := cloneCredential(c.credential)
+	c.mu.Unlock()
+	defer wipeCredential(&credential)
+	if credential.PairingID == "" {
+		return errors.New("no stored pairing credentials")
+	}
+	pairingID, err := uuid.Parse(credential.PairingID)
+	if err != nil {
+		return err
+	}
+	daemonID, err := uuid.Parse(credential.DaemonDeviceID)
+	if err != nil {
+		return err
+	}
+	mobileID, err := uuid.Parse(credential.MobileDeviceID)
+	if err != nil {
+		return err
+	}
+	xKey := noise.DHKey{Private: credential.X25519Private, Public: credential.X25519Public}
+	return c.connect(ctx, credential.RelayURL, pairingID, daemonID, mobileID, ed25519.PrivateKey(credential.Ed25519Private), xKey, credential.DaemonX25519, credential.DaemonCapability, credential.MobileCapability, credential.Scopes)
 }
 
 func (c *Client) Close() {
@@ -383,6 +427,22 @@ func wipeCredential(value *CredentialSet) {
 		}
 	}
 	*value = CredentialSet{}
+}
+
+func cloneCredential(value CredentialSet) CredentialSet {
+	return CredentialSet{
+		RelayURL:         value.RelayURL,
+		PairingID:        value.PairingID,
+		DaemonDeviceID:   value.DaemonDeviceID,
+		MobileDeviceID:   value.MobileDeviceID,
+		Ed25519Private:   append([]byte(nil), value.Ed25519Private...),
+		X25519Private:    append([]byte(nil), value.X25519Private...),
+		X25519Public:     append([]byte(nil), value.X25519Public...),
+		DaemonX25519:     append([]byte(nil), value.DaemonX25519...),
+		DaemonCapability: append([]byte(nil), value.DaemonCapability...),
+		MobileCapability: append([]byte(nil), value.MobileCapability...),
+		Scopes:           append([]string(nil), value.Scopes...),
+	}
 }
 
 func (c *Client) Status() Status {

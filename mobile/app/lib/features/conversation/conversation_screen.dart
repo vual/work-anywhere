@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -11,10 +12,19 @@ import '../../app/theme.dart';
 import '../../core/core_gateway.dart';
 import '../workspace/workspace_controller.dart';
 import 'conversation_controller.dart';
+import 'markdown_renderer.dart';
 
 class ConversationScreen extends ConsumerStatefulWidget {
-  const ConversationScreen({required this.conversationId, super.key});
-  final String conversationId;
+  const ConversationScreen({
+    required this.conversationId,
+    this.projectId,
+    this.projectName,
+    super.key,
+  });
+
+  final String? conversationId;
+  final String? projectId;
+  final String? projectName;
 
   @override
   ConsumerState<ConversationScreen> createState() => _ConversationScreenState();
@@ -26,29 +36,51 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   ConversationController? _controller;
   XFile? _image;
   bool _submitting = false;
+  bool _didAutoScrollToBottom = false;
+  late String? _activeConversationId = widget.conversationId;
+
+  bool get _isDraft => _activeConversationId == null;
+  bool get _canSend =>
+      !_submitting && (_composer.text.trim().isNotEmpty || _image != null);
 
   String? get _agentId => ref.read(workspaceProvider).value?.selectedAgentId;
 
   @override
   void initState() {
     super.initState();
+    _composer.addListener(_composerChanged);
     _scroll.addListener(_onScroll);
-    Future<void>.microtask(() {
-      final agentId = _agentId;
-      if (agentId == null || !mounted) return;
+    Future<void>.microtask(_initializeConversation);
+  }
+
+  Future<void> _initializeConversation() async {
+    final conversationId = _activeConversationId;
+    if (conversationId == null) return;
+    try {
+      final workspace = await ref.read(workspaceProvider.future);
+      if (!mounted) return;
+      final agentId = workspace.selectedAgentId;
+      if (agentId == null) return;
       final controller = ConversationController(
         gateway: ref.read(coreGatewayProvider),
         agentId: agentId,
-        threadId: widget.conversationId,
+        threadId: conversationId,
       )..addListener(_changed);
       setState(() => _controller = controller);
-      controller.load().then((_) => controller.startLiveSync());
-    });
+      controller.load().then((_) {
+        _scrollToBottomAfterInitialLoad();
+        if (mounted) controller.startLiveSync();
+      });
+    } catch (_) {
+      // Workspace errors are surfaced by the workspace screen; leave this
+      // view available for a later retry or navigation back to the list.
+    }
   }
 
   @override
   void dispose() {
     _composer.dispose();
+    _composer.removeListener(_composerChanged);
     _scroll
       ..removeListener(_onScroll)
       ..dispose();
@@ -72,7 +104,76 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     if (mounted) setState(() {});
   }
 
+  void _composerChanged() {
+    if (mounted) setState(() {});
+  }
+
   Future<void> _refresh() async => _controller?.load();
+
+  Future<String> _ensureConversation() async {
+    final existing = _activeConversationId;
+    if (existing != null) return existing;
+    final agentId = _agentId;
+    final projectId = widget.projectId;
+    if (agentId == null || projectId == null) {
+      throw CoreFault('invalid_params', 'A project and agent are required');
+    }
+    final response = await ref.read(coreGatewayProvider).call(
+      'conversation.create',
+      {'agentId': agentId, 'projectId': projectId},
+    );
+    final result = response['result'] as Map<String, dynamic>? ?? const {};
+    final conversationId = result['id'] as String?;
+    if (conversationId == null || conversationId.isEmpty) {
+      throw CoreFault(
+        'invalid_provider_response',
+        'The new conversation did not include an id',
+      );
+    }
+    _activeConversationId = conversationId;
+    final controller = ConversationController(
+      gateway: ref.read(coreGatewayProvider),
+      agentId: agentId,
+      threadId: conversationId,
+    )..addListener(_changed);
+    if (mounted) setState(() => _controller = controller);
+    controller.startLiveSync();
+    return conversationId;
+  }
+
+  Future<bool> _reconcileAmbiguousTurn() async {
+    final controller = _controller;
+    if (controller == null) return false;
+    for (final delay in [
+      Duration.zero,
+      const Duration(milliseconds: 300),
+      const Duration(milliseconds: 700),
+    ]) {
+      if (delay > Duration.zero) await Future<void>.delayed(delay);
+      await controller.refreshConversation();
+      if (controller.state.metadata?['running'] == true) return true;
+    }
+    return false;
+  }
+
+  void _scrollToBottomAfterInitialLoad() {
+    if (_didAutoScrollToBottom || !mounted) return;
+    if (_controller?.state.items.isEmpty ?? true) return;
+
+    var framesRemaining = 4;
+    void settleScroll(Duration _) {
+      if (!mounted || _didAutoScrollToBottom || !_scroll.hasClients) return;
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      framesRemaining -= 1;
+      if (framesRemaining == 0) {
+        _didAutoScrollToBottom = true;
+      } else {
+        WidgetsBinding.instance.addPostFrameCallback(settleScroll);
+      }
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback(settleScroll);
+  }
 
   void _onScroll() {
     if (_scroll.hasClients && _scroll.position.pixels <= 80) {
@@ -103,59 +204,129 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     });
   }
 
-  Future<String?> _uploadImage() async {
-    if (_image == null || _agentId == null) return null;
-    final bytes = await File(_image!.path).readAsBytes();
-    final begin = await ref.read(coreGatewayProvider).call('attachment.begin', {
-      'agentId': _agentId,
-      'conversationId': widget.conversationId,
-      'mimeType': _image!.mimeType ?? 'image/jpeg',
-      'fileName': _image!.name,
-      'size': bytes.length,
-    });
-    final id =
-        (begin['result'] as Map<String, dynamic>)['attachmentId'] as String;
-    const chunkSize = 256 * 1024;
-    for (var offset = 0; offset < bytes.length; offset += chunkSize) {
-      final end = (offset + chunkSize).clamp(0, bytes.length);
-      await ref.read(coreGatewayProvider).call('attachment.chunk', {
-        'attachmentId': id,
-        'data': base64Encode(bytes.sublist(offset, end)),
-      });
+  Future<String?> _uploadImage(String clientMessageId) async {
+    final conversationId = _activeConversationId;
+    if (_image == null || _agentId == null || conversationId == null) {
+      return null;
     }
-    await ref.read(coreGatewayProvider).call('attachment.commit', {
-      'attachmentId': id,
-    });
-    return id;
+    final bytes = await File(_image!.path).readAsBytes();
+    final projectId =
+        _controller?.state.metadata?['projectId'] as String? ??
+        widget.projectId;
+    String? attachmentId;
+    try {
+      final begin = await ref.read(coreGatewayProvider).call(
+        'attachment.begin',
+        {
+          'agentId': _agentId,
+          'conversationId': conversationId,
+          'clientMessageId': clientMessageId,
+          if (projectId != null && projectId.isNotEmpty) 'projectId': projectId,
+          'mimeType': _image!.mimeType ?? 'image/jpeg',
+          'fileName': _image!.name,
+          'size': bytes.length,
+        },
+      );
+      attachmentId =
+          (begin['result'] as Map<String, dynamic>)['attachmentId'] as String;
+      const chunkSize = 256 * 1024;
+      for (var offset = 0; offset < bytes.length; offset += chunkSize) {
+        final end = (offset + chunkSize).clamp(0, bytes.length);
+        await ref.read(coreGatewayProvider).call('attachment.chunk', {
+          'attachmentId': attachmentId,
+          'data': base64Encode(bytes.sublist(offset, end)),
+        });
+      }
+      await ref.read(coreGatewayProvider).call('attachment.commit', {
+        'attachmentId': attachmentId,
+      });
+      return attachmentId;
+    } catch (error) {
+      if (attachmentId != null) {
+        try {
+          await ref.read(coreGatewayProvider).call('attachment.abort', {
+            'attachmentId': attachmentId,
+          });
+        } catch (_) {
+          // The original upload error is more useful to the user.
+        }
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _pickImage() async {
+    if (_submitting) return;
+    final selected = await ImagePicker().pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 88,
+    );
+    if (mounted && selected != null) setState(() => _image = selected);
   }
 
   Future<void> _send() async {
     final text = _composer.text.trim();
-    if (_submitting || _agentId == null || (text.isEmpty && _image == null)) {
+    if (_submitting || (text.isEmpty && _image == null)) {
       return;
     }
     setState(() => _submitting = true);
+    var turnStartSent = false;
     try {
-      final attachment = await _uploadImage();
+      final workspace = await ref.read(workspaceProvider.future);
+      final agentId = workspace.selectedAgentId;
+      if (agentId == null) {
+        throw CoreFault('invalid_params', 'An agent is required');
+      }
+      final conversationId = await _ensureConversation();
+      final clientMessageId = '${DateTime.now().microsecondsSinceEpoch}';
+      final attachment = await _uploadImage(clientMessageId);
+      turnStartSent = true;
       await ref.read(coreGatewayProvider).call('turn.start', {
-        'agentId': _agentId,
-        'threadId': widget.conversationId,
+        'agentId': agentId,
+        'threadId': conversationId,
         'text': text,
         if (attachment != null) 'attachmentIds': [attachment],
-        'clientMessageId': '${DateTime.now().microsecondsSinceEpoch}',
+        'clientMessageId': clientMessageId,
       }, timeoutMilliseconds: 60000);
       _composer.clear();
       setState(() => _image = null);
       await _refresh();
     } catch (error) {
+      final ambiguous =
+          turnStartSent &&
+          error is CoreFault &&
+          (error.code == 'ambiguous_write' || error.code == 'peer_offline');
+      if (ambiguous && await _reconcileAmbiguousTurn()) {
+        _composer.clear();
+        if (mounted) setState(() => _image = null);
+        return;
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(context.l10n.sendFailed(error.toString()))),
+          SnackBar(
+            content: Text(
+              _isDraft
+                  ? _createConversationError(context, error)
+                  : context.l10n.sendFailed(error.toString()),
+            ),
+          ),
         );
       }
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  String _createConversationError(BuildContext context, Object error) {
+    if (error is CoreFault) {
+      switch (error.code) {
+        case 'forbidden':
+          return context.l10n.createConversationPermissionDenied;
+        case 'provider_error':
+          return context.l10n.createConversationDesktopFailed;
+      }
+    }
+    return context.l10n.createConversationFailed;
   }
 
   Future<void> _interrupt() async {
@@ -182,7 +353,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     if (!confirmed) return;
     await ref.read(coreGatewayProvider).call('turn.interrupt', {
       'agentId': _agentId,
-      'threadId': widget.conversationId,
+      'threadId': _activeConversationId,
     });
     await _refresh();
   }
@@ -206,10 +377,13 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final state = _controller?.state ?? const ConversationState(loading: true);
+    final state = _isDraft
+        ? const ConversationState()
+        : (_controller?.state ?? const ConversationState(loading: true));
     final conversation = state.metadata;
     final title =
-        conversation?['title'] as String? ?? context.l10n.conversation;
+        conversation?['title'] as String? ??
+        (_isDraft ? context.l10n.newConversation : context.l10n.conversation);
     final running = conversation?['running'] as bool? ?? false;
     return Scaffold(
       appBar: AppBar(
@@ -242,10 +416,11 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
           ],
         ),
         actions: [
-          IconButton(
-            onPressed: _refresh,
-            icon: const Icon(Icons.refresh_rounded),
-          ),
+          if (!_isDraft)
+            IconButton(
+              onPressed: _refresh,
+              icon: const Icon(Icons.refresh_rounded),
+            ),
         ],
       ),
       body: Column(
@@ -306,6 +481,11 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
             child: _Timeline(
               items: state.items,
               controller: _controller,
+              emptyState: _isDraft
+                  ? _DraftConversationEmpty(
+                      projectName: widget.projectName ?? context.l10n.project,
+                    )
+                  : null,
               scrollController: _scroll,
               loadingOlder: state.loadingOlder,
               olderError: state.olderError,
@@ -315,73 +495,62 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
           SafeArea(
             top: false,
             minimum: const EdgeInsets.fromLTRB(16, 8, 16, 14),
-            child: running
-                ? FilledButton.icon(
-                    onPressed: _interrupt,
-                    icon: const Icon(Icons.stop_circle_outlined),
-                    label: Text(context.l10n.runningStop),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Colors.black,
-                      minimumSize: const Size.fromHeight(52),
+            child: Column(
+              children: [
+                if (_image != null)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.image_outlined),
+                    title: Text(_image!.name),
+                    trailing: IconButton(
+                      onPressed: () => setState(() => _image = null),
+                      icon: const Icon(Icons.close_rounded),
                     ),
-                  )
-                : Column(
-                    children: [
-                      if (_image != null)
-                        ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          leading: const Icon(Icons.image_outlined),
-                          title: Text(_image!.name),
-                          trailing: IconButton(
-                            onPressed: () => setState(() => _image = null),
-                            icon: const Icon(Icons.close_rounded),
-                          ),
-                        ),
-                      Row(
-                        children: [
-                          IconButton(
-                            onPressed: _submitting
-                                ? null
-                                : () async {
-                                    final selected = await ImagePicker()
-                                        .pickImage(
-                                          source: ImageSource.gallery,
-                                          imageQuality: 88,
-                                        );
-                                    if (mounted && selected != null) {
-                                      setState(() => _image = selected);
-                                    }
-                                  },
-                            icon: const Icon(Icons.add_rounded),
-                          ),
-                          Expanded(
-                            child: TextField(
-                              controller: _composer,
-                              enabled: !_submitting,
-                              minLines: 1,
-                              maxLines: 5,
-                              decoration: InputDecoration(
-                                hintText: context.l10n.continueWorking,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          IconButton.filled(
-                            onPressed: _submitting ? null : _send,
-                            icon: _submitting
-                                ? const SizedBox.square(
-                                    dimension: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : const Icon(Icons.arrow_upward_rounded),
-                          ),
-                        ],
-                      ),
-                    ],
                   ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _composer,
+                        enabled: !_submitting,
+                        minLines: 1,
+                        maxLines: 5,
+                        decoration: InputDecoration(
+                          prefixIcon: IconButton(
+                            onPressed: _submitting ? null : _pickImage,
+                            icon: const Icon(Icons.add_rounded),
+                            tooltip: context.l10n.addAttachment,
+                          ),
+                          hintText: context.l10n.continueWorking,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton.filled(
+                      onPressed: running
+                          ? _interrupt
+                          : (_canSend ? _send : null),
+                      tooltip: running ? context.l10n.stop : context.l10n.send,
+                      style: IconButton.styleFrom(
+                        backgroundColor: running ? Colors.black : wawBlue,
+                        foregroundColor: Colors.white,
+                      ),
+                      icon: running
+                          ? const Icon(Icons.stop_rounded)
+                          : _submitting
+                          ? const SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.arrow_upward_rounded),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -393,6 +562,7 @@ class _Timeline extends StatelessWidget {
   const _Timeline({
     required this.items,
     required this.controller,
+    this.emptyState,
     required this.scrollController,
     required this.loadingOlder,
     required this.olderError,
@@ -401,6 +571,7 @@ class _Timeline extends StatelessWidget {
 
   final List<Map<String, dynamic>> items;
   final ConversationController? controller;
+  final Widget? emptyState;
   final ScrollController scrollController;
   final bool loadingOlder;
   final CoreFault? olderError;
@@ -409,12 +580,13 @@ class _Timeline extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (items.isEmpty) {
-      return Center(
-        child: Text(
-          context.l10n.noTimeline,
-          style: const TextStyle(color: Colors.grey),
-        ),
-      );
+      return emptyState ??
+          Center(
+            child: Text(
+              context.l10n.noTimeline,
+              style: const TextStyle(color: Colors.grey),
+            ),
+          );
     }
     return ListView.builder(
       controller: scrollController,
@@ -443,6 +615,29 @@ class _Timeline extends StatelessWidget {
   }
 }
 
+class _DraftConversationEmpty extends StatelessWidget {
+  const _DraftConversationEmpty({required this.projectName});
+
+  final String projectName;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SvgPicture.asset('assets/waw-app-icon.svg', width: 72, height: 72),
+        const SizedBox(height: 18),
+        Text(
+          projectName,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+        ),
+      ],
+    ),
+  );
+}
+
 class _TimelineItem extends StatelessWidget {
   const _TimelineItem({required this.item, required this.controller});
   final Map<String, dynamic> item;
@@ -464,7 +659,7 @@ class _TimelineItem extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         for (final block in blocks) ...[
-          SelectableText(block['text'] as String? ?? ''),
+          SafeMarkdownMessage(data: block['text'] as String? ?? ''),
           if (block['truncated'] == true)
             TextButton.icon(
               onPressed: controller == null
@@ -520,7 +715,9 @@ class _TimelineItem extends StatelessWidget {
             child: snapshot.hasError
                 ? SelectableText(snapshot.error.toString())
                 : snapshot.hasData
-                ? SingleChildScrollView(child: SelectableText(snapshot.data!))
+                ? SingleChildScrollView(
+                    child: SafeMarkdownMessage(data: snapshot.data!),
+                  )
                 : const Center(child: CircularProgressIndicator()),
           ),
           actions: [

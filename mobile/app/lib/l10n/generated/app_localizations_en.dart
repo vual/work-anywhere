@@ -122,6 +122,21 @@ class AppLocalizationsEn extends AppLocalizations {
   String get loadProjectFailed => 'Unable to load project conversations';
 
   @override
+  String get newConversation => 'New conversation';
+
+  @override
+  String get createConversationFailed =>
+      'Unable to create a conversation. Try again later.';
+
+  @override
+  String get createConversationPermissionDenied =>
+      'This pairing cannot create conversations. Pair the computer again.';
+
+  @override
+  String get createConversationDesktopFailed =>
+      'The computer cannot create a conversation right now. Check the Desktop connection.';
+
+  @override
   String get showMore => 'Show more';
 
   @override
@@ -140,6 +155,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get stop => 'Stop';
+
+  @override
+  String get send => 'Send';
 
   @override
   String get conversation => 'Conversation';
@@ -170,6 +188,26 @@ class AppLocalizationsEn extends AppLocalizations {
   String get fullContent => 'Full content';
 
   @override
+  String get externalLinkTitle => 'Open external link?';
+
+  @override
+  String externalLinkBody(String host) {
+    return 'This will open $host. Confirm that you trust this website.';
+  }
+
+  @override
+  String get unsupportedLink => 'This link type is not supported';
+
+  @override
+  String get externalLinkFailed => 'Unable to open this link';
+
+  @override
+  String get open => 'Open';
+
+  @override
+  String get remoteImageBlocked => 'Remote image hidden';
+
+  @override
   String get confirmationRequired => 'Your confirmation is required';
 
   @override
@@ -187,6 +225,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get continueWorking => 'Continue working on the computer';
+
+  @override
+  String get addAttachment => 'Add attachment';
 
   @override
   String get noTimeline => 'No content to display';

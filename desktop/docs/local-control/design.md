@@ -25,15 +25,19 @@ daemon 将控制方法路由到实例 supervisor；Codex driver/能力描述用�
 - 系统：`system.status`, `system.ui_url`, `system.control.pause`, `system.control.resume`, `system.shutdown`
 - 实例：`instance.list`, `instance.get`, `instance.restart`
 - Mobile navigation：`agent.list`, `project.list`（要求 `mobile-control-v1`）
-- 会话：`conversation.list`, `conversation.read`, `conversation.timeline.list`, `conversation.content.read`, `conversation.subscribe`
+- 会话：`conversation.list`, `conversation.read`, `conversation.timeline.list`, `conversation.content.read`, `conversation.subscribe`, `conversation.create`
 - Turn：`turn.start`, `turn.interrupt`
 - action：`action.list`, `action.resolve`
 - catalog：`catalog.models`, `catalog.permissionProfiles`
-- 附件：`attachment.begin`, `attachment.chunk`, `attachment.commit`
+- 附件：`attachment.begin`, `attachment.chunk`, `attachment.commit`, `attachment.abort`
 - 流量：`traffic.enable`, `traffic.disable`
 - Remote：`remote.status`, `remote.configure`, `remote.enroll`, `remote.reconnect`, `remote.pair.start/list/resolve/cancel/revoke`
 
 `turn.start` 当前接受 `instanceId`、`threadId`、文字、attachment IDs、model、reasoning effort、approval policy、sandbox policy、client message ID 和 expected revision。附件中的图片被转换为官方 App Server 支持的输入项；调用必须指向已有 thread。
+
+`attachment.begin` 在 Mobile contract 下接受 `agentId`、`projectId`、`conversationId`、`clientMessageId`、`mimeType`、文件名和大小。一次发送生成的 `clientMessageId` 同时用于 begin 和 `turn.start`。Desktop 先用 `agentId` 解析并绑定上传所属实例，再将 provider 路由字段从下游参数中移除；这样上传完成后只能由同一实例的 `turn.start` 使用。附件内容直接写入项目目录的 `.work-anywhere-remote-attachments/<conversationId>/<clientMessageId>/`，文件名为清理后的原名加唯一 attachment ID 后缀。
+
+`conversation.create` 仅在 `mobile-control-v1` 下可用，接受 `agentId` 和当前 Codex `projectId`，映射为 App Server `thread/start`，返回稳定的 `{id, projectId?}`。它是受控写操作，要求在线 App Server；新 pairing 使用 `conversation.create` scope，已有仅授予 `turn.start` 的 pairing 也保持向后兼容。Mobile 收到结果前断线时不得自动重试。
 
 `mobile-control-v1` 接受 `agentId` 作为 `instanceId` 的产品化别名，并把 `query` 转为 App Server `searchTerm`。`agent.list` 返回 Codex Agent summary；`project.list` 与 `conversation.list` 返回 `{items,nextCursor}` 和稳定 summary。项目过滤的正常路径使用 App Server `thread/list(projectId)`；若结果为空，Desktop 会根据同一 Project ID 解析根目录并以 `thread/list(cwd)` 回退，以兼容项目迁移前仍只保存旧项目关联或 session cwd 的历史线程。`conversation.read` 使用 `thread/read(includeTurns=false)` 读取 metadata，再用 `thread/items/list(sortDirection=desc)` 返回最近 30 项（最大 50）的稳定 `ConversationSnapshot`；归一化器解包官方 `ThreadItemEntry` 的 `{item,turnId}` 结构，并兼容旧的扁平 fixture。`conversation.timeline.list` 原样续传 App Server opaque cursor 读取更早页。单 block 超过 64 KiB 时仅内联 UTF-8 前 16 KiB，并返回 15 分钟无访问过期、绑定 agent/thread/item/block 的随机 `contentRef`；`conversation.content.read` 每次最多返回 128 KiB。引用只保存 provider 页定位，不缓存正文。
 
@@ -45,7 +49,7 @@ Provider capabilities 当前包含 history、live stream、text/image input、ap
 
 ## State and persistence
 
-控制连接和 subscriber 队列在内存中。客户端通过 conversation sequence/cursor 恢复事件；附件先分块收集，commit 后加密保存并获得 attachment ID。控制暂停只阻止本机控制操作，不改变 Desktop 原始连接。
+控制连接和 subscriber 队列在内存中。客户端通过 conversation sequence/cursor 恢复事件；附件分块直接追加到项目目录下的 `.part` 临时文件，commit 校验大小后原子重命名，再仅把 attachment 元数据和文件路径写入 SQLite。上传失败由 `attachment.abort` 清理临时文件；已 commit 的文件不会因后续 Turn 失败自动删除。`turn.start` 根据 attachment ID 读取文件，仅将 `image/*` 转为官方 App Server 的 data URI，其他 MIME 类型返回 `unsupported_attachment_type`。控制暂停只阻止本机控制操作，不改变 Desktop 原始连接。
 
 ## Security and failure handling
 
@@ -73,7 +77,7 @@ Provider capabilities 当前包含 history、live stream、text/image input、ap
 ## Verification
 
 - CLI 查看实例/会话、启动和中断 Turn、列出/解决 action、读取 catalog。
-- 附件 begin/chunk/commit 后可用于图片输入。
+- 附件 begin/chunk/commit 后可用于图片输入；abort、size mismatch、路径穿越、项目目录回退和重启清理测试覆盖文件存储边界。
 - cursor 重连补发和 snapshot fallback 测试。
 - metadata/timeline DTO、opaque cursor、自适应页大小、UTF-8 内容分块和引用越权/过期测试。
 - Origin、CSRF、一次性 token、控制暂停和慢订阅者测试。

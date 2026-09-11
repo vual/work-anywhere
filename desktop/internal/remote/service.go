@@ -28,7 +28,7 @@ import (
 
 const remoteStateKey = "remote.state.v1"
 
-var defaultScopes = []string{"status.read", "conversation.read", "turn.start", "turn.interrupt", "action.read", "action.resolve", "attachment.write", "catalog.read"}
+var defaultScopes = []string{"status.read", "conversation.read", "conversation.create", "turn.start", "turn.interrupt", "action.read", "action.resolve", "attachment.write", "catalog.read"}
 
 type settingsStore interface {
 	PutSetting(string, any) error
@@ -803,16 +803,17 @@ func scopeAllows(scopes []string, method string) bool {
 		"system.status": "status.read", "instance.list": "status.read", "instance.get": "status.read", "agent.list": "status.read",
 		"project.list":      "conversation.read",
 		"conversation.list": "conversation.read", "conversation.read": "conversation.read", "conversation.timeline.list": "conversation.read", "conversation.content.read": "conversation.read", "conversation.subscribe": "conversation.read",
-		"turn.start": "turn.start", "turn.interrupt": "turn.interrupt",
+		"conversation.create": "conversation.create",
+		"turn.start":          "turn.start", "turn.interrupt": "turn.interrupt",
 		"action.list": "action.read", "action.resolve": "action.resolve",
-		"attachment.begin": "attachment.write", "attachment.chunk": "attachment.write", "attachment.commit": "attachment.write",
+		"attachment.begin": "attachment.write", "attachment.chunk": "attachment.write", "attachment.commit": "attachment.write", "attachment.abort": "attachment.write",
 		"catalog.models": "catalog.read", "catalog.permissionProfiles": "catalog.read",
 	}[method]
 	if required == "" {
 		return false
 	}
 	for _, scope := range scopes {
-		if scope == required {
+		if scope == required || (method == "conversation.create" && scope == "turn.start") {
 			return true
 		}
 	}

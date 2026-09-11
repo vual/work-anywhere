@@ -304,6 +304,30 @@ abstract class AppLocalizations {
   /// **'无法载入项目对话'**
   String get loadProjectFailed;
 
+  /// No description provided for @newConversation.
+  ///
+  /// In zh, this message translates to:
+  /// **'新建对话'**
+  String get newConversation;
+
+  /// No description provided for @createConversationFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'无法新建对话，请稍后重试'**
+  String get createConversationFailed;
+
+  /// No description provided for @createConversationPermissionDenied.
+  ///
+  /// In zh, this message translates to:
+  /// **'当前配对没有新建对话权限，请重新配对电脑'**
+  String get createConversationPermissionDenied;
+
+  /// No description provided for @createConversationDesktopFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'电脑端暂时无法新建对话，请检查 Desktop 连接'**
+  String get createConversationDesktopFailed;
+
   /// No description provided for @showMore.
   ///
   /// In zh, this message translates to:
@@ -339,6 +363,12 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'停止'**
   String get stop;
+
+  /// No description provided for @send.
+  ///
+  /// In zh, this message translates to:
+  /// **'发送'**
+  String get send;
 
   /// No description provided for @conversation.
   ///
@@ -394,6 +424,42 @@ abstract class AppLocalizations {
   /// **'完整内容'**
   String get fullContent;
 
+  /// No description provided for @externalLinkTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'打开外部链接？'**
+  String get externalLinkTitle;
+
+  /// No description provided for @externalLinkBody.
+  ///
+  /// In zh, this message translates to:
+  /// **'即将打开 {host}。请确认这是你信任的网站。'**
+  String externalLinkBody(String host);
+
+  /// No description provided for @unsupportedLink.
+  ///
+  /// In zh, this message translates to:
+  /// **'此链接类型不受支持'**
+  String get unsupportedLink;
+
+  /// No description provided for @externalLinkFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'无法打开此链接'**
+  String get externalLinkFailed;
+
+  /// No description provided for @open.
+  ///
+  /// In zh, this message translates to:
+  /// **'打开'**
+  String get open;
+
+  /// No description provided for @remoteImageBlocked.
+  ///
+  /// In zh, this message translates to:
+  /// **'远程图片已隐藏'**
+  String get remoteImageBlocked;
+
   /// No description provided for @confirmationRequired.
   ///
   /// In zh, this message translates to:
@@ -429,6 +495,12 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'在电脑上继续工作'**
   String get continueWorking;
+
+  /// No description provided for @addAttachment.
+  ///
+  /// In zh, this message translates to:
+  /// **'添加附件'**
+  String get addAttachment;
 
   /// No description provided for @noTimeline.
   ///

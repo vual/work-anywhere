@@ -36,7 +36,7 @@
 - 实现 Codex 最近项目 10 条与展开、跨项目最近对话 30 条、项目内最近对话 15 条与分页、项目/对话全集搜索和运行中蓝色 loading icon。
 - 实现项目/会话详情和 typed timeline renderer；Hermes Bot 仅完成 capability/unsupported 状态，不纳入 Codex-first 发布范围。
 - 实现 conversation snapshot/cursor、event reducer、gap/snapshot fallback、弱网退避和 selection generation。
-- 完成 Markdown/diff/tool 安全 renderer、滚动跟随、stale/offline/error 状态与应用锁/隐私遮罩。
+- 完成 Markdown 安全 renderer（GFM 常用格式、选择/复制、链接确认和远程图片拦截）、diff/tool 安全 renderer、滚动跟随、stale/offline/error 状态与应用锁/隐私遮罩。
 
 验收：无 pairing 根页和有 pairing 工作台无底栏；恢复/删除/切换 Daemon 与 Agent 正确；10/30/15 数量、cursor 分页、跨全部记录搜索和运行状态 icon 符合契约；长会话、1000 event 边界、streaming、duplicate/gap/late response、24 小时断网恢复不重复/丢序；widget/accessibility/golden tests 覆盖所有页面状态；正文不落盘。
 
@@ -105,7 +105,7 @@ mobile/scripts/build-android.ps1    Android tester APK
 
 ## 不变量与非目标
 
-交付压力不能降低 E2EE、scope、明确 Desktop 批准、写操作不重放和无正文 push 的要求。V1 不以 Web/PWA、browser simulator 或单平台 beta 代替 iOS/Android 生产验收；也不在本计划加入账号、离线 mailbox、新建 thread、多节点 Relay 或 Hermes/Claude Code/OpenCode/Pi 的完整适配。
+交付压力不能降低 E2EE、scope、明确 Desktop 批准、写操作不重放和无正文 push 的要求。V1 不以 Web/PWA、browser simulator 或单平台 beta 代替 iOS/Android 生产验收；也不在本计划加入账号、离线 mailbox、多节点 Relay 或 Hermes/Claude Code/OpenCode/Pi 的完整适配。新建 thread 仅限已同步 Codex 项目，并遵循结果未知不自动重放。
 
 ## 代码归属
 

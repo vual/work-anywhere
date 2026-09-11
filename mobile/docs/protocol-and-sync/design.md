@@ -22,11 +22,12 @@
 | --- | --- | --- |
 | `status.read` | Daemon/Agent 状态 | `system.status`, `instance.list/get`, `agent.list` |
 | `conversation.read` | 项目/对话列表、搜索、snapshot、增量 | `project.list`, `conversation.list/read/subscribe` |
+| `conversation.create` | 首次发送时在当前项目创建 Codex thread | `conversation.create` |
 | `turn.start` | 继续已有 thread | `turn.start` |
 | `turn.interrupt` | 中断活跃 Turn | `turn.interrupt` |
 | `action.read` | 查看待处理 action | `action.list` |
 | `action.resolve` | 回答 approval/question | `action.resolve` |
-| `attachment.write` | 图片分块上传 | `attachment.begin/chunk/commit` |
+| `attachment.write` | 图片分块上传 | `attachment.begin/chunk/commit/abort` |
 | `catalog.read` | 模型、思考与权限选项 | `catalog.models/permissionProfiles` |
 
 Mobile 不发送 `system.shutdown`、traffic、UI、install/uninstall、force-stop 或 `instance.restart`。即使未来 wire 收到相同字符串，客户端和 Desktop 都必须 fail closed。
@@ -87,7 +88,7 @@ online
   └─ pair_revoked → revoked
 ```
 
-前台 transient reconnect 使用带 jitter 的 1、2、4、8、16、30 秒上限退避；网络恢复或用户点击“重试”可重置等待。鉴权失败、grant/key 不匹配和 revoke 不进入无限重试。所有状态转换由单一 `PairingRuntime` 串行 reducer 处理，旧 connection epoch 的 callback 不能修改新 runtime。
+当前 Go endpoint 在已有 pairing credential 且请求发现 socket 已断开时，会在该请求边界同步重建 authenticated WSS/Noise session；旧连接的迟到 callback 不得修改新 session。Flutter 前台带 jitter 的 1、2、4、8、16、30 秒退避、后台生命周期断开和单一 `PairingRuntime` reducer 仍是正式 Mobile 发布前的实现要求。鉴权失败、grant/key 不匹配和 revoke 不进入无限重试。
 
 ## 初始同步与增量
 
@@ -105,7 +106,7 @@ App 前台对未选中 Daemon 以有界短连接依次执行 status probe，更�
 
 ### 规范化 DTO 当前边界与发布门槛
 
-`mobile-control-v1` envelope 会回显 contract，未知 contract 返回 `unsupported_contract`。Mobile-facing target 参数统一使用 `agentId`，Desktop 只在 provider 边界内转换为 `instanceId`。`agent.list`、`project.list`、`conversation.list` 和 conversation timeline 已输出稳定 DTO；catalog 与 action 仍有 provider-shaped payload。
+`mobile-control-v1` envelope 会回显 contract，未知 contract 返回 `unsupported_contract`。Mobile-facing target 参数统一使用 `agentId`，Desktop 只在 provider 边界内转换为 `instanceId`；附件上传会先绑定该实例，再把 `instanceId` 从 provider 参数中移除。`agent.list`、`project.list`、`conversation.list` 和 conversation timeline 已输出稳定 DTO；catalog 与 action 仍有 provider-shaped payload。
 
 `conversation.read` 组合 metadata-only `thread/read` 与 `thread/items/list(sortDirection=desc)`，默认 30、最大 50。snapshot 包含 metadata、revision、sequence、timeline 和 opaque `nextCursor`。`TimelineItem` 固定为 id、可选 turnId、kind、status 与 blocks，不透传 provider JSON。单 block 超过 64 KiB 时内联 UTF-8 前 16 KiB，并用 15 分钟滑动过期的 `contentRef` 按 128 KiB 分块读取。项目下对话列表优先按 `projectId` 查询；Desktop 若发现历史线程项目关联未迁移，会按项目根目录 `cwd` 回退查询。Desktop control response 不超过 512 KiB；页面超预算时以相同 cursor 将 limit 逐次减半。发布前仍必须完成：
 
@@ -119,7 +120,7 @@ App 前台对未选中 Daemon 以有界短连接依次执行 status probe，更�
 - `PendingAction`：id、kind (`approval`/`question`)、title、explanation、choices/input schema、created time；
 - `Catalog`：稳定 ID/label/capability/availability，不把 provider enum 当 UI 文案；
 - `Page<T>`：items、next cursor、has more；project 默认请求 10、项目对话 15、最近对话 30，数量是 client request 而非 server hard limit；
-- 稳定 error code 包含 `payload_too_large`、`response_too_large`、`content_ref_expired`、`peer_offline`、`queue_full`、`request_timeout`，并保留 busy、revision conflict、already resolved 与 forbidden。
+- 稳定 error code 包含 `payload_too_large`、`response_too_large`、`content_ref_expired`、`peer_offline`、`ambiguous_write`、`queue_full`、`request_timeout`，并保留 busy、revision conflict、already resolved 与 forbidden。
 
 Mobile 产品页面只消费稳定 timeline DTO；尚未规范化的 action/catalog 仍按预发布边界处理。
 
@@ -128,12 +129,12 @@ Mobile 产品页面只消费稳定 timeline DTO；尚未规范化的 action/cata
 ### Turn start
 
 1. 本地检查 `online`、`turn.start` scope、conversation idle、无 blocking action。
-2. 图片依次执行 begin/chunk/commit；显示逐文件进度。任一失败则不提交 Turn，允许用户重试整份上传。
-3. 生成随机 `clientMessageId`，提交 text、attachment IDs、catalog 选择和 `expectedRevision`。
+2. 一次发送先生成唯一 `clientMessageId`，图片 begin/chunk/commit 全部使用该 ID；begin 同时传递当前会话 metadata 中的 `projectId`、conversation ID、MIME、原始文件名和大小。显示逐文件进度，分块大小为 256 KiB。
+3. 上传失败调用 `attachment.abort` 清理 Desktop 的 `.part` 文件，不提交 Turn；用户重试时重新生成消息 ID并上传整份文件。
 4. response 成功只显示“已提交”；收到 matching turn event/snapshot 后才进入“运行中”。
 5. 若 response 前断线，禁止自动重发。重连同步后按 `clientMessageId`/snapshot 判定；无法判定则显示“提交结果未知，请先在电脑端确认”。
 
-V1 只支持图片附件，单文件和总大小须低于 Desktop 48 MiB 上限并预留 base64/1 MiB route frame 的分块余量。压缩/缩放必须在用户确认的预览基础上进行，不能改变原图后仍显示原始大小。
+V1 只支持图片附件，单文件和总大小须低于 Desktop 48 MiB 上限并预留 base64/1 MiB route frame 的分块余量。Desktop 会把附件保存到项目目录而不是数据库；`turn.start` 只提交 attachment ID，不向 Mobile 或 Relay 暴露本地绝对路径。压缩/缩放必须在用户确认的预览基础上进行，不能改变原图后仍显示原始大小。
 
 ### Action resolve
 
@@ -151,8 +152,9 @@ V1 只支持图片附件，单文件和总大小须低于 Desktop 48 MiB 上限�
 | --- | --- | --- |
 | status/list/read/catalog/subscribe | 是，限前台且有退避 | 丢弃旧 response，重新同步 |
 | pair join/auth/Noise handshake | 仅协议允许的全新 attempt/session | 旧 session 全部销毁 |
-| turn.start/action.resolve/turn.interrupt | 否 | snapshot 对账，结果未知时提示用户 |
-| attachment upload | 不续传旧 upload | 丢弃 attachment ID，用户触发整份重试 |
+| conversation.create | 否 | 结果未知时重新同步项目列表，不自动创建第二个 thread |
+| turn.start/action.resolve/turn.interrupt | 否 | 若返回 `ambiguous_write` 或响应丢失，刷新 snapshot 对账；确认已执行后不再提示失败，也不自动重发 |
+| attachment upload | 不续传旧 upload | 调用 abort 清理 `.part`，丢弃 attachment ID，用户触发整份重试 |
 | push register | 可按更高 generation 重试 | 新 socket auth 后再注册 |
 
 `route_ack.accepted` 只表示进入目标内存队列，`delivery_ack` 只表示 endpoint 收到 frame；两者都不能完成业务 promise。Mobile endpoint 按外层 message ID 关联 route ACK，拒绝 ACK 立即结束对应请求；断线、迟到或未知 ACK 不得污染新连接。只有匹配 request ID 的 E2EE response 或后续权威 snapshot/event 能决定业务状态。
@@ -180,7 +182,7 @@ Mobile 获取新 APNs/FCM token 后递增本地 generation，并由 host 直接�
 
 - 无已验证 grant 就没有持久 pairing；无完成 Noise handshake 就不发送 control JSON。
 - 任一 session 每方向 sequence 单调；gap/tamper/revoke 必须重建而非继续。
-- 不提供离线 outbox、自动重放写命令、exactly-once 承诺、通知内审批或新建 conversation。
+- 不提供离线 outbox、自动重放写命令、exactly-once 承诺或通知内审批。`conversation.create` 只接受当前项目 ID，结果未知时不自动重放。
 - V1 只发布 Codex `projects` adapter；Hermes `bots` 和其他 Provider 仅保留 capability/DTO 边界，不作为已实现能力。
 - Mobile 不拥有 Relay schema 或 Desktop 业务 DTO 的平行副本。
 

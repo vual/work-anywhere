@@ -1,6 +1,6 @@
 # Mobile product interaction
 
-> 状态：Android-first Flutter 页面已实现配对、工作台、项目分页、分页会话详情、大内容查看、局部重试、受控写入首版、`zh-CN`/`en-US` 文案和品牌 launcher icon；多 Daemon、完整搜索/action schema、离线状态、应用锁、iOS 与全量真机验收尚未完成。
+> 状态：Android-first Flutter 页面已实现配对、工作台、项目分页、项目内新建对话、分页会话详情、大内容查看、局部重试、受控写入首版、`zh-CN`/`en-US` 文案和品牌 launcher icon；多 Daemon、完整搜索/action schema、离线状态、应用锁、iOS 与全量真机验收尚未完成。
 
 ## 目标与范围
 
@@ -55,6 +55,8 @@ App 不使用底部导航栏。无 pairing 时根页面是添加配对；至少�
 ```
 
 底部没有导航栏；搜索框固定在工作台内容底部，但不承担页面切换或一级导航职责。
+
+顶栏需要适配窄屏和动态字体：品牌名允许单行省略，Daemon selector 使用可收缩的有限宽度，名称和连接状态允许省略但必须保留完整无障碍朗读。窄屏且存在运行中对话时，顶部只保留 loading 图标作为视觉提示，运行数量通过无障碍标签和详情页提供，不能让任务提示把 Daemon selector 挤出屏幕。
 
 ### Daemon selector
 
@@ -112,6 +114,8 @@ Codex Agent 下默认展示最近活跃的 10 个项目，按最近一条对话�
 
 点击项目进入项目详情，默认加载该项目最近 15 条对话，按最后更新时间倒序；底部使用“显示更多”继续分页。项目页标题下显示 Agent 和路径，返回后恢复工作台滚动位置、已展开项目数量和搜索前状态。
 
+项目详情页右下角固定显示纯 icon 的圆形“新建对话”按钮。点击只打开当前项目的空白会话详情页，不立即访问 Desktop；页面中央显示 WAW logo 和项目名，底部显示 Composer。用户第一次发送文字或图片时，客户端才通过 `conversation.create` 创建当前项目的 Codex thread，并随后发送第一条 Turn。创建/发送期间输入区显示 loading 且不可重复提交；失败时保留空白页和输入内容，不创建本地 outbox。
+
 ### Hermes Bot
 
 Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项目列表。Hermes 的 Bot 数据、排序与详情属于后续适配；Codex-first V1 不伪造 Bot 为项目，也不让未实现的 Hermes chip进入空白项目页。
@@ -129,7 +133,7 @@ Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项�
 点击项目结果进入该项目的对话列表，点击对话结果进入会话详情。清空 query 恢复工作台此前的项目展开数量、对话列表和滚动位置。Hermes 完成适配后搜索对象改为 Bot + 对话。
 
 - 初次同步：skeleton，不显示“暂无任务”。
-- 在线但 Codex 无项目/对话：说明“请先在电脑端创建一个 Codex 任务”；V1 没有误导性的“新建任务”按钮。
+- 在线但 Codex 无项目：说明“请先在电脑端创建一个 Codex 项目”。项目详情页即使没有对话也保留“新建对话”入口。
 - Desktop 离线：固定 banner“电脑未连接，无法读取或发送”，显示重试与故障提示；不展示正文磁盘缓存。
 - Agent error：保留 selector 中其他正常 Agent；问题 Agent 显示 stable error，并建议去 Desktop 检查。
 
@@ -139,21 +143,21 @@ Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项�
 
 顶部显示返回、标题、connection/status pill 和 overflow。内容 block：
 
-- user/assistant：常规气泡/正文；Markdown 采用安全 renderer，禁用任意 HTML 与远程资源自动加载；
+- user/assistant：常规气泡/正文；由 `app/lib/features/conversation/markdown_renderer.dart` 使用 GFM 安全 renderer，支持标题、强调、列表、引用、表格、任务列表、代码块和选择/复制；不解析任意 HTML，不自动加载图片；`http/https` 链接显示目标 host 并在打开前二次确认。
 - reasoning：默认折叠，只显示阶段标题和运行状态；
 - tool：工具名、状态、耗时，输出折叠；
 - diff：文件名与增删摘要，点击进入只读 diff viewer；
 - system/error：非气泡 banner，提供可恢复动作。
 
-打开页面先定位最后已读内容；运行时保持“跟随最新”仅在用户接近底部时自动滚动。用户向上阅读后，新内容显示悬浮“有新进展”按钮，不抢滚动位置。streaming block 原位更新，完成后固定；event gap 时顶部显示“正在重新同步”，不重复渲染已存在 block。
+打开页面在首屏 snapshot 加载并完成布局后自动定位到时间线底部，展示最新内容；运行时保持“跟随最新”仅在用户接近底部时自动滚动。用户向上阅读后，新内容显示悬浮“有新进展”按钮，不抢滚动位置。streaming block 原位更新，完成后固定；event gap 时顶部显示“正在重新同步”，不重复渲染已存在 block。
 
 首屏只读取最近 30 项并正序显示；滚动到顶部使用 opaque cursor 加载更早页，按 item ID 去重，并以新增内容高度补偿滚动位置。刷新或旧页失败保留已显示内容，重试只执行失败的 snapshot、action 或旧页请求。`action.list` 失败只显示独立 banner，不阻断正文。大 block 显示 16 KiB 摘要和“查看完整内容”，查看器按 128 KiB 连续加载；引用过期时提示刷新 snapshot。
 
 ### Composer
 
-仅当 `online + idle + turn.start scope + no blocking action` 时可发送。输入区包含图片、文本、发送和一个设置入口；设置 bottom sheet 展示 Desktop catalog 提供的模型、思考等级、approval/sandbox profile，并记住“本 thread 本次 UI 选择”，不把未确认值持久化为全局事实。
+仅当 `online + idle + turn.start scope + no blocking action` 时可发送。输入框左侧内嵌附件添加 icon，右侧提供发送按钮；输入区同时支持图片、文本和一个设置入口。没有文字且没有附件时发送按钮禁用，输入文字或选中附件后启用。设置 bottom sheet 展示 Desktop catalog 提供的模型、思考等级、approval/sandbox profile，并记住“本 thread 本次 UI 选择”，不把未确认值持久化为全局事实。
 
-- running：composer 替换为“任务运行中”和“停止”按钮；若 Provider 支持 steer 且 Desktop 将来开放，再另行设计，不把第二条消息默认为排队。
+- running：保留文本输入框和附件添加入口，仅将右侧发送圆按钮切换为圆形“停止”按钮；若 Provider 支持 steer 且 Desktop 将来开放，再另行设计，不把输入内容默认为排队。
 - awaiting action：composer 收起，突出“先处理待办”。
 - offline/syncing/revision conflict：保留草稿于当前进程内，发送按钮禁用并给出原因。
 - text + image：发送前显示缩略图、大小和移除；上传阶段锁定附件编辑，允许取消整次提交。
@@ -234,18 +238,19 @@ Daemon selector 底部提供“添加电脑”和“管理电脑”。管理页�
 - 不显示超出 scope 的可操作按钮，不在离线时接受会稍后发送的输入。
 - App 不使用底部导航；Daemon 与 Agent 选择是工作台上下文，不是独立 tab。
 - V1 优先适配 Codex；Hermes 使用 Bot 而非项目的能力模型已保留，但 Bot UI/协议尚未实现。Claude Code、OpenCode、Pi 等同样不得显示为已支持。
-- V1 不新建 thread、不提供通知内 action、不持久化草稿/正文、不支持多选批量审批；搜索只覆盖项目 metadata 与对话可搜索字段，不承诺本地全文索引。
+- V1 不提供通知内 action、不持久化草稿/正文、不支持多选批量审批；搜索只覆盖项目 metadata 与对话可搜索字段，不承诺本地全文索引。新建 thread 仅支持当前已同步的 Codex 项目，不提供独立于项目的空白 thread。
 
 ## 代码归属
 
-当前路径：`mobile/app/lib/features/{pairing,workspace,project,conversation}/`、`mobile/app/lib/app/` 与 `mobile/app/lib/core/`。`actions` 当前内嵌在会话页；daemon management、settings、独立 action schema 尚未实现。
+当前路径：`mobile/app/lib/features/{pairing,workspace,project,conversation}/`、`mobile/app/lib/app/` 与 `mobile/app/lib/core/`。Markdown 正文 renderer 位于 `mobile/app/lib/features/conversation/markdown_renderer.dart`；`actions` 当前内嵌在会话页；daemon management、settings、独立 action schema 尚未实现。
 
 可点击交互参考：[Mobile 高保真原型 V3](../../../designs/work-anywhere-mobile/index-v3.html)。原型采用白底扁平列表、胶囊上下文与单一蓝色动作色，用于确认信息层级、页面状态和交互路径，不代表 Mobile 运行代码已经实现。
 
 ## 验证方式
 
-- 每个页面覆盖 loading、empty、online、offline、stale、error、restricted 和 revoked golden/widget tests；Daemon 绿色/灰色状态点与两类 loading icon 都验证文本语义。
+- 每个页面覆盖 loading、empty、online、offline、stale、error、restricted 和 revoked golden/widget tests；项目页额外验证“新建对话”按钮、重复点击保护、创建成功跳转和创建失败提示；Daemon 绿色/灰色状态点与两类 loading icon 都验证文本语义。
 - E2E 覆盖首次配对、拒绝/过期、恢复上次 Daemon/Agent、多 Daemon/Agent 切换、项目 10 条展开、项目会话 15 条分页、最近对话 30 条、跨项目搜索、运行中蓝色 icon、流式输出、cursor gap、action race、图片失败、interrupt race 和 push cold start。
+- Markdown widget 测试覆盖 GFM 常用格式、文本选择、代码块、链接确认入口和远程图片拦截；链接只允许 `http/https`，打开失败保留在当前页面并显示可解释提示。
 - VoiceOver/TalkBack、200% 字体、reduced motion、窄屏/平板、深色模式和本地化伪语言人工验收。
 - 用户测试重点记录：能否区分 Desktop 离线与任务失败、能否理解“等待电脑确认”、是否会在 ambiguous write 后误重复发送。
 

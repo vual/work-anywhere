@@ -33,7 +33,7 @@ remote.configure 接受合法的 HTTP 或 HTTPS origin，IP 和域名均可，�
 
 pairing secret 仅在内存，最长五分钟；pairing 保存 peer keys、capability hash 和 scopes。daemon 验证 QR HMAC 后签署 grant，收到 Relay result 时再次要求 expiry、signature 和 scopes 与本机批准值完全一致。revoked pairing 从本地 state 删除并关闭相关 session。
 
-当前没有“删除远程身份/轮换 key”命令；需重新建立身份的恢复流程尚未产品化。
+当前没有“删除远程身份/轮换 key”命令；需重新建立身份的恢复流程尚未产品化。新 pairing 的默认 scopes 还包含 `conversation.create`，用于项目内创建 Codex thread；为兼容已授权设备，已有 `turn.start` scope 也允许该方法。
 
 ## Remote request adapter
 
@@ -41,11 +41,11 @@ Desktop 解密并验证 desktop-control-json-v1 后，仅允许：
 
 - system.status, instance.list/get
 - agent.list, project.list
-- conversation.list/read/timeline.list/content.read/subscribe
+- conversation.list/read/timeline.list/content.read/subscribe/create
 - turn.start/interrupt
 - action.list/resolve
 - catalog.models/permissionProfiles
-- attachment.begin/chunk/commit
+- attachment.begin/chunk/commit/abort
 
 每个方法映射到 pairing scope，再调用与本机 CLI 相同的 daemon manager。未知方法、system.shutdown、traffic、UI、install/uninstall 和 force-stop fail closed。system.status 响应会移除 remote 字段，避免向 Mobile 回显其他 pairing metadata。
 

@@ -127,7 +127,10 @@ func TestQRRoundTripAndScopeAllowlist(t *testing.T) {
 	if err != nil || restored.PairingID != payload.PairingID || len(secret) != 32 {
 		t.Fatalf("QR roundtrip failed: restored=%+v err=%v", restored, err)
 	}
-	if !scopeAllows([]string{"turn.start"}, "turn.start") || scopeAllows([]string{"turn.start"}, "system.shutdown") {
+	if !scopeAllows([]string{"turn.start"}, "turn.start") ||
+		!scopeAllows([]string{"turn.start"}, "conversation.create") ||
+		!scopeAllows([]string{"conversation.create"}, "conversation.create") ||
+		scopeAllows([]string{"turn.start"}, "system.shutdown") {
 		t.Fatal("remote method allowlist is incorrect")
 	}
 }
