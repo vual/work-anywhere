@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hurf/work-anywhere/desktop/internal/protocol"
 	"github.com/hurf/work-anywhere/desktop/internal/store"
@@ -21,6 +22,13 @@ import (
 type recordingMobileCaller struct {
 	limits []int
 	body   json.RawMessage
+}
+
+type pagedMobileCaller struct {
+	limits  []int
+	cursors []string
+	turnIDs []string
+	pages   map[string]json.RawMessage
 }
 
 func (c *recordingMobileCaller) Call(_ context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
@@ -33,6 +41,26 @@ func (c *recordingMobileCaller) Call(_ context.Context, method string, params js
 	_ = json.Unmarshal(params, &request)
 	c.limits = append(c.limits, request.Limit)
 	return c.body, nil
+}
+
+func (c *pagedMobileCaller) Call(_ context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
+	if method != "thread/items/list" {
+		return nil, errors.New("unexpected method")
+	}
+	var request struct {
+		Limit  int    `json:"limit"`
+		Cursor string `json:"cursor"`
+		TurnID string `json:"turnId"`
+	}
+	_ = json.Unmarshal(params, &request)
+	c.limits = append(c.limits, request.Limit)
+	c.cursors = append(c.cursors, request.Cursor)
+	c.turnIDs = append(c.turnIDs, request.TurnID)
+	body, ok := c.pages[request.Cursor]
+	if !ok {
+		return nil, fmt.Errorf("unexpected cursor %q", request.Cursor)
+	}
+	return body, nil
 }
 
 func TestControlRejectsUnknownContract(t *testing.T) {
@@ -61,6 +89,228 @@ func TestNormalizeConversationMetadataAndTimeline(t *testing.T) {
 	nested, _, err := normalizeTimelinePage(json.RawMessage(`{"data":[{"turnId":"turn-2","item":{"id":"i3","type":"agentMessage","text":"nested"}}]}`))
 	if err != nil || len(nested.Items) != 1 || nested.Items[0].ID != "i3" || nested.Items[0].TurnID != "turn-2" || nested.Items[0].Blocks[0].Text != "nested" {
 		t.Fatalf("nested thread item was not normalized: page=%#v err=%v", nested, err)
+	}
+}
+
+func TestPlanTimelineBlockPreservesRawMarkdown(t *testing.T) {
+	page, _, err := normalizeTimelinePage(json.RawMessage(`{"data":[{"id":"plan-1","type":"plan","text":"# 实施计划\n\n- 第一步\n- 第二步"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || len(page.Items[0].Blocks) != 1 {
+		t.Fatalf("unexpected plan page: %#v", page)
+	}
+	block := page.Items[0].Blocks[0]
+	if block.Kind != "plan" || block.Text != "# 实施计划\n\n- 第一步\n- 第二步" {
+		t.Fatalf("plan markdown was not preserved: %#v", block)
+	}
+}
+
+func TestReasoningTimelineKeepsCompleteContentAndSummary(t *testing.T) {
+	page, _, err := normalizeTimelinePage(json.RawMessage(`{"data":[{"id":"reasoning-1","type":"reasoning","content":["full reasoning line 1","full reasoning line 2"],"summary":["summary"]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || len(page.Items[0].Blocks) != 3 {
+		t.Fatalf("unexpected reasoning blocks: %#v", page.Items)
+	}
+	want := []string{"full reasoning line 1", "full reasoning line 2", "summary"}
+	for index, text := range want {
+		if page.Items[0].Blocks[index].Text != text {
+			t.Fatalf("reasoning block %d = %q, want %q", index, page.Items[0].Blocks[index].Text, text)
+		}
+	}
+}
+
+func TestPlanTimelineUsesRawFiveLinePreviewAndContentReference(t *testing.T) {
+	full := "# 实施计划\r\n\r\n- 第一步\r\n- 第二步\r\n- 第三步\r\n- 第四步"
+	page := mobileTimelinePage{Items: []mobileTimelineItem{{
+		ID: "plan-1", TurnID: "turn-1", Kind: "plan", Blocks: []mobileTimelineBlock{{Kind: "plan", Text: full}},
+	}}}
+	manager := &Manager{contentRefs: make(map[string]mobileContentRef)}
+	manager.applyContentRefs(&page, "agent-1", "thread-1", false)
+	block := page.Items[0].Blocks[0]
+	wantPreview := "# 实施计划\r\n\r\n- 第一步\r\n- 第二步\r\n- 第三步\r\n"
+	if !block.Truncated || block.Text != wantPreview || block.TotalBytes != len(full) || block.ContentRef == "" {
+		t.Fatalf("unexpected plan preview: %#v", block)
+	}
+	manager.contentRefMu.Lock()
+	ref := manager.contentRefs[block.ContentRef]
+	manager.contentRefMu.Unlock()
+	if ref.TurnID != "turn-1" || ref.ItemID != "plan-1" || ref.BlockIndex != 0 {
+		t.Fatalf("unexpected plan reference binding: %#v", ref)
+	}
+}
+
+func TestPlanWithAtMostFiveRawLinesStaysInline(t *testing.T) {
+	page := mobileTimelinePage{Items: []mobileTimelineItem{{
+		ID: "plan-1", Kind: "plan", Blocks: []mobileTimelineBlock{{Kind: "plan", Text: "# Plan\n\n- one\n- two"}},
+	}}}
+	manager := &Manager{contentRefs: make(map[string]mobileContentRef)}
+	manager.applyContentRefs(&page, "agent-1", "thread-1", false)
+	block := page.Items[0].Blocks[0]
+	if block.Truncated || block.ContentRef != "" || block.Text != "# Plan\n\n- one\n- two" {
+		t.Fatalf("short plan should remain inline: %#v", block)
+	}
+}
+
+func TestPlanWithExactlyFiveLinesAndTrailingNewlineStaysInline(t *testing.T) {
+	value := "# Plan\n\n- one\n- two\n- three\n"
+	preview, truncated := firstRawLines(value, 5)
+	if truncated || preview != value {
+		t.Fatalf("five source lines plus a trailing newline must stay inline: preview=%q truncated=%v", preview, truncated)
+	}
+	value += "- four"
+	preview, truncated = firstRawLines(value, 5)
+	if !truncated || preview != "# Plan\n\n- one\n- two\n- three\n" {
+		t.Fatalf("a real sixth line must be truncated: preview=%q truncated=%v", preview, truncated)
+	}
+}
+
+func TestNormalizeTimelineSummariesAndHiddenItems(t *testing.T) {
+	rawItems := []map[string]any{
+		{"id": "hook", "type": "hookPrompt", "fragments": []any{"secret"}},
+		{"id": "function", "type": "functionCallOutput", "namespace": "fs", "name": "read", "output": "secret output"},
+		{"id": "mcp", "type": "mcpToolCall", "server": "github", "tool": "list_issues", "arguments": map[string]any{"private": true}, "result": map[string]any{"content": []any{"secret"}}},
+		{"id": "dynamic", "type": "dynamicToolCall", "namespace": "browser", "tool": "open", "arguments": map[string]any{"url": "https://secret.invalid"}},
+		{"id": "collab", "type": "collabAgentToolCall", "tool": "spawnAgent", "prompt": "secret prompt"},
+		{"id": "subagent", "type": "subAgentActivity", "kind": "completed", "agentPath": "C:/secret/agent"},
+		{"id": "search", "type": "webSearch", "query": "  hello\n world ", "results": []any{"secret"}},
+		{"id": "image", "type": "imageView", "path": `C:\secret\image.png`},
+		{"id": "sleep", "type": "sleep", "durationMs": 1500},
+		{"id": "generate", "type": "imageGeneration", "result": "secret result"},
+		{"id": "enter", "type": "enteredReviewMode", "review": "  review\nmode "},
+		{"id": "exit", "type": "exitedReviewMode", "review": "review"},
+		{"id": "compact", "type": "contextCompaction"},
+		{"id": "command", "type": "commandExecution", "command": "git status", "aggregatedOutput": "secret output"},
+	}
+	raw, _ := json.Marshal(map[string]any{"data": rawItems})
+	page, _, err := normalizeTimelinePage(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != len(rawItems)-1 {
+		t.Fatalf("hidden hook item was not removed: %#v", page.Items)
+	}
+	want := map[string]string{
+		"function": "fs.read",
+		"mcp":      "github/list_issues",
+		"dynamic":  "browser.open",
+		"collab":   "spawnAgent",
+		"subagent": "completed",
+		"search":   "hello world",
+		"image":    "image.png",
+		"sleep":    "1500ms",
+		"generate": "imageGeneration",
+		"enter":    "review mode",
+		"exit":     "review",
+		"compact":  "contextCompaction",
+		"command":  "git status",
+	}
+	for _, item := range page.Items {
+		if expected, ok := want[item.ID]; ok {
+			wantKind := "summary"
+			if item.ID == "command" {
+				wantKind = "command"
+			}
+			if len(item.Blocks) != 1 || item.Blocks[0].Kind != wantKind || item.Blocks[0].Text != expected {
+				t.Fatalf("unexpected summary for %s: %#v", item.ID, item)
+			}
+			wantValue := expected
+			if item.ID == "generate" || item.ID == "compact" {
+				wantValue = ""
+			}
+			if item.ID != "command" && (item.Blocks[0].SummaryKind != item.Kind || item.Blocks[0].SummaryValue != wantValue) {
+				t.Fatalf("summary metadata for %s is incomplete: %#v", item.ID, item.Blocks[0])
+			}
+			encoded, _ := json.Marshal(item)
+			for _, forbidden := range []string{"secret", "arguments", "result", "prompt", "C:\\secret"} {
+				if strings.Contains(string(encoded), forbidden) {
+					t.Fatalf("summary %s leaked %q: %s", item.ID, forbidden, encoded)
+				}
+			}
+		}
+	}
+	encoded, _ := json.Marshal(page)
+	for _, localized := range []string{"调用", "搜索", "图片", "上下文"} {
+		if strings.Contains(string(encoded), localized) {
+			t.Fatalf("daemon summary must not contain localized prose %q: %s", localized, encoded)
+		}
+	}
+}
+
+func TestTimelineSummaryValueIsSingleLineAndUTF8Bounded(t *testing.T) {
+	block, ok := timelineSummary(map[string]any{"type": "webSearch", "query": strings.Repeat("界", 300) + "\nsecret"})
+	if !ok || block.Kind != "summary" || block.SummaryKind != "webSearch" || block.Text != block.SummaryValue {
+		t.Fatalf("unexpected summary block: %#v", block)
+	}
+	if len(block.SummaryValue) > mobileSummaryValueBytes || !utf8.ValidString(block.SummaryValue) || strings.Contains(block.SummaryValue, "\n") {
+		t.Fatalf("summary value is not safely bounded: bytes=%d value=%q", len(block.SummaryValue), block.SummaryValue)
+	}
+}
+
+func TestFindTimelineBlockUsesTurnScopedPaginationAndRejectsSummary(t *testing.T) {
+	first, _ := json.Marshal(map[string]any{
+		"data":       []any{map[string]any{"turnId": "turn-1", "item": map[string]any{"id": "summary", "type": "mcpToolCall", "server": "github", "tool": "list"}}},
+		"nextCursor": "next",
+	})
+	second, _ := json.Marshal(map[string]any{
+		"data": []any{map[string]any{"turnId": "turn-1", "item": map[string]any{"id": "plan", "type": "plan", "text": "# Full plan\n\n- item"}}},
+	})
+	caller := &pagedMobileCaller{pages: map[string]json.RawMessage{"": first, "next": second}}
+	manager := &Manager{ctx: context.Background()}
+	text, err := manager.findTimelineBlock(caller, "thread-1", "turn-1", "plan", 0)
+	if err != nil || text != "# Full plan\n\n- item" {
+		t.Fatalf("turn-scoped content lookup failed: text=%q err=%v", text, err)
+	}
+	if fmt.Sprint(caller.cursors) != "[ next]" {
+		t.Fatalf("content lookup did not paginate: %v", caller.cursors)
+	}
+	if fmt.Sprint(caller.turnIDs) != "[turn-1 turn-1]" {
+		t.Fatalf("content lookup was not scoped to the turn: %v", caller.turnIDs)
+	}
+	caller.cursors = nil
+	_, err = manager.findTimelineBlock(caller, "thread-1", "turn-1", "summary", 0)
+	var contractErr *mobileContractError
+	if !errors.As(err, &contractErr) || contractErr.code != "content_not_found" {
+		t.Fatalf("summary content must not be resolvable: %v", err)
+	}
+}
+
+func TestTimelineFilteringFollowsPagesAndBindsReferencesToSourcePage(t *testing.T) {
+	first, _ := json.Marshal(map[string]any{
+		"data": []any{
+			map[string]any{"id": "hidden", "type": "hookPrompt", "text": "not visible"},
+			map[string]any{"id": "summary", "type": "mcpToolCall", "server": "github", "tool": "list"},
+		},
+		"nextCursor": "page-2",
+	})
+	second, _ := json.Marshal(map[string]any{
+		"data": []any{
+			map[string]any{"turnId": "turn-2", "item": map[string]any{"id": "plan", "type": "plan", "text": "# Plan\n\n- one\n- two\n- three\n- four"}},
+		},
+	})
+	caller := &pagedMobileCaller{pages: map[string]json.RawMessage{"": first, "page-2": second}}
+	manager := &Manager{ctx: context.Background(), contentRefs: make(map[string]mobileContentRef)}
+	page, err := manager.readTimelinePage(caller, "agent-1", "thread-1", "", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 2 || page.Items[0].ID != "summary" || page.Items[1].ID != "plan" || page.NextCursor != "" {
+		t.Fatalf("unexpected filtered page: %#v", page)
+	}
+	if fmt.Sprint(caller.limits) != "[2 1]" || fmt.Sprint(caller.cursors) != "[ page-2]" {
+		t.Fatalf("provider pagination = limits %v cursors %v", caller.limits, caller.cursors)
+	}
+	block := page.Items[1].Blocks[0]
+	if block.ContentRef == "" || !block.Truncated || block.Text != "# Plan\n\n- one\n- two\n- three\n" {
+		t.Fatalf("plan was not previewed with a content reference: %#v", block)
+	}
+	manager.contentRefMu.Lock()
+	ref := manager.contentRefs[block.ContentRef]
+	manager.contentRefMu.Unlock()
+	if ref.TurnID != "turn-2" || ref.ItemID != "plan" {
+		t.Fatalf("content reference was not bound to source page: %#v", ref)
 	}
 }
 
@@ -105,7 +355,7 @@ func TestTimelinePageHalvesLimitAndReferencesOversizedSingleItem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []int{30, 15, 7, 3, 1}
+	want := []int{30, 15, 7, 3, 1, 1}
 	if fmt.Sprint(caller.limits) != fmt.Sprint(want) {
 		t.Fatalf("limits = %v, want %v", caller.limits, want)
 	}
@@ -162,7 +412,7 @@ func TestLargeTimelineBlockUsesBoundContentReference(t *testing.T) {
 	text := strings.Repeat("界", mobileLargeBlockBytes)
 	page := mobileTimelinePage{Items: []mobileTimelineItem{{ID: "item-1", Kind: "commandExecution", Blocks: []mobileTimelineBlock{{Kind: "output", Text: text}}}}}
 	manager := &Manager{contentRefs: make(map[string]mobileContentRef)}
-	manager.applyContentRefs(&page, "agent-1", "thread-1", "opaque", 30, false)
+	manager.applyContentRefs(&page, "agent-1", "thread-1", false)
 	block := page.Items[0].Blocks[0]
 	if !block.Truncated || block.ContentRef == "" || block.TotalBytes != len(text) || len(block.Text) > mobileInlinePreviewBytes || !json.Valid([]byte(`"`+block.Text+`"`)) {
 		t.Fatalf("unexpected block: %#v", block)
@@ -176,7 +426,7 @@ func TestLargeTimelineBlockUsesBoundContentReference(t *testing.T) {
 }
 
 func TestTimelineLimit(t *testing.T) {
-	if got, _ := timelineLimit(0); got != 30 {
+	if got, _ := timelineLimit(0); got != 20 {
 		t.Fatalf("default limit = %d", got)
 	}
 	if _, err := timelineLimit(51); err == nil {
@@ -189,8 +439,12 @@ func TestNormalizeProjectList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Items) != 1 || page.Items[0].AgentID != "agent-1" || page.Items[0].Root != "D:/CodeSpace/work-anywhere" || page.NextCursor != "more" {
+	if len(page.Items) != 1 || page.Items[0].AgentID != "agent-1" || page.Items[0].Name != "work-anywhere" || page.NextCursor != "more" {
 		t.Fatalf("unexpected page: %#v", page)
+	}
+	encoded, _ := json.Marshal(page)
+	if strings.Contains(string(encoded), "D:/CodeSpace/work-anywhere") || strings.Contains(string(encoded), "root") {
+		t.Fatalf("project root leaked into mobile DTO: %s", encoded)
 	}
 }
 
@@ -227,6 +481,10 @@ func TestNormalizeConversationList(t *testing.T) {
 	}
 	if len(page.Items) != 1 || page.Items[0].Title != "First line" || !page.Items[0].Running || page.Items[0].Status != "waitingOnApproval" {
 		t.Fatalf("unexpected page: %#v", page)
+	}
+	encoded, _ := json.Marshal(page)
+	if strings.Contains(string(encoded), "preview") || strings.Contains(string(encoded), "Second line") {
+		t.Fatalf("conversation preview leaked into mobile DTO: %s", encoded)
 	}
 }
 

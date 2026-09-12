@@ -38,6 +38,7 @@ type QRPayload struct {
 
 type Client struct {
 	mu            sync.Mutex
+	eventMu       sync.Mutex
 	conn          *websocket.Conn
 	writeMu       sync.Mutex
 	reconnectMu   sync.Mutex
@@ -50,6 +51,7 @@ type Client struct {
 	pending       map[string]chan json.RawMessage
 	pendingRoutes map[string]chan routeResult
 	events        []json.RawMessage
+	eventSink     func(string)
 	lastError     string
 	connected     bool
 	cancel        context.CancelFunc
@@ -94,6 +96,89 @@ type CredentialSet struct {
 
 func New() *Client {
 	return &Client{pending: make(map[string]chan json.RawMessage), pendingRoutes: make(map[string]chan routeResult)}
+}
+
+// SetEventSink registers a callback for unsolicited control events received
+// from the daemon. The callback is invoked outside the client's mutex.
+func (c *Client) SetEventSink(sink func(string)) {
+	c.eventMu.Lock()
+	defer c.eventMu.Unlock()
+	c.mu.Lock()
+	c.eventSink = sink
+	pending := append([]json.RawMessage(nil), c.events...)
+	if sink != nil {
+		c.events = nil
+	}
+	connected := c.connected
+	c.mu.Unlock()
+	if sink == nil {
+		return
+	}
+	state := "disconnected"
+	if connected {
+		state = "online"
+	}
+	sink(transportEnvelope(state, ""))
+	for _, event := range pending {
+		sink(string(event))
+	}
+}
+
+func transportEnvelope(state, errorCode string) string {
+	value := map[string]any{"type": "transport", "state": state}
+	if errorCode != "" {
+		value["errorCode"] = errorCode
+	}
+	raw, _ := json.Marshal(value)
+	return string(raw)
+}
+
+func (c *Client) emitTransport(state, errorCode string) {
+	c.eventMu.Lock()
+	defer c.eventMu.Unlock()
+	c.mu.Lock()
+	sink := c.eventSink
+	c.mu.Unlock()
+	if sink != nil {
+		sink(transportEnvelope(state, errorCode))
+	}
+}
+
+func (c *Client) dispatchControlPayload(body json.RawMessage) {
+	var envelope struct {
+		Type string `json:"type"`
+		ID   string `json:"id"`
+	}
+	if json.Unmarshal(body, &envelope) != nil {
+		return
+	}
+	if envelope.Type == "response" {
+		c.mu.Lock()
+		waiter := c.pending[envelope.ID]
+		if waiter != nil {
+			delete(c.pending, envelope.ID)
+			waiter <- append(json.RawMessage(nil), body...)
+		}
+		c.mu.Unlock()
+		return
+	}
+	if envelope.Type != "event" {
+		return
+	}
+	c.eventMu.Lock()
+	defer c.eventMu.Unlock()
+	c.mu.Lock()
+	sink := c.eventSink
+	if sink == nil {
+		c.events = append(c.events, append(json.RawMessage(nil), body...))
+		if len(c.events) > 1000 {
+			c.events = c.events[len(c.events)-1000:]
+		}
+	}
+	c.mu.Unlock()
+	if sink != nil {
+		sink(string(body))
+	}
 }
 
 func (c *Client) Pair(ctx context.Context, uri string) error {
@@ -270,6 +355,7 @@ func (c *Client) connect(parent context.Context, relayURL string, pairingID, dae
 	c.pairingID, c.deviceID, c.daemonID, c.sessionID = pairingID, mobileID, daemonID, sessionID
 	c.scopes, c.connected, c.lastError = append([]string(nil), scopes...), true, ""
 	c.mu.Unlock()
+	c.emitTransport("online", "")
 	go c.readLoop(ctx, connection)
 	keepConnection = true
 	return nil
@@ -418,6 +504,7 @@ func (c *Client) Close() {
 		close(waiter)
 	}
 	c.mu.Unlock()
+	c.emitTransport("closed", "")
 }
 
 func wipeCredential(value *CredentialSet) {
@@ -460,6 +547,7 @@ func (c *Client) readLoop(ctx context.Context, connection *websocket.Conn) {
 		frame, err := readFrame(ctx, connection)
 		if err != nil {
 			c.mu.Lock()
+			activeConnection := c.conn == connection
 			if c.conn == connection {
 				c.connected, c.lastError = false, err.Error()
 				for id, waiter := range c.pending {
@@ -472,6 +560,9 @@ func (c *Client) readLoop(ctx context.Context, connection *websocket.Conn) {
 				}
 			}
 			c.mu.Unlock()
+			if activeConnection {
+				c.emitTransport("disconnected", "peer_offline")
+			}
 			return
 		}
 		c.mu.Lock()
@@ -480,7 +571,16 @@ func (c *Client) readLoop(ctx context.Context, connection *websocket.Conn) {
 		if revoked := frame.GetPairRevoked(); revoked != nil && bytes.Equal(revoked.PairingId, activePairingID[:]) {
 			c.mu.Lock()
 			c.connected, c.lastError = false, "pairing was revoked"
+			for id, waiter := range c.pending {
+				delete(c.pending, id)
+				close(waiter)
+			}
+			for id, waiter := range c.pendingRoutes {
+				delete(c.pendingRoutes, id)
+				close(waiter)
+			}
 			c.mu.Unlock()
+			c.emitTransport("revoked", "pairing_revoked")
 			connection.CloseNow()
 			return
 		}
@@ -504,25 +604,7 @@ func (c *Client) readLoop(ctx context.Context, connection *websocket.Conn) {
 			connection.CloseNow()
 			continue
 		}
-		var envelope struct {
-			Type string `json:"type"`
-			ID   string `json:"id"`
-		}
-		if json.Unmarshal(payload.Body, &envelope) != nil {
-			continue
-		}
-		c.mu.Lock()
-		if envelope.Type == "response" && c.pending[envelope.ID] != nil {
-			waiter := c.pending[envelope.ID]
-			delete(c.pending, envelope.ID)
-			waiter <- append(json.RawMessage(nil), payload.Body...)
-		} else {
-			c.events = append(c.events, append(json.RawMessage(nil), payload.Body...))
-			if len(c.events) > 1000 {
-				c.events = c.events[len(c.events)-1000:]
-			}
-		}
-		c.mu.Unlock()
+		c.dispatchControlPayload(payload.Body)
 	}
 }
 

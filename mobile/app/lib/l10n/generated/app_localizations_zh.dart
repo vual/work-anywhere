@@ -64,7 +64,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get conversationSearchResults => '对话搜索结果';
 
   @override
-  String get recentConversations => '最近 30 个';
+  String get recentConversations => '最近 20 个';
 
   @override
   String get noConversations => '还没有对话';
@@ -175,10 +175,84 @@ class AppLocalizationsZh extends AppLocalizations {
   String get retryOlder => '较早内容加载失败，点击重试';
 
   @override
+  String get plan => '计划';
+
+  @override
+  String get viewFullPlan => '查看完整计划';
+
+  @override
+  String get planLoadFailed => '完整计划加载失败，请重试';
+
+  @override
   String get viewFullContent => '查看完整内容';
 
   @override
   String get fullContent => '完整内容';
+
+  @override
+  String summaryFunctionCall(String value) {
+    return '调用函数：$value';
+  }
+
+  @override
+  String summaryMcpToolCall(String value) {
+    return '调用 MCP：$value';
+  }
+
+  @override
+  String summaryDynamicToolCall(String value) {
+    return '调用工具：$value';
+  }
+
+  @override
+  String summaryCollabAgentToolCall(String value) {
+    return '协作调用：$value';
+  }
+
+  @override
+  String summarySubAgentActivity(String value) {
+    return '子 Agent：$value';
+  }
+
+  @override
+  String summaryWebSearch(String value) {
+    return '搜索：$value';
+  }
+
+  @override
+  String summaryImageView(String value) {
+    return '查看图片：$value';
+  }
+
+  @override
+  String summarySleep(String value) {
+    return '等待：$value';
+  }
+
+  @override
+  String get summaryImageGeneration => '生成图片';
+
+  @override
+  String summaryEnteredReviewMode(String value) {
+    return '进入审查模式：$value';
+  }
+
+  @override
+  String summaryExitedReviewMode(String value) {
+    return '退出审查模式：$value';
+  }
+
+  @override
+  String get summaryContextCompaction => '上下文已压缩';
+
+  @override
+  String get summaryStatusCompleted => '已完成';
+
+  @override
+  String get summaryStatusRunning => '运行中';
+
+  @override
+  String get summaryStatusFailed => '失败';
 
   @override
   String get externalLinkTitle => '打开外部链接？';

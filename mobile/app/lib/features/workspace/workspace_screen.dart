@@ -39,19 +39,12 @@ class WorkspaceScreen extends ConsumerWidget {
     final projects = query.isEmpty
         ? data.projects
         : data.projects
-              .where(
-                (item) =>
-                    '${item.name} ${item.root}'.toLowerCase().contains(query),
-              )
+              .where((item) => item.name.toLowerCase().contains(query))
               .toList();
     final conversations = query.isEmpty
         ? data.conversations
         : data.conversations
-              .where(
-                (item) => '${item.title} ${item.preview}'
-                    .toLowerCase()
-                    .contains(query),
-              )
+              .where((item) => item.title.toLowerCase().contains(query))
               .toList();
     return Scaffold(
       body: SafeArea(
@@ -387,9 +380,6 @@ class _ProjectRow extends StatelessWidget {
       overflow: TextOverflow.ellipsis,
       style: const TextStyle(fontWeight: FontWeight.w600),
     ),
-    subtitle: project.root.isEmpty
-        ? null
-        : Text(project.root, maxLines: 1, overflow: TextOverflow.ellipsis),
     trailing: Text(
       _relativeTime(context, project.updatedAt),
       style: const TextStyle(color: Colors.grey),
@@ -410,13 +400,6 @@ class _ConversationRow extends StatelessWidget {
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
     ),
-    subtitle: conversation.preview.isEmpty
-        ? null
-        : Text(
-            conversation.preview,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
     trailing: conversation.running
         ? Semantics(
             label: context.l10n.running,

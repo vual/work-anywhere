@@ -2,12 +2,15 @@ package io.workanywhere.work_anywhere
 
 import android.content.Context
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -32,10 +35,25 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         mobileCoreHost = ReflectiveMobileCore(this)
         MobileCoreApi.setUp(flutterEngine.dartExecutor.binaryMessenger, mobileCoreHost)
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "work_anywhere/mobile_events",
+        ).setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                mobileCoreHost.setEventSink(events)
+            }
+
+            override fun onCancel(arguments: Any?) {
+                mobileCoreHost.setEventSink(null)
+            }
+        })
     }
 
     override fun onDestroy() {
-        if (::mobileCoreHost.isInitialized) mobileCoreHost.close()
+        if (::mobileCoreHost.isInitialized) {
+            mobileCoreHost.setEventSink(null)
+            mobileCoreHost.close()
+        }
         super.onDestroy()
     }
 }
@@ -46,6 +64,26 @@ private class ReflectiveMobileCore(context: Context) : MobileCoreApi {
         val factory = Class.forName("mobilecore.Mobilecore")
         factory.getMethod("newCore").invoke(null)
     }.getOrNull()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var nativeEventSink: mobilecore.EventSink? = null
+
+    fun setEventSink(sink: EventChannel.EventSink?) {
+        val callback = sink?.let { flutterSink ->
+            object : mobilecore.EventSink {
+                override fun onEvent(eventJSON: String) {
+                    mainHandler.post { flutterSink.success(eventJSON) }
+                }
+            }
+        }
+        nativeEventSink = callback
+        core?.let { nativeCore ->
+            runCatching {
+                nativeCore.javaClass
+                    .getMethod("setEventSink", Class.forName("mobilecore.EventSink"))
+                    .invoke(nativeCore, callback)
+            }
+        }
+    }
 
     override suspend fun pair(uri: String): CoreReply = withContext(Dispatchers.IO) {
         invoke("pair", arrayOf<Class<*>>(String::class.java), arrayOf<Any>(uri))

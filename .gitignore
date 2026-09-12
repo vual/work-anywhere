@@ -128,6 +128,8 @@ erl_crash.dump
 *.dmp
 core
 core.*
+!/mobile/app/lib/core/
+!/mobile/app/lib/core/*.dart
 
 # Generated platform packages
 *.msi

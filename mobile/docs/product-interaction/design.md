@@ -11,7 +11,7 @@
 - **状态先于内容**：页面顶部始终可见当前 Desktop、连接状态和最后同步时间。
 - **危险操作二次确认**：拒绝 approval、中断 Turn、解除配对需要确认；普通文字发送不增加多余确认。
 - **读写分离**：离线仍可看到设备元数据和清晰空态，但所有写入口关闭，不创建本地 outbox。
-- **渐进披露**：默认展示适合手机阅读的消息/工具摘要；reasoning、diff、完整 tool output 使用可展开 block。
+- **渐进披露**：默认展示适合手机阅读的消息/工具摘要；reasoning 完整展示，Plan 和大内容通过专用查看器渐进加载，工具参数和输出不进入 Mobile Timeline。
 - **隐私默认收敛**：通知、系统任务切换预览和日志不出现 Prompt/action 正文；用户进入并解锁 App 后才显示内容。
 
 ## 信息架构
@@ -110,9 +110,9 @@ Agent selector 每项至少显示 display name 和 provider icon/label；当前�
 
 ### Codex 项目
 
-Codex Agent 下默认展示最近活跃的 10 个项目，按最近一条对话更新时间倒序。项目卡片显示项目名、路径短标签、对话数、运行中数量和最后活动时间。项目超过 10 个时列表底部显示“展开更多项目”，每次追加一页且保持已加载顺序；没有更多数据时移除入口，不显示无效按钮。
+Codex Agent 下默认展示最近活跃的 10 个项目，按最近一条对话更新时间倒序。项目卡片显示项目名、对话数、运行中数量和最后活动时间；Mobile DTO 不携带本机根路径。项目超过 10 个时列表底部显示“展开更多项目”，每次追加一页且保持已加载顺序；没有更多数据时移除入口，不显示无效按钮。
 
-点击项目进入项目详情，默认加载该项目最近 15 条对话，按最后更新时间倒序；底部使用“显示更多”继续分页。项目页标题下显示 Agent 和路径，返回后恢复工作台滚动位置、已展开项目数量和搜索前状态。
+点击项目进入项目详情，默认加载该项目最近 15 条对话，按最后更新时间倒序；底部使用“显示更多”继续分页。项目页标题下显示 Agent，不展示 Desktop 本机路径；返回后恢复工作台滚动位置、已展开项目数量和搜索前状态。
 
 项目详情页右下角固定显示纯 icon 的圆形“新建对话”按钮。点击只打开当前项目的空白会话详情页，不立即访问 Desktop；页面中央显示 WAW logo 和项目名，底部显示 Composer。用户第一次发送文字或图片时，客户端才通过 `conversation.create` 创建当前项目的 Codex thread，并随后发送第一条 Turn。创建/发送期间输入区显示 loading 且不可重复提交；失败时保留空白页和输入内容，不创建本地 outbox。
 
@@ -122,13 +122,13 @@ Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项�
 
 ### 最近对话
 
-项目/Bot 区域下方展示当前 Agent 最近 30 条对话，跨项目合并且不按项目分组，按最后更新时间倒序。对话卡片显示标题、项目短标签、最后更新时间和最后一条安全预览；状态优先级为 `等待处理 > 运行中 > 正在停止 > 失败 > 空闲`。
+项目/Bot 区域下方展示当前 Agent 最近 20 条对话，跨项目合并且不按项目分组，按最后更新时间倒序。对话卡片显示标题、项目短标签和最后更新时间；列表 DTO 不携带 preview，状态优先级为 `等待处理 > 运行中 > 正在停止 > 失败 > 空闲`。
 
-运行中的对话在卡片最右侧显示蓝色旋转 loading icon，并提供“运行中”的无障碍文本；它与 Daemon selector 的连接 loading 分属不同语义。点击任意对话进入会话详情。超过 30 条时工作台不继续分页，用户通过底部搜索访问更早对话；项目详情仍可独立分页。
+运行中的对话在卡片最右侧显示蓝色旋转 loading icon，并提供“运行中”的无障碍文本；它与 Daemon selector 的连接 loading 分属不同语义。点击任意对话进入会话详情。超过 20 条时工作台不继续分页，用户通过底部搜索访问更早对话；项目详情仍可独立分页。
 
 ### 底部搜索
 
-搜索框位于最近对话列表下方，不是底部导航，也不遮挡列表。聚焦或输入后进入搜索状态，在当前 Agent 范围内同时搜索项目与对话；结果分为“项目”和“对话”两个 section，不按项目重新分组对话。默认空 query 不发请求，输入采用约 300 ms debounce，服务端搜索全部可访问记录而非仅搜索已加载的 10/30 条；各 section 独立分页。
+搜索框位于最近对话列表下方，不是底部导航，也不遮挡列表。聚焦或输入后进入搜索状态，在当前 Agent 范围内同时搜索项目与对话；结果分为“项目”和“对话”两个 section，不按项目重新分组对话。默认空 query 不发请求，输入采用约 300 ms debounce，服务端搜索全部可访问记录而非仅搜索已加载的 10/20 条；各 section 独立分页。
 
 点击项目结果进入该项目的对话列表，点击对话结果进入会话详情。清空 query 恢复工作台此前的项目展开数量、对话列表和滚动位置。Hermes 完成适配后搜索对象改为 Bot + 对话。
 
@@ -144,14 +144,16 @@ Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项�
 顶部显示返回、标题、connection/status pill 和 overflow。内容 block：
 
 - user/assistant：常规气泡/正文；由 `app/lib/features/conversation/markdown_renderer.dart` 使用 GFM 安全 renderer，支持标题、强调、列表、引用、表格、任务列表、代码块和选择/复制；不解析任意 HTML，不自动加载图片；`http/https` 链接显示目标 host 并在打开前二次确认。
-- reasoning：默认折叠，只显示阶段标题和运行状态；
-- tool：工具名、状态、耗时，输出折叠；
+- summary item：daemon 仅返回 `summaryKind + summaryValue` 和语言无关 fallback；Flutter 用 ARB 生成完整本地化句子，不使用气泡、Markdown 或全文展开，status 同样以本地化弱化文字/图标展示。`hookPrompt` 不渲染；`commandExecution` 只展示命令。
+- plan：独立 Timeline 卡片，直接使用 daemon 返回的原始 Markdown。默认在卡片内渲染前 5 个源文件行；超过 5 行显示“查看完整计划”，点击后打开底部弹窗，以同一 Markdown renderer 渲染完整计划。大内容通过 `contentRef` 按 offset/nextOffset/hasMore 拼接；引用过期或读取失败时在弹窗内显示错误和重试入口。
+- reasoning：完整展示 daemon 返回的 reasoning 内容及 summary，不只展示 summary，也不折叠隐藏正文；
+- tool：统一使用一行摘要和弱化状态，不展示参数、结果、错误详情或输出；
 - diff：文件名与增删摘要，点击进入只读 diff viewer；
 - system/error：非气泡 banner，提供可恢复动作。
 
 打开页面在首屏 snapshot 加载并完成布局后自动定位到时间线底部，展示最新内容；运行时保持“跟随最新”仅在用户接近底部时自动滚动。用户向上阅读后，新内容显示悬浮“有新进展”按钮，不抢滚动位置。streaming block 原位更新，完成后固定；event gap 时顶部显示“正在重新同步”，不重复渲染已存在 block。
 
-首屏只读取最近 30 项并正序显示；滚动到顶部使用 opaque cursor 加载更早页，按 item ID 去重，并以新增内容高度补偿滚动位置。刷新或旧页失败保留已显示内容，重试只执行失败的 snapshot、action 或旧页请求。`action.list` 失败只显示独立 banner，不阻断正文。大 block 显示 16 KiB 摘要和“查看完整内容”，查看器按 128 KiB 连续加载；引用过期时提示刷新 snapshot。
+首屏只读取最近 20 项并正序显示；滚动到顶部使用 opaque cursor 加载更早页，按 item ID 去重，并以新增内容高度补偿滚动位置。刷新最新页时替换同 ID item、追加新 item 并保留已加载旧页；迟到 snapshot 不得降低 sequence。Android 正常路径由 EventSink 接收 daemon 主动事件，约 150 ms 合并事件 burst 后刷新当前会话；EventSink 断开或平台尚未接入事件宿主时才使用 2 秒 `conversation.subscribe` 轮询恢复。`action.list` 失败只显示独立 banner，不阻断正文。Plan 卡片按原始 Markdown 行边界显示前 5 行，完整内容在底部弹窗中滚动查看；普通大 block 显示 16 KiB 摘要和“查看完整内容”，查看器按 128 KiB 连续加载。引用过期时用 item 的稳定定位重新签发并从 offset 0 读取，失败则保留当前页面和弹窗重试入口。
 
 ### Composer
 
@@ -249,7 +251,7 @@ Daemon selector 底部提供“添加电脑”和“管理电脑”。管理页�
 ## 验证方式
 
 - 每个页面覆盖 loading、empty、online、offline、stale、error、restricted 和 revoked golden/widget tests；项目页额外验证“新建对话”按钮、重复点击保护、创建成功跳转和创建失败提示；Daemon 绿色/灰色状态点与两类 loading icon 都验证文本语义。
-- E2E 覆盖首次配对、拒绝/过期、恢复上次 Daemon/Agent、多 Daemon/Agent 切换、项目 10 条展开、项目会话 15 条分页、最近对话 30 条、跨项目搜索、运行中蓝色 icon、流式输出、cursor gap、action race、图片失败、interrupt race 和 push cold start。
+- E2E 覆盖首次配对、拒绝/过期、恢复上次 Daemon/Agent、多 Daemon/Agent 切换、项目 10 条展开、项目会话 15 条分页、最近对话 20 条、跨项目搜索、运行中蓝色 icon、流式输出、cursor gap、action race、图片失败、interrupt race 和 push cold start。
 - Markdown widget 测试覆盖 GFM 常用格式、文本选择、代码块、链接确认入口和远程图片拦截；链接只允许 `http/https`，打开失败保留在当前页面并显示可解释提示。
 - VoiceOver/TalkBack、200% 字体、reduced motion、窄屏/平板、深色模式和本地化伪语言人工验收。
 - 用户测试重点记录：能否区分 Desktop 离线与任务失败、能否理解“等待电脑确认”、是否会在 ambiguous write 后误重复发送。

@@ -13,15 +13,17 @@ import (
 )
 
 const (
-	mobileDefaultTimelineLimit = 30
-	mobileMaxTimelineLimit     = 50
-	mobileControlResponseBytes = 512 << 10
-	mobileTimelinePageBytes    = 500 << 10
-	mobileLargeBlockBytes      = 64 << 10
-	mobileInlinePreviewBytes   = 16 << 10
-	mobileContentChunkBytes    = 128 << 10
-	mobileContentRefTTL        = 15 * time.Minute
-	mobileMaxContentRefs       = 2048
+	mobileDefaultTimelineLimit     = 20
+	mobileMaxTimelineLimit         = 50
+	mobileControlResponseBytes     = 512 << 10
+	mobileTimelinePageBytes        = 500 << 10
+	mobileLargeBlockBytes          = 64 << 10
+	mobileInlinePreviewBytes       = 16 << 10
+	mobileContentChunkBytes        = 128 << 10
+	mobileContentRefTTL            = 15 * time.Minute
+	mobileMaxContentRefs           = 2048
+	mobileMaxTimelineProviderPages = 8
+	mobileSummaryValueBytes        = 512
 )
 
 type mobileAgentSummary struct {
@@ -37,7 +39,6 @@ type mobileProjectSummary struct {
 	ID        string `json:"id"`
 	AgentID   string `json:"agentId"`
 	Name      string `json:"name"`
-	Root      string `json:"root,omitempty"`
 	UpdatedAt int64  `json:"updatedAt"`
 }
 
@@ -46,7 +47,6 @@ type mobileConversationSummary struct {
 	AgentID   string `json:"agentId"`
 	ProjectID string `json:"projectId,omitempty"`
 	Title     string `json:"title"`
-	Preview   string `json:"preview,omitempty"`
 	Status    string `json:"status"`
 	Running   bool   `json:"running"`
 	CreatedAt int64  `json:"createdAt"`
@@ -122,11 +122,7 @@ func normalizeProjectList(agentID string, raw json.RawMessage) (mobilePage[mobil
 		if item.ID == "" {
 			return mobilePage[mobileProjectSummary]{}, errors.New("project/list item has no id")
 		}
-		root := ""
-		if len(item.Roots) > 0 {
-			root = item.Roots[0].Path
-		}
-		page.Items = append(page.Items, mobileProjectSummary{ID: item.ID, AgentID: agentID, Name: item.Name, Root: root, UpdatedAt: item.UpdatedAt})
+		page.Items = append(page.Items, mobileProjectSummary{ID: item.ID, AgentID: agentID, Name: item.Name, UpdatedAt: item.UpdatedAt})
 	}
 	return page, nil
 }
@@ -228,7 +224,7 @@ func normalizeConversationList(agentID string, raw json.RawMessage) (mobilePage[
 			title = "Untitled conversation"
 		}
 		status, running := normalizeThreadStatus(item.Status)
-		page.Items = append(page.Items, mobileConversationSummary{ID: item.ID, AgentID: agentID, ProjectID: item.ProjectID, Title: title, Preview: item.Preview, Status: status, Running: running, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt})
+		page.Items = append(page.Items, mobileConversationSummary{ID: item.ID, AgentID: agentID, ProjectID: item.ProjectID, Title: title, Status: status, Running: running, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt})
 	}
 	return page, nil
 }
@@ -266,11 +262,13 @@ func normalizeConversationCreate(raw json.RawMessage) (map[string]any, error) {
 }
 
 type mobileTimelineBlock struct {
-	Kind       string `json:"kind"`
-	Text       string `json:"text"`
-	Truncated  bool   `json:"truncated"`
-	ContentRef string `json:"contentRef,omitempty"`
-	TotalBytes int    `json:"totalBytes,omitempty"`
+	Kind         string `json:"kind"`
+	Text         string `json:"text"`
+	SummaryKind  string `json:"summaryKind,omitempty"`
+	SummaryValue string `json:"summaryValue,omitempty"`
+	Truncated    bool   `json:"truncated"`
+	ContentRef   string `json:"contentRef,omitempty"`
+	TotalBytes   int    `json:"totalBytes,omitempty"`
 }
 
 type mobileTimelineItem struct {
@@ -294,8 +292,8 @@ type mobileConversationSnapshot struct {
 }
 
 type mobileContentRef struct {
-	AgentID, ThreadID, Cursor, ItemID string
-	PageLimit, BlockIndex             int
+	AgentID, ThreadID, TurnID, ItemID string
+	BlockIndex                        int
 	ExpiresAt                         time.Time
 }
 
@@ -385,6 +383,9 @@ func normalizeTimelinePage(raw json.RawMessage) (mobileTimelinePage, []map[strin
 		if kind == "" {
 			kind = "item"
 		}
+		if kind == "hookPrompt" {
+			continue
+		}
 		if turnID == "" {
 			turnID, _ = rawItem["turnId"].(string)
 		}
@@ -412,12 +413,34 @@ func compactStatus(value any) string {
 }
 
 func timelineBlocks(item map[string]any) []mobileTimelineBlock {
+	if summary, ok := timelineSummary(item); ok {
+		return []mobileTimelineBlock{summary}
+	}
+	if kind, _ := item["type"].(string); kind == "commandExecution" {
+		if command, ok := item["command"].(string); ok && strings.TrimSpace(command) != "" {
+			return []mobileTimelineBlock{{Kind: "command", Text: command}}
+		}
+		return nil
+	}
 	blocks := make([]mobileTimelineBlock, 0, 4)
 	appendText := func(kind string, value any) {
 		for _, text := range readableStrings(value) {
 			if strings.TrimSpace(text) != "" {
 				blocks = append(blocks, mobileTimelineBlock{Kind: kind, Text: text})
 			}
+		}
+	}
+	if kind, _ := item["type"].(string); kind == "reasoning" {
+		blocks = blocks[:0]
+		appendText("reasoning", item["content"])
+		appendText("reasoningSummary", item["summary"])
+		return blocks
+	}
+	// Plan text is Markdown and must remain a single block so the mobile
+	// client can render the raw source instead of a lossy plaintext summary.
+	if kind, _ := item["type"].(string); kind == "plan" {
+		if text, ok := item["text"].(string); ok && strings.TrimSpace(text) != "" {
+			return []mobileTimelineBlock{{Kind: "plan", Text: text}}
 		}
 	}
 	for _, field := range []struct{ key, kind string }{
@@ -435,6 +458,126 @@ func timelineBlocks(item map[string]any) []mobileTimelineBlock {
 		}
 	}
 	return blocks
+}
+
+func timelineSummary(item map[string]any) (mobileTimelineBlock, bool) {
+	kind, _ := item["type"].(string)
+	text := func(rawValue any) string {
+		value, _ := rawValue.(string)
+		return summaryValue(oneLine(value))
+	}
+	qualified := func(namespace, name string) string {
+		if namespace == "" {
+			return name
+		}
+		if name == "" {
+			return namespace
+		}
+		return namespace + "." + name
+	}
+	result := func(value string) (mobileTimelineBlock, bool) {
+		value = summaryValue(value)
+		fallback := value
+		if fallback == "" {
+			fallback = kind
+		}
+		return mobileTimelineBlock{Kind: "summary", Text: fallback, SummaryKind: kind, SummaryValue: value}, true
+	}
+	switch kind {
+	case "functionCallOutput":
+		name, _ := item["name"].(string)
+		namespace, _ := item["namespace"].(string)
+		return result(qualified(oneLine(namespace), oneLine(name)))
+	case "mcpToolCall":
+		server, _ := item["server"].(string)
+		tool, _ := item["tool"].(string)
+		server, tool = oneLine(server), oneLine(tool)
+		return result(strings.Trim(server+"/"+tool, "/"))
+	case "dynamicToolCall":
+		namespace, _ := item["namespace"].(string)
+		tool, _ := item["tool"].(string)
+		return result(qualified(oneLine(namespace), oneLine(tool)))
+	case "collabAgentToolCall":
+		tool, _ := item["tool"].(string)
+		return result(oneLine(tool))
+	case "subAgentActivity":
+		activity, _ := item["kind"].(string)
+		return result(oneLine(activity))
+	case "webSearch":
+		query, _ := item["query"].(string)
+		return result(text(query))
+	case "imageView":
+		path, _ := item["path"].(string)
+		return result(baseName(path))
+	case "sleep":
+		return result(durationText(item["durationMs"]) + "ms")
+	case "imageGeneration":
+		return result("")
+	case "enteredReviewMode":
+		review, _ := item["review"].(string)
+		return result(text(review))
+	case "exitedReviewMode":
+		review, _ := item["review"].(string)
+		return result(text(review))
+	case "contextCompaction":
+		return result("")
+	default:
+		return mobileTimelineBlock{}, false
+	}
+}
+
+func oneLine(value string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+}
+
+func summaryValue(value string) string {
+	if len(value) <= mobileSummaryValueBytes {
+		return value
+	}
+	return utf8Prefix(value, mobileSummaryValueBytes)
+}
+
+func durationText(value any) string {
+	switch typed := value.(type) {
+	case float64:
+		return fmt.Sprintf("%g", typed)
+	case float32:
+		return fmt.Sprintf("%g", typed)
+	case int:
+		return fmt.Sprintf("%d", typed)
+	case int64:
+		return fmt.Sprintf("%d", typed)
+	case json.Number:
+		return typed.String()
+	default:
+		return "0"
+	}
+}
+
+func baseName(path string) string {
+	path = strings.TrimSpace(path)
+	if index := strings.LastIndexAny(path, `/\\`); index >= 0 {
+		return path[index+1:]
+	}
+	return path
+}
+
+// firstRawLines returns the first maxLines source lines without converting or
+// reformatting Markdown. SplitAfter preserves the original line endings,
+// including CRLF and blank lines, which keeps the preview faithful to the
+// provider's source document.
+func firstRawLines(value string, maxLines int) (string, bool) {
+	if maxLines <= 0 || value == "" {
+		return value, false
+	}
+	lines := strings.SplitAfter(value, "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if len(lines) <= maxLines {
+		return value, false
+	}
+	return strings.Join(lines[:maxLines], ""), true
 }
 
 func readableStrings(value any) []string {
@@ -485,7 +628,7 @@ func utf8ContentChunk(value string, offset int) (string, int, bool, error) {
 	return value[offset:end], end, end < len(value), nil
 }
 
-func (m *Manager) registerContentRef(agentID, threadID, cursor string, pageLimit int, itemID string, blockIndex int) string {
+func (m *Manager) registerContentRef(agentID, threadID, turnID, itemID string, blockIndex int) string {
 	now := time.Now()
 	m.contentRefMu.Lock()
 	defer m.contentRefMu.Unlock()
@@ -498,7 +641,7 @@ func (m *Manager) registerContentRef(agentID, threadID, cursor string, pageLimit
 		}
 	}
 	token := randomToken(24)
-	m.contentRefs[token] = mobileContentRef{AgentID: agentID, ThreadID: threadID, Cursor: cursor, PageLimit: pageLimit, ItemID: itemID, BlockIndex: blockIndex, ExpiresAt: now.Add(mobileContentRefTTL)}
+	m.contentRefs[token] = mobileContentRef{AgentID: agentID, ThreadID: threadID, TurnID: turnID, ItemID: itemID, BlockIndex: blockIndex, ExpiresAt: now.Add(mobileContentRefTTL)}
 	return token
 }
 
@@ -517,10 +660,24 @@ func (m *Manager) resolveContentRef(token, agentID, threadID string, now time.Ti
 	return ref, nil
 }
 
-func (m *Manager) applyContentRefs(page *mobileTimelinePage, agentID, threadID, cursor string, pageLimit int, force bool) {
+func (m *Manager) applyContentRefs(page *mobileTimelinePage, agentID, threadID string, force bool) {
 	for itemIndex := range page.Items {
 		for blockIndex := range page.Items[itemIndex].Blocks {
 			block := &page.Items[itemIndex].Blocks[blockIndex]
+			if block.Kind == "plan" {
+				preview, truncated := firstRawLines(block.Text, 5)
+				if !truncated {
+					continue
+				}
+				block.TotalBytes = len(block.Text)
+				block.Text = preview
+				block.Truncated = true
+				block.ContentRef = m.registerContentRef(agentID, threadID, page.Items[itemIndex].TurnID, page.Items[itemIndex].ID, blockIndex)
+				continue
+			}
+			if block.Kind == "summary" {
+				continue
+			}
 			threshold, preview := mobileLargeBlockBytes, mobileInlinePreviewBytes
 			if force {
 				threshold, preview = 4<<10, 1<<10
@@ -531,7 +688,7 @@ func (m *Manager) applyContentRefs(page *mobileTimelinePage, agentID, threadID, 
 			block.TotalBytes = len(block.Text)
 			block.Text = utf8Prefix(block.Text, preview)
 			block.Truncated = true
-			block.ContentRef = m.registerContentRef(agentID, threadID, cursor, pageLimit, page.Items[itemIndex].ID, blockIndex)
+			block.ContentRef = m.registerContentRef(agentID, threadID, page.Items[itemIndex].TurnID, page.Items[itemIndex].ID, blockIndex)
 		}
 	}
 }
@@ -546,31 +703,79 @@ func timelineLimit(value int) (int, error) {
 	return value, nil
 }
 
+type mobileTimelineSegment struct {
+	Page      mobileTimelinePage
+	Cursor    string
+	PageLimit int
+}
+
+func (m *Manager) fetchTimelineSegments(instance mobileProviderCaller, threadID, cursor string, limit int) ([]mobileTimelineSegment, error) {
+	segments := make([]mobileTimelineSegment, 0, 1)
+	remaining := limit
+	providerCursor := cursor
+	for pageCount := 0; pageCount < mobileMaxTimelineProviderPages && remaining > 0; pageCount++ {
+		providerParams := map[string]any{"threadId": threadID, "limit": remaining, "sortDirection": "desc"}
+		if providerCursor != "" {
+			providerParams["cursor"] = providerCursor
+		}
+		rawParams, _ := json.Marshal(providerParams)
+		raw, callErr := instance.Call(m.ctx, "thread/items/list", rawParams)
+		if callErr != nil {
+			return nil, &mobileContractError{code: "provider_error", message: callErr.Error()}
+		}
+		page, _, decodeErr := normalizeTimelinePage(raw)
+		if decodeErr != nil {
+			return nil, &mobileContractError{code: "invalid_provider_response", message: decodeErr.Error()}
+		}
+		if len(page.Items) > remaining {
+			page.Items = page.Items[:remaining]
+		}
+		segments = append(segments, mobileTimelineSegment{Page: page, Cursor: providerCursor, PageLimit: remaining})
+		remaining -= len(page.Items)
+		if remaining == 0 || page.NextCursor == "" {
+			break
+		}
+		providerCursor = page.NextCursor
+	}
+	return segments, nil
+}
+
+func (m *Manager) composeTimelineSegments(segments []mobileTimelineSegment, agentID, threadID string, force bool) mobileTimelinePage {
+	page := mobileTimelinePage{Items: make([]mobileTimelineItem, 0)}
+	for index := range segments {
+		segment := &segments[index]
+		m.applyContentRefs(&segment.Page, agentID, threadID, force)
+		page.Items = append(page.Items, segment.Page.Items...)
+		page.NextCursor = segment.Page.NextCursor
+	}
+	return page
+}
+
+func (m *Manager) readTimelinePageAttempt(instance mobileProviderCaller, agentID, threadID, cursor string, limit int, force bool) (mobileTimelinePage, error) {
+	segments, err := m.fetchTimelineSegments(instance, threadID, cursor, limit)
+	if err != nil {
+		return mobileTimelinePage{}, err
+	}
+	return m.composeTimelineSegments(segments, agentID, threadID, force), nil
+}
+
 func (m *Manager) readTimelinePage(instance mobileProviderCaller, agentID, threadID, cursor string, requestedLimit int) (mobileTimelinePage, error) {
 	limit, err := timelineLimit(requestedLimit)
 	if err != nil {
 		return mobileTimelinePage{}, err
 	}
 	for {
-		providerParams := map[string]any{"threadId": threadID, "limit": limit, "sortDirection": "desc"}
-		if cursor != "" {
-			providerParams["cursor"] = cursor
+		page, err := m.readTimelinePageAttempt(instance, agentID, threadID, cursor, limit, false)
+		if err != nil {
+			return mobileTimelinePage{}, err
 		}
-		rawParams, _ := json.Marshal(providerParams)
-		raw, callErr := instance.Call(m.ctx, "thread/items/list", rawParams)
-		if callErr != nil {
-			return mobileTimelinePage{}, &mobileContractError{code: "provider_error", message: callErr.Error()}
-		}
-		page, _, decodeErr := normalizeTimelinePage(raw)
-		if decodeErr != nil {
-			return mobileTimelinePage{}, &mobileContractError{code: "invalid_provider_response", message: decodeErr.Error()}
-		}
-		m.applyContentRefs(&page, agentID, threadID, cursor, limit, false)
 		encoded, _ := json.Marshal(page)
 		if len(encoded) <= mobileTimelinePageBytes || limit == 1 {
 			if len(encoded) > mobileTimelinePageBytes {
-				page, _, _ = normalizeTimelinePage(raw)
-				m.applyContentRefs(&page, agentID, threadID, cursor, limit, true)
+				page, err = m.readTimelinePageAttempt(instance, agentID, threadID, cursor, limit, true)
+				if err != nil {
+					return mobileTimelinePage{}, err
+				}
 			}
 			return page, nil
 		}
@@ -626,6 +831,53 @@ func (m *Manager) mobileTimelineList(instance *Instance, params json.RawMessage)
 	return m.conversationTimeline(instance, instance.descriptor.ID, params)
 }
 
+func (m *Manager) findTimelineBlock(instance mobileProviderCaller, threadID, turnID, itemID string, blockIndex int) (string, error) {
+	if threadID == "" || itemID == "" || blockIndex < 0 {
+		return "", &mobileContractError{code: "invalid_params", message: "threadId, itemId and a non-negative blockIndex are required"}
+	}
+	cursor := ""
+	seen := make(map[string]struct{})
+	for {
+		if _, duplicate := seen[cursor]; duplicate {
+			return "", &mobileContractError{code: "invalid_provider_response", message: "thread/items/list returned a cursor loop"}
+		}
+		seen[cursor] = struct{}{}
+		providerParams := map[string]any{"threadId": threadID, "limit": mobileMaxTimelineLimit, "sortDirection": "asc"}
+		if turnID != "" {
+			providerParams["turnId"] = turnID
+		}
+		if cursor != "" {
+			providerParams["cursor"] = cursor
+		}
+		rawParams, _ := json.Marshal(providerParams)
+		raw, err := instance.Call(m.ctx, "thread/items/list", rawParams)
+		if err != nil {
+			return "", &mobileContractError{code: "provider_error", message: err.Error()}
+		}
+		page, _, err := normalizeTimelinePage(raw)
+		if err != nil {
+			return "", &mobileContractError{code: "invalid_provider_response", message: err.Error()}
+		}
+		for _, item := range page.Items {
+			if item.ID != itemID {
+				continue
+			}
+			if turnID != "" && item.TurnID != "" && item.TurnID != turnID {
+				continue
+			}
+			if blockIndex >= len(item.Blocks) || item.Blocks[blockIndex].Kind == "summary" || item.Blocks[blockIndex].Text == "" {
+				return "", &mobileContractError{code: "content_not_found", message: "referenced content is not available"}
+			}
+			return item.Blocks[blockIndex].Text, nil
+		}
+		if page.NextCursor == "" {
+			break
+		}
+		cursor = page.NextCursor
+	}
+	return "", &mobileContractError{code: "content_not_found", message: "referenced content is no longer available"}
+}
+
 func (m *Manager) conversationContent(instance *Instance, agentID string, params json.RawMessage) (map[string]any, error) {
 	var request struct {
 		ThreadID   string `json:"threadId"`
@@ -639,28 +891,9 @@ func (m *Manager) conversationContent(instance *Instance, agentID string, params
 	if err != nil {
 		return nil, err
 	}
-	providerParams := map[string]any{"threadId": ref.ThreadID, "limit": ref.PageLimit, "sortDirection": "desc"}
-	if ref.Cursor != "" {
-		providerParams["cursor"] = ref.Cursor
-	}
-	rawParams, _ := json.Marshal(providerParams)
-	raw, err := instance.Call(m.ctx, "thread/items/list", rawParams)
+	text, err := m.findTimelineBlock(instance, ref.ThreadID, ref.TurnID, ref.ItemID, ref.BlockIndex)
 	if err != nil {
-		return nil, &mobileContractError{code: "provider_error", message: err.Error()}
-	}
-	page, _, err := normalizeTimelinePage(raw)
-	if err != nil {
-		return nil, &mobileContractError{code: "invalid_provider_response", message: err.Error()}
-	}
-	var text string
-	for _, item := range page.Items {
-		if item.ID == ref.ItemID && ref.BlockIndex >= 0 && ref.BlockIndex < len(item.Blocks) {
-			text = item.Blocks[ref.BlockIndex].Text
-			break
-		}
-	}
-	if text == "" {
-		return nil, &mobileContractError{code: "content_ref_expired", message: "referenced content is no longer available"}
+		return nil, err
 	}
 	chunk, next, hasMore, chunkErr := utf8ContentChunk(text, request.Offset)
 	if chunkErr != nil {
@@ -671,6 +904,28 @@ func (m *Manager) conversationContent(instance *Instance, agentID string, params
 
 func (m *Manager) mobileContentRead(instance *Instance, params json.RawMessage) (map[string]any, error) {
 	return m.conversationContent(instance, instance.descriptor.ID, params)
+}
+
+func (m *Manager) conversationContentResolve(instance *Instance, agentID string, params json.RawMessage) (map[string]any, error) {
+	var request struct {
+		ThreadID   string `json:"threadId"`
+		TurnID     string `json:"turnId"`
+		ItemID     string `json:"itemId"`
+		BlockIndex int    `json:"blockIndex"`
+	}
+	if json.Unmarshal(params, &request) != nil || request.ThreadID == "" || request.TurnID == "" || request.ItemID == "" || request.BlockIndex < 0 {
+		return nil, &mobileContractError{code: "invalid_params", message: "threadId, turnId, itemId and a non-negative blockIndex are required"}
+	}
+	text, err := m.findTimelineBlock(instance, request.ThreadID, request.TurnID, request.ItemID, request.BlockIndex)
+	if err != nil {
+		return nil, err
+	}
+	contentRef := m.registerContentRef(agentID, request.ThreadID, request.TurnID, request.ItemID, request.BlockIndex)
+	return map[string]any{"contentRef": contentRef, "totalBytes": len(text)}, nil
+}
+
+func (m *Manager) mobileContentResolve(instance *Instance, params json.RawMessage) (map[string]any, error) {
+	return m.conversationContentResolve(instance, instance.descriptor.ID, params)
 }
 
 func normalizeThreadStatus(raw json.RawMessage) (string, bool) {

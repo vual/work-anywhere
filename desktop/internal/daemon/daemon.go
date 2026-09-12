@@ -379,7 +379,7 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 		} else if response.Result, callErr = normalizeProjectList(instance.descriptor.ID, result); callErr != nil {
 			response.Error = &protocol.ControlError{Code: "invalid_provider_response", Message: callErr.Error()}
 		}
-	case "conversation.read", "conversation.timeline.list", "conversation.content.read":
+	case "conversation.read", "conversation.timeline.list", "conversation.content.read", "conversation.content.resolve":
 		if request.Contract != protocol.MobileControlContract {
 			response.Error = &protocol.ControlError{Code: "contract_required", Message: request.Method + " requires mobile-control-v1"}
 			break
@@ -397,6 +397,8 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 			result, err = m.mobileTimelineList(instance, params)
 		case "conversation.content.read":
 			result, err = m.mobileContentRead(instance, params)
+		case "conversation.content.resolve":
+			result, err = m.mobileContentResolve(instance, params)
 		}
 		if err != nil {
 			response.Error = mobileControlError(err)

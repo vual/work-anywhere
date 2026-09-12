@@ -76,13 +76,6 @@ class _ProjectScreenState extends ConsumerState<ProjectScreen> {
               project?.name ?? context.l10n.project,
               style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
             ),
-            if (project?.root.isNotEmpty == true)
-              Text(
-                project!.root,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12, color: Colors.grey),
-              ),
           ],
         ),
       ),
@@ -124,13 +117,6 @@ class _ProjectScreenState extends ConsumerState<ProjectScreen> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  subtitle: item.preview.isEmpty
-                      ? null
-                      : Text(
-                          item.preview,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
                   trailing: item.running
                       ? const SizedBox.square(
                           dimension: 19,

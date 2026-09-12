@@ -47,13 +47,121 @@ class ConversationController extends ChangeNotifier {
   ConversationState _state = const ConversationState();
   bool _disposed = false;
   bool _syncing = false;
+  bool _loadedOlder = false;
+  bool _eventRefreshRunning = false;
+  bool _eventRefreshPending = false;
+  bool _actionRefreshRunning = false;
+  bool _actionRefreshPending = false;
+  int _pendingEventSequence = 0;
   Timer? _liveTimer;
+  Timer? _eventDebounce;
+  StreamSubscription<Map<String, dynamic>>? _eventSubscription;
 
   ConversationState get state => _state;
 
   void startLiveSync() {
     _liveTimer?.cancel();
+    _eventSubscription?.cancel();
+    _liveTimer = null;
+    _eventSubscription = gateway.events.listen(
+      _handleLiveEvent,
+      onError: (_, _) => _startPollingFallback(),
+      onDone: _startPollingFallback,
+    );
+  }
+
+  void _startPollingFallback() {
+    if (_disposed || _liveTimer != null) return;
+    unawaited(_syncLive());
     _liveTimer = Timer.periodic(const Duration(seconds: 2), (_) => _syncLive());
+  }
+
+  void _handleLiveEvent(Map<String, dynamic> event) {
+    if (event['type'] == 'transport') {
+      switch (event['state'] as String? ?? '') {
+        case 'online':
+          _liveTimer?.cancel();
+          _liveTimer = null;
+          unawaited(_syncLive());
+          break;
+        case 'disconnected':
+          _startPollingFallback();
+          break;
+        case 'revoked':
+        case 'closed':
+          _liveTimer?.cancel();
+          _liveTimer = null;
+          break;
+      }
+      return;
+    }
+    if (event['type'] != 'event') return;
+    final conversationId = event['conversationId'] as String?;
+    if (conversationId != null &&
+        conversationId.isNotEmpty &&
+        conversationId != threadId) {
+      return;
+    }
+    final eventName = (event['event'] as String? ?? '').toLowerCase();
+    if (eventName.contains('action')) {
+      _queueActionRefresh();
+    }
+    final sequence = (event['sequence'] as num?)?.toInt();
+    if (sequence == null || sequence > _state.sequence) {
+      if (sequence != null && sequence > _pendingEventSequence) {
+        _pendingEventSequence = sequence;
+      }
+      _queueConversationRefresh();
+    }
+  }
+
+  void _queueConversationRefresh({bool immediate = false}) {
+    if (_disposed) return;
+    _eventRefreshPending = true;
+    _eventDebounce?.cancel();
+    if (immediate) {
+      unawaited(_drainConversationRefresh());
+    } else {
+      _eventDebounce = Timer(
+        const Duration(milliseconds: 150),
+        _drainConversationRefresh,
+      );
+    }
+  }
+
+  Future<void> _drainConversationRefresh() async {
+    if (_eventRefreshRunning || _disposed) return;
+    _eventRefreshRunning = true;
+    try {
+      while (_eventRefreshPending && !_disposed) {
+        _eventRefreshPending = false;
+        await refreshConversation();
+        if (_state.sequence >= _pendingEventSequence) {
+          _pendingEventSequence = _state.sequence;
+        }
+      }
+    } finally {
+      _eventRefreshRunning = false;
+    }
+  }
+
+  void _queueActionRefresh() {
+    if (_disposed) return;
+    _actionRefreshPending = true;
+    if (!_actionRefreshRunning) unawaited(_drainActionRefresh());
+  }
+
+  Future<void> _drainActionRefresh() async {
+    if (_actionRefreshRunning || _disposed) return;
+    _actionRefreshRunning = true;
+    try {
+      while (_actionRefreshPending && !_disposed) {
+        _actionRefreshPending = false;
+        await refreshActions();
+      }
+    } finally {
+      _actionRefreshRunning = false;
+    }
   }
 
   Future<void> _syncLive() async {
@@ -69,7 +177,7 @@ class ConversationController extends ChangeNotifier {
       final events = result['events'];
       final hasEvents = events is List && events.isNotEmpty;
       if (result['snapshot'] == true || hasEvents) {
-        await refreshConversation();
+        _queueConversationRefresh(immediate: true);
       }
     } catch (error) {
       // Live sync is best effort. A visible snapshot or paging error remains
@@ -77,7 +185,7 @@ class ConversationController extends ChangeNotifier {
       if (error is CoreFault &&
           (error.code == 'response_too_large' ||
               error.code == 'payload_too_large')) {
-        await refreshConversation();
+        _queueConversationRefresh(immediate: true);
       }
     } finally {
       _syncing = false;
@@ -115,18 +223,23 @@ class ConversationController extends ChangeNotifier {
       final envelope = await gateway.call('conversation.read', {
         'agentId': agentId,
         'threadId': threadId,
-        'limit': 30,
+        'limit': 20,
       });
       final result = envelope['result'] as Map<String, dynamic>? ?? const {};
       final timeline = result['timeline'] as Map<String, dynamic>? ?? const {};
       final newestFirst = _maps(timeline['items']);
+      final sequence = (result['sequence'] as num?)?.toInt() ?? 0;
+      if (sequence < _state.sequence) return;
+      final latest = _dedupe(newestFirst.reversed);
       _state = ConversationState(
         metadata: result['conversation'] as Map<String, dynamic>?,
-        items: _dedupe(newestFirst.reversed),
+        items: _mergeLatest(_state.items, latest),
         actions: _state.actions,
-        olderCursor: timeline['nextCursor'] as String?,
-        revision: result['revision'] as int? ?? 0,
-        sequence: result['sequence'] as int? ?? 0,
+        olderCursor: _loadedOlder
+            ? _state.olderCursor
+            : timeline['nextCursor'] as String?,
+        revision: (result['revision'] as num?)?.toInt() ?? 0,
+        sequence: sequence,
         loading: _state.loading,
         actionError: _state.actionError,
       );
@@ -204,10 +317,11 @@ class ConversationController extends ChangeNotifier {
         'agentId': agentId,
         'threadId': threadId,
         'cursor': cursor,
-        'limit': 30,
+        'limit': 20,
       });
       final page = envelope['result'] as Map<String, dynamic>? ?? const {};
       final older = _maps(page['items']).reversed;
+      _loadedOlder = true;
       _state = ConversationState(
         metadata: _state.metadata,
         items: _dedupe([...older, ..._state.items]),
@@ -235,6 +349,41 @@ class ConversationController extends ChangeNotifier {
   }
 
   Future<String> readFullContent(Map<String, dynamic> block) async {
+    try {
+      return await _readFullContent(block);
+    } on CoreFault catch (error) {
+      if (error.code != 'content_ref_expired') rethrow;
+      final turnId = block['_turnId'] as String?;
+      final itemId = block['_itemId'] as String?;
+      final blockIndex = block['_blockIndex'] as int?;
+      if (turnId == null ||
+          turnId.isEmpty ||
+          itemId == null ||
+          itemId.isEmpty ||
+          blockIndex == null) {
+        rethrow;
+      }
+      final envelope = await gateway.call('conversation.content.resolve', {
+        'agentId': agentId,
+        'threadId': threadId,
+        'turnId': turnId,
+        'itemId': itemId,
+        'blockIndex': blockIndex,
+      });
+      final result = envelope['result'] as Map<String, dynamic>? ?? const {};
+      final refreshedReference = result['contentRef'] as String?;
+      if (refreshedReference == null || refreshedReference.isEmpty) {
+        throw CoreFault(
+          'invalid_provider_response',
+          'Content resolver returned no reference',
+          method: 'conversation.content.resolve',
+        );
+      }
+      return _readFullContent({...block, 'contentRef': refreshedReference});
+    }
+  }
+
+  Future<String> _readFullContent(Map<String, dynamic> block) async {
     final reference = block['contentRef'] as String?;
     if (reference == null || reference.isEmpty) {
       return block['text'] as String? ?? '';
@@ -242,32 +391,25 @@ class ConversationController extends ChangeNotifier {
     final buffer = StringBuffer();
     var offset = 0;
     var hasMore = true;
-    try {
-      while (hasMore) {
-        final envelope = await gateway.call('conversation.content.read', {
-          'agentId': agentId,
-          'threadId': threadId,
-          'contentRef': reference,
-          'offset': offset,
-        });
-        final result = envelope['result'] as Map<String, dynamic>? ?? const {};
-        buffer.write(result['text'] as String? ?? '');
-        final next = result['nextOffset'] as int? ?? offset;
-        hasMore = result['hasMore'] as bool? ?? false;
-        if (hasMore && next <= offset) {
-          throw CoreFault(
-            'invalid_provider_response',
-            'Content cursor did not advance',
-            method: 'conversation.content.read',
-          );
-        }
-        offset = next;
+    while (hasMore) {
+      final envelope = await gateway.call('conversation.content.read', {
+        'agentId': agentId,
+        'threadId': threadId,
+        'contentRef': reference,
+        'offset': offset,
+      });
+      final result = envelope['result'] as Map<String, dynamic>? ?? const {};
+      buffer.write(result['text'] as String? ?? '');
+      final next = result['nextOffset'] as int? ?? offset;
+      hasMore = result['hasMore'] as bool? ?? false;
+      if (hasMore && next <= offset) {
+        throw CoreFault(
+          'invalid_provider_response',
+          'Content cursor did not advance',
+          method: 'conversation.content.read',
+        );
       }
-    } on CoreFault catch (error) {
-      if (error.code == 'content_ref_expired') {
-        await refreshConversation();
-      }
-      rethrow;
+      offset = next;
     }
     return buffer.toString();
   }
@@ -286,6 +428,30 @@ class ConversationController extends ChangeNotifier {
     ];
   }
 
+  static List<Map<String, dynamic>> _mergeLatest(
+    List<Map<String, dynamic>> existing,
+    List<Map<String, dynamic>> latest,
+  ) {
+    final latestById = <String, Map<String, dynamic>>{
+      for (final item in latest)
+        if ((item['id'] as String? ?? '').isNotEmpty)
+          item['id'] as String: item,
+    };
+    final merged = <Map<String, dynamic>>[];
+    final seen = <String>{};
+    for (final item in existing) {
+      final id = item['id'] as String? ?? '';
+      if (id.isEmpty || !seen.add(id)) continue;
+      merged.add(latestById.remove(id) ?? item);
+    }
+    for (final item in latest) {
+      final id = item['id'] as String? ?? '';
+      if (id.isEmpty || !seen.add(id)) continue;
+      merged.add(item);
+    }
+    return merged;
+  }
+
   static CoreFault _fault(Object error, String method) => error is CoreFault
       ? error
       : CoreFault('unexpected_error', error.toString(), method: method);
@@ -298,6 +464,8 @@ class ConversationController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _liveTimer?.cancel();
+    _eventDebounce?.cancel();
+    _eventSubscription?.cancel();
     super.dispose();
   }
 }

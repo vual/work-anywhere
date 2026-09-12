@@ -25,7 +25,7 @@ daemon 将控制方法路由到实例 supervisor；Codex driver/能力描述用�
 - 系统：`system.status`, `system.ui_url`, `system.control.pause`, `system.control.resume`, `system.shutdown`
 - 实例：`instance.list`, `instance.get`, `instance.restart`
 - Mobile navigation：`agent.list`, `project.list`（要求 `mobile-control-v1`）
-- 会话：`conversation.list`, `conversation.read`, `conversation.timeline.list`, `conversation.content.read`, `conversation.subscribe`, `conversation.create`
+- 会话：`conversation.list`, `conversation.read`, `conversation.timeline.list`, `conversation.content.read`, `conversation.content.resolve`, `conversation.subscribe`, `conversation.create`
 - Turn：`turn.start`, `turn.interrupt`
 - action：`action.list`, `action.resolve`
 - catalog：`catalog.models`, `catalog.permissionProfiles`
@@ -39,9 +39,11 @@ daemon 将控制方法路由到实例 supervisor；Codex driver/能力描述用�
 
 `conversation.create` 仅在 `mobile-control-v1` 下可用，接受 `agentId` 和当前 Codex `projectId`，映射为 App Server `thread/start`，返回稳定的 `{id, projectId?}`。它是受控写操作，要求在线 App Server；新 pairing 使用 `conversation.create` scope，已有仅授予 `turn.start` 的 pairing 也保持向后兼容。Mobile 收到结果前断线时不得自动重试。
 
-`mobile-control-v1` 接受 `agentId` 作为 `instanceId` 的产品化别名，并把 `query` 转为 App Server `searchTerm`。`agent.list` 返回 Codex Agent summary；`project.list` 与 `conversation.list` 返回 `{items,nextCursor}` 和稳定 summary。项目过滤的正常路径使用 App Server `thread/list(projectId)`；若结果为空，Desktop 会根据同一 Project ID 解析根目录并以 `thread/list(cwd)` 回退，以兼容项目迁移前仍只保存旧项目关联或 session cwd 的历史线程。`conversation.read` 使用 `thread/read(includeTurns=false)` 读取 metadata，再用 `thread/items/list(sortDirection=desc)` 返回最近 30 项（最大 50）的稳定 `ConversationSnapshot`；归一化器解包官方 `ThreadItemEntry` 的 `{item,turnId}` 结构，并兼容旧的扁平 fixture。`conversation.timeline.list` 原样续传 App Server opaque cursor 读取更早页。单 block 超过 64 KiB 时仅内联 UTF-8 前 16 KiB，并返回 15 分钟无访问过期、绑定 agent/thread/item/block 的随机 `contentRef`；`conversation.content.read` 每次最多返回 128 KiB。引用只保存 provider 页定位，不缓存正文。
+`mobile-control-v1` 接受 `agentId` 作为 `instanceId` 的产品化别名，并把 `query` 转为 App Server `searchTerm`。`agent.list` 返回 Codex Agent summary；Mobile-facing `project.list` 不返回 provider 根路径，`conversation.list` 不返回 preview，只返回稳定导航字段。项目过滤的正常路径使用 App Server `thread/list(projectId)`；若结果为空，Desktop 会根据同一 Project ID 解析根目录并以 `thread/list(cwd)` 回退，以兼容项目迁移前仍只保存旧项目关联或 session cwd 的历史线程。`conversation.read` 使用 `thread/read(includeTurns=false)` 读取 metadata，再用 `thread/items/list(sortDirection=desc)` 返回最近 20 项（最大 50）的稳定 `ConversationSnapshot`；归一化器解包官方 `ThreadItemEntry` 的 `{item,turnId}` 结构，并兼容旧的扁平 fixture。`conversation.timeline.list` 原样续传 App Server opaque cursor 读取更早页。Plan item 的原始 `text` 被归一化为单个 `kind=plan` block；真正超过 5 个源文件行时，普通 Timeline response 只返回原始 Markdown 前五行，并返回绑定 agent/thread/turn/item/block 的随机 `contentRef` 与 UTF-8 字节数。`conversation.content.read` 以稳定定位重新遍历该 turn 的 provider item 页，并按最多 128 KiB 返回正文；引用过期后，Mobile 可用相同定位调用 `conversation.content.resolve` 重新签发引用，item 已删除时返回 `content_not_found`。引用只保存定位，不缓存正文。
 
-Mobile control 响应序列化后上限为 512 KiB。时间线超预算时以同一 cursor 按 `30→15→7→3→1` 缩小 provider page；limit 为 1 仍超预算则进一步引用大 block。订阅事件只作为失效提示发送，不携带 provider 正文；待追赶事件超过有界窗口时返回 `snapshot=true`，由 Mobile 重新读取分页 snapshot。超限保护返回 `response_too_large`，不会把超大业务响应交给 Relay。Mobile control 结构化日志只记录 method、耗时、响应字节数和稳定错误码。
+`hookPrompt` 不进入 Mobile DTO；function/tool、协作、搜索、图片、sleep、review 和 compaction item 只生成单个结构化 summary block：`summaryKind` 保存 provider item 类型，`summaryValue` 保存最长 512 UTF-8 字节的脱敏单行值，`text` 是语言无关 fallback。完整展示文案由 Mobile 本地化，daemon 不拼接中英文句子。summary 不含 arguments/output/result/error/path/prompt，也不生成 `contentRef`；`commandExecution` 只返回 command，不返回 aggregated output。过滤后可见 item 不足请求数量时，daemon 沿 provider cursor 补读后续页面，最多追踪 8 页。
+
+Mobile control 响应序列化后上限为 512 KiB。时间线超预算时以同一 cursor 按 `20→10→5→2→1` 缩小可见 page；limit 为 1 仍超预算则进一步引用大 block。Daemon 通过 Relay unsolicited event 主动发送 metadata-only conversation event，不携带 provider 正文；Mobile EventSink 收到事件后合并刷新对应 snapshot。Mobile endpoint 只把 `type=event` 送入业务事件流，迟到/未知 response 直接丢弃；无 sink 时最多缓存 1000 条事件，并用 `type=transport` 报告 `online/disconnected/revoked/closed`。EventSink 不可用或断开时才启用 2 秒轮询恢复，恢复 online 后停止轮询并执行一次 cursor catch-up。待追赶事件超过有界窗口时返回 `snapshot=true`，由 Mobile 重新读取分页 snapshot。超限保护返回 `response_too_large`，不会把超大业务响应交给 Relay。Mobile control 结构化日志只记录 method、耗时、响应字节数和稳定错误码。
 
 CLI 对应提供 daemon、instance、conversation、turn、action、catalog、traffic、通用 `call`、`ui`、`self-test`、install/uninstall 和 version 命令。CLI 通过本机受保护管理 Pipe 调用，不自行启动第二个 App Server。
 
@@ -79,7 +81,7 @@ Provider capabilities 当前包含 history、live stream、text/image input、ap
 - CLI 查看实例/会话、启动和中断 Turn、列出/解决 action、读取 catalog。
 - 附件 begin/chunk/commit 后可用于图片输入；abort、size mismatch、路径穿越、项目目录回退和重启清理测试覆盖文件存储边界。
 - cursor 重连补发和 snapshot fallback 测试。
-- metadata/timeline DTO、opaque cursor、自适应页大小、UTF-8 内容分块和引用越权/过期测试。
+- metadata/timeline DTO、结构化 summary、本地化边界、opaque cursor、自适应页大小、UTF-8 内容分块和引用越权/过期/重新签发测试。
 - Origin、CSRF、一次性 token、控制暂停和慢订阅者测试。
 
 ## Documentation update triggers

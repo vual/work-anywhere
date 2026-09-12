@@ -33,12 +33,12 @@
 ## Phase 2 — read-only task experience
 
 - 实现无底部导航的单工作台、上次 Daemon/Agent 恢复、顶栏右侧 Daemon 状态下拉、居中活跃任务提示、空闲品牌名和下一行横向 Agent selector。
-- 实现 Codex 最近项目 10 条与展开、跨项目最近对话 30 条、项目内最近对话 15 条与分页、项目/对话全集搜索和运行中蓝色 loading icon。
+- 实现 Codex 最近项目 10 条与展开、跨项目最近对话 20 条、项目内最近对话 15 条与分页、项目/对话全集搜索和运行中蓝色 loading icon。
 - 实现项目/会话详情和 typed timeline renderer；Hermes Bot 仅完成 capability/unsupported 状态，不纳入 Codex-first 发布范围。
 - 实现 conversation snapshot/cursor、event reducer、gap/snapshot fallback、弱网退避和 selection generation。
 - 完成 Markdown 安全 renderer（GFM 常用格式、选择/复制、链接确认和远程图片拦截）、diff/tool 安全 renderer、滚动跟随、stale/offline/error 状态与应用锁/隐私遮罩。
 
-验收：无 pairing 根页和有 pairing 工作台无底栏；恢复/删除/切换 Daemon 与 Agent 正确；10/30/15 数量、cursor 分页、跨全部记录搜索和运行状态 icon 符合契约；长会话、1000 event 边界、streaming、duplicate/gap/late response、24 小时断网恢复不重复/丢序；widget/accessibility/golden tests 覆盖所有页面状态；正文不落盘。
+验收：无 pairing 根页和有 pairing 工作台无底栏；恢复/删除/切换 Daemon 与 Agent 正确；10/20/15 数量、cursor 分页、跨全部记录搜索和运行状态 icon 符合契约；长会话、1000 event 边界、streaming、duplicate/gap/late response、24 小时断网恢复不重复/丢序；widget/accessibility/golden tests 覆盖所有页面状态；正文不落盘。
 
 ## Phase 3 — controlled writes
 
@@ -96,8 +96,8 @@ mobile/scripts/build-android.ps1    Android tester APK
 | --- | --- | --- |
 | Go core artifact 与 Relay/Desktop 不一致 | canonical vectors + artifact-level E2E + review | 任一 vector/tamper 用例失败 |
 | gomobile 运行时/绑定不满足发布要求 | Phase 0 AAR/XCFramework 体积、lifecycle、callback、symbolication PoC | 任一平台无法稳定构建或恢复 |
-| Mobile 绑定 provider raw JSON 或从 30 条对话猜项目 | Desktop Agent/Project/Conversation normalized DTO 与 server-side pagination/search | 产品路径仍解析 raw payload 或 client-side 推断 project identity |
-| 大会话超过 Relay frame | metadata-only read、opaque cursor timeline、512 KiB control budget、临时 contentRef | 10 KiB/900 KiB/1.5 MiB/13 MiB 真机会话任一无法进入或完整内容无法按需读取 |
+| Mobile 绑定 provider raw JSON 或从 20 条对话猜项目 | Desktop Agent/Project/Conversation normalized DTO 与 server-side pagination/search | 产品路径仍解析 raw payload 或 client-side 推断 project identity |
+| 大会话超过 Relay frame | metadata-only read、opaque cursor timeline、512 KiB control budget、可按 turn/item/block 重新签发的临时 contentRef | 10 KiB/900 KiB/1.5 MiB/13 MiB 真机会话任一无法进入或完整内容无法按需读取 |
 | OS 后台限制导致假在线 | foreground socket + push hint + resume sync | UI 在旧 session 上允许写入 |
 | at-most-once route 造成重复写 | no auto retry + clientMessageId + snapshot reconciliation | 弱网测试出现重复 Turn/action |
 | key/正文泄露 | platform key wrapping、no body disk、scrubbed logs | artifact/log/db 扫描发现 fixture 明文 |

@@ -41,6 +41,195 @@ Map<String, dynamic> _item(String id) => {
 };
 
 void main() {
+  testWidgets('timeline summary is a single non-expandable row', (
+    tester,
+  ) async {
+    final gateway = _FakeGateway((method, params) async {
+      if (method == 'action.list' || method == 'conversation.subscribe') {
+        return {'result': const {}};
+      }
+      return {
+        'result': {
+          'conversation': {
+            'id': 'thread-summary',
+            'title': 'Summary thread',
+            'running': false,
+          },
+          'timeline': {
+            'items': [
+              {
+                'id': 'mcp-1',
+                'kind': 'mcpToolCall',
+                'status': 'completed',
+                'blocks': [
+                  {
+                    'kind': 'summary',
+                    'text': 'github/list_issues',
+                    'summaryKind': 'mcpToolCall',
+                    'summaryValue': 'github/list_issues',
+                    'truncated': false,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      };
+    });
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          coreGatewayProvider.overrideWithValue(gateway),
+          workspaceProvider.overrideWith(_FakeWorkspaceController.new),
+        ],
+        child: const MaterialApp(
+          locale: Locale('zh', 'CN'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: ConversationScreen(conversationId: 'thread-summary'),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('调用 MCP：github/list_issues'), findsOneWidget);
+    expect(find.byType(ExpansionTile), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('timeline summary is localized in English', (tester) async {
+    final gateway = _FakeGateway((method, params) async {
+      if (method == 'action.list' || method == 'conversation.subscribe') {
+        return {'result': const {}};
+      }
+      return {
+        'result': {
+          'conversation': {
+            'id': 'thread-summary-en',
+            'title': 'Summary thread',
+            'running': false,
+          },
+          'timeline': {
+            'items': [
+              {
+                'id': 'mcp-1',
+                'kind': 'mcpToolCall',
+                'status': 'completed',
+                'blocks': [
+                  {
+                    'kind': 'summary',
+                    'text': 'github/list_issues',
+                    'summaryKind': 'mcpToolCall',
+                    'summaryValue': 'github/list_issues',
+                    'truncated': false,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      };
+    });
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          coreGatewayProvider.overrideWithValue(gateway),
+          workspaceProvider.overrideWith(_FakeWorkspaceController.new),
+        ],
+        child: const MaterialApp(
+          locale: Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: ConversationScreen(conversationId: 'thread-summary-en'),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('Called MCP: github/list_issues'), findsOneWidget);
+    expect(find.text('Completed'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('plan timeline card opens full raw markdown in a bottom sheet', (
+    tester,
+  ) async {
+    final fullPlan =
+        '# 实施计划\n\n- 第一步\n- 第二步\n- 第三步\n\n```sh\necho done\n```\n\n完整计划末行';
+    final gateway = _FakeGateway((method, params) async {
+      if (method == 'action.list' || method == 'conversation.subscribe') {
+        return {'result': const {}};
+      }
+      if (method == 'conversation.content.read') {
+        return {
+          'result': {
+            'text': fullPlan,
+            'nextOffset': fullPlan.length,
+            'hasMore': false,
+          },
+        };
+      }
+      return {
+        'result': {
+          'conversation': {
+            'id': 'thread-plan',
+            'title': 'Plan thread',
+            'running': false,
+          },
+          'timeline': {
+            'items': [
+              {
+                'id': 'plan-1',
+                'turnId': 'turn-1',
+                'kind': 'plan',
+                'blocks': [
+                  {
+                    'kind': 'plan',
+                    'text': '# 实施计划\n\n- 第一步\n- 第二步\n- 第三步',
+                    'truncated': true,
+                    'contentRef': 'plan-ref',
+                    'totalBytes': 100,
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      };
+    });
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          coreGatewayProvider.overrideWithValue(gateway),
+          workspaceProvider.overrideWith(_FakeWorkspaceController.new),
+        ],
+        child: const MaterialApp(
+          locale: Locale('zh', 'CN'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: ConversationScreen(conversationId: 'thread-plan'),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('查看完整计划'), findsOneWidget);
+    expect(find.text('第四步'), findsNothing);
+    await tester.tap(find.text('查看完整计划'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('完整计划末行'), findsOneWidget);
+    expect(find.text('echo done'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('conversation opens at the bottom of the timeline', (
     tester,
   ) async {

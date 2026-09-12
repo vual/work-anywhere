@@ -33,7 +33,20 @@ func NewCore() *Core {
 func (c *Core) SetEventSink(sink EventSink) {
 	c.mu.Lock()
 	c.sink = sink
+	client := c.client
 	c.mu.Unlock()
+	if sink == nil {
+		client.SetEventSink(nil)
+		return
+	}
+	client.SetEventSink(func(eventJSON string) {
+		c.mu.Lock()
+		current := c.sink
+		c.mu.Unlock()
+		if current != nil {
+			current.OnEvent(eventJSON)
+		}
+	})
 }
 
 // Pair consumes a waw://pair URI and keeps the resulting secure session alive
@@ -129,9 +142,11 @@ func (c *Core) Close() {
 	}
 	c.closed = true
 	client := c.client
-	c.sink = nil
 	c.mu.Unlock()
 	client.Close()
+	c.mu.Lock()
+	c.sink = nil
+	c.mu.Unlock()
 }
 
 type resultEnvelope struct {

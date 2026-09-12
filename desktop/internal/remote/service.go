@@ -802,7 +802,7 @@ func scopeAllows(scopes []string, method string) bool {
 	required := map[string]string{
 		"system.status": "status.read", "instance.list": "status.read", "instance.get": "status.read", "agent.list": "status.read",
 		"project.list":      "conversation.read",
-		"conversation.list": "conversation.read", "conversation.read": "conversation.read", "conversation.timeline.list": "conversation.read", "conversation.content.read": "conversation.read", "conversation.subscribe": "conversation.read",
+		"conversation.list": "conversation.read", "conversation.read": "conversation.read", "conversation.timeline.list": "conversation.read", "conversation.content.read": "conversation.read", "conversation.content.resolve": "conversation.read", "conversation.subscribe": "conversation.read",
 		"conversation.create": "conversation.create",
 		"turn.start":          "turn.start", "turn.interrupt": "turn.interrupt",
 		"action.list": "action.read", "action.resolve": "action.resolve",

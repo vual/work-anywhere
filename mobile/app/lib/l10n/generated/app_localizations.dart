@@ -205,7 +205,7 @@ abstract class AppLocalizations {
   /// No description provided for @recentConversations.
   ///
   /// In zh, this message translates to:
-  /// **'最近 30 个'**
+  /// **'最近 20 个'**
   String get recentConversations;
 
   /// No description provided for @noConversations.
@@ -412,6 +412,24 @@ abstract class AppLocalizations {
   /// **'较早内容加载失败，点击重试'**
   String get retryOlder;
 
+  /// No description provided for @plan.
+  ///
+  /// In zh, this message translates to:
+  /// **'计划'**
+  String get plan;
+
+  /// No description provided for @viewFullPlan.
+  ///
+  /// In zh, this message translates to:
+  /// **'查看完整计划'**
+  String get viewFullPlan;
+
+  /// No description provided for @planLoadFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'完整计划加载失败，请重试'**
+  String get planLoadFailed;
+
   /// No description provided for @viewFullContent.
   ///
   /// In zh, this message translates to:
@@ -423,6 +441,96 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'完整内容'**
   String get fullContent;
+
+  /// No description provided for @summaryFunctionCall.
+  ///
+  /// In zh, this message translates to:
+  /// **'调用函数：{value}'**
+  String summaryFunctionCall(String value);
+
+  /// No description provided for @summaryMcpToolCall.
+  ///
+  /// In zh, this message translates to:
+  /// **'调用 MCP：{value}'**
+  String summaryMcpToolCall(String value);
+
+  /// No description provided for @summaryDynamicToolCall.
+  ///
+  /// In zh, this message translates to:
+  /// **'调用工具：{value}'**
+  String summaryDynamicToolCall(String value);
+
+  /// No description provided for @summaryCollabAgentToolCall.
+  ///
+  /// In zh, this message translates to:
+  /// **'协作调用：{value}'**
+  String summaryCollabAgentToolCall(String value);
+
+  /// No description provided for @summarySubAgentActivity.
+  ///
+  /// In zh, this message translates to:
+  /// **'子 Agent：{value}'**
+  String summarySubAgentActivity(String value);
+
+  /// No description provided for @summaryWebSearch.
+  ///
+  /// In zh, this message translates to:
+  /// **'搜索：{value}'**
+  String summaryWebSearch(String value);
+
+  /// No description provided for @summaryImageView.
+  ///
+  /// In zh, this message translates to:
+  /// **'查看图片：{value}'**
+  String summaryImageView(String value);
+
+  /// No description provided for @summarySleep.
+  ///
+  /// In zh, this message translates to:
+  /// **'等待：{value}'**
+  String summarySleep(String value);
+
+  /// No description provided for @summaryImageGeneration.
+  ///
+  /// In zh, this message translates to:
+  /// **'生成图片'**
+  String get summaryImageGeneration;
+
+  /// No description provided for @summaryEnteredReviewMode.
+  ///
+  /// In zh, this message translates to:
+  /// **'进入审查模式：{value}'**
+  String summaryEnteredReviewMode(String value);
+
+  /// No description provided for @summaryExitedReviewMode.
+  ///
+  /// In zh, this message translates to:
+  /// **'退出审查模式：{value}'**
+  String summaryExitedReviewMode(String value);
+
+  /// No description provided for @summaryContextCompaction.
+  ///
+  /// In zh, this message translates to:
+  /// **'上下文已压缩'**
+  String get summaryContextCompaction;
+
+  /// No description provided for @summaryStatusCompleted.
+  ///
+  /// In zh, this message translates to:
+  /// **'已完成'**
+  String get summaryStatusCompleted;
+
+  /// No description provided for @summaryStatusRunning.
+  ///
+  /// In zh, this message translates to:
+  /// **'运行中'**
+  String get summaryStatusRunning;
+
+  /// No description provided for @summaryStatusFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'失败'**
+  String get summaryStatusFailed;
 
   /// No description provided for @externalLinkTitle.
   ///

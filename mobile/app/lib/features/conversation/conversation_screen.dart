@@ -649,16 +649,35 @@ class _TimelineItem extends StatelessWidget {
     final blocks = (item['blocks'] as List? ?? const [])
         .whereType<Map<String, dynamic>>()
         .toList();
+    final locatedBlocks = [
+      for (var index = 0; index < blocks.length; index++)
+        <String, dynamic>{
+          ...blocks[index],
+          '_turnId': item['turnId'],
+          '_itemId': item['id'],
+          '_blockIndex': index,
+        },
+    ];
+    if (kind.toLowerCase() == 'plan') {
+      return _PlanTimelineCard(
+        block: locatedBlocks.isEmpty
+            ? <String, dynamic>{}
+            : locatedBlocks.first,
+        controller: controller,
+      );
+    }
+    if (locatedBlocks.length == 1 && locatedBlocks.first['kind'] == 'summary') {
+      return _TimelineSummaryItem(item: item, block: locatedBlocks.first);
+    }
     final user = kind.toLowerCase().contains('user');
     final tool =
         kind.toLowerCase().contains('tool') ||
         kind.toLowerCase().contains('command') ||
-        kind.toLowerCase().contains('reasoning') ||
         kind.toLowerCase().contains('file');
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (final block in blocks) ...[
+        for (final block in locatedBlocks) ...[
           SafeMarkdownMessage(data: block['text'] as String? ?? ''),
           if (block['truncated'] == true)
             TextButton.icon(
@@ -730,6 +749,248 @@ class _TimelineItem extends StatelessWidget {
       ),
     );
   }
+}
+
+class _TimelineSummaryItem extends StatelessWidget {
+  const _TimelineSummaryItem({required this.item, required this.block});
+
+  final Map<String, dynamic> item;
+  final Map<String, dynamic> block;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = item['status'] as String?;
+    final hasStatus = status != null && status.isNotEmpty;
+    final statusColor = _statusColor(status);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        children: [
+          Icon(_statusIcon(status), size: 17, color: statusColor),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _summaryText(context, block),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+          ),
+          if (hasStatus) ...[
+            const SizedBox(width: 8),
+            Text(
+              _statusText(context, status),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: statusColor),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  static String _summaryText(BuildContext context, Map<String, dynamic> block) {
+    final value = block['summaryValue'] as String? ?? '';
+    switch (block['summaryKind'] as String? ?? '') {
+      case 'functionCallOutput':
+        return context.l10n.summaryFunctionCall(value);
+      case 'mcpToolCall':
+        return context.l10n.summaryMcpToolCall(value);
+      case 'dynamicToolCall':
+        return context.l10n.summaryDynamicToolCall(value);
+      case 'collabAgentToolCall':
+        return context.l10n.summaryCollabAgentToolCall(value);
+      case 'subAgentActivity':
+        return context.l10n.summarySubAgentActivity(value);
+      case 'webSearch':
+        return context.l10n.summaryWebSearch(value);
+      case 'imageView':
+        return context.l10n.summaryImageView(value);
+      case 'sleep':
+        return context.l10n.summarySleep(value);
+      case 'imageGeneration':
+        return context.l10n.summaryImageGeneration;
+      case 'enteredReviewMode':
+        return context.l10n.summaryEnteredReviewMode(value);
+      case 'exitedReviewMode':
+        return context.l10n.summaryExitedReviewMode(value);
+      case 'contextCompaction':
+        return context.l10n.summaryContextCompaction;
+      default:
+        return block['text'] as String? ?? value;
+    }
+  }
+
+  static String _statusText(BuildContext context, String status) {
+    switch (status.toLowerCase()) {
+      case 'completed':
+        return context.l10n.summaryStatusCompleted;
+      case 'inprogress':
+      case 'running':
+        return context.l10n.summaryStatusRunning;
+      case 'failed':
+      case 'error':
+      case 'errored':
+        return context.l10n.summaryStatusFailed;
+      default:
+        return status;
+    }
+  }
+
+  static IconData _statusIcon(String? status) {
+    switch (status?.toLowerCase()) {
+      case 'failed':
+      case 'error':
+      case 'errored':
+        return Icons.error_outline_rounded;
+      case 'inprogress':
+      case 'running':
+        return Icons.sync_rounded;
+      case 'completed':
+        return Icons.check_circle_outline_rounded;
+      default:
+        return Icons.bolt_outlined;
+    }
+  }
+
+  static Color _statusColor(String? status) {
+    switch (status?.toLowerCase()) {
+      case 'failed':
+      case 'error':
+      case 'errored':
+        return Colors.redAccent;
+      case 'completed':
+        return Colors.green;
+      default:
+        return Colors.grey;
+    }
+  }
+}
+
+class _PlanTimelineCard extends StatelessWidget {
+  const _PlanTimelineCard({required this.block, required this.controller});
+
+  final Map<String, dynamic> block;
+  final ConversationController? controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final truncated = block['truncated'] == true;
+    return Card(
+      margin: const EdgeInsets.only(bottom: 14),
+      clipBehavior: Clip.antiAlias,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.checklist_rounded, size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  context.l10n.plan,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            SafeMarkdownMessage(data: block['text'] as String? ?? ''),
+            if (truncated)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: controller == null
+                      ? null
+                      : () => _showFullPlan(context, controller!, block),
+                  icon: const Icon(Icons.expand_more_rounded),
+                  label: Text(context.l10n.viewFullPlan),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showFullPlan(
+    BuildContext context,
+    ConversationController controller,
+    Map<String, dynamic> block,
+  ) {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => _PlanContentSheet(controller: controller, block: block),
+    );
+  }
+}
+
+class _PlanContentSheet extends StatefulWidget {
+  const _PlanContentSheet({required this.controller, required this.block});
+
+  final ConversationController controller;
+  final Map<String, dynamic> block;
+
+  @override
+  State<_PlanContentSheet> createState() => _PlanContentSheetState();
+}
+
+class _PlanContentSheetState extends State<_PlanContentSheet> {
+  late Future<String> _content;
+
+  @override
+  void initState() {
+    super.initState();
+    _content = widget.controller.readFullContent(widget.block);
+  }
+
+  void _retry() {
+    setState(() {
+      _content = widget.controller.readFullContent(widget.block);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    child: SizedBox(
+      height: MediaQuery.sizeOf(context).height * .82,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+        child: FutureBuilder<String>(
+          future: _content,
+          builder: (context, snapshot) {
+            if (snapshot.hasError) {
+              return Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    context.l10n.planLoadFailed,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton.tonal(
+                    onPressed: _retry,
+                    child: Text(context.l10n.retry),
+                  ),
+                ],
+              );
+            }
+            if (!snapshot.hasData) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            return SingleChildScrollView(
+              padding: const EdgeInsets.only(bottom: 24),
+              child: SafeMarkdownMessage(data: snapshot.data!),
+            );
+          },
+        ),
+      ),
+    ),
+  );
 }
 
 class _ErrorBanner extends StatelessWidget {

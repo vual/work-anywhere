@@ -1,0 +1,169 @@
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+
+import 'mobile_core.g.dart';
+
+class CoreFault implements Exception {
+  CoreFault(this.code, this.message, {this.method, this.requestId});
+  final String code;
+  final String message;
+  final String? method;
+  final String? requestId;
+  @override
+  String toString() => '$code: $message';
+}
+
+class DiagnosticEntry {
+  const DiagnosticEntry({
+    required this.timestamp,
+    required this.method,
+    required this.durationMilliseconds,
+    required this.outcome,
+    this.errorCode,
+    this.requestId,
+  });
+
+  final DateTime timestamp;
+  final String method;
+  final int durationMilliseconds;
+  final String outcome;
+  final String? errorCode;
+  final String? requestId;
+
+  String format() =>
+      '${timestamp.toIso8601String()} method=$method durationMs=$durationMilliseconds outcome=$outcome'
+      '${errorCode == null ? '' : ' errorCode=$errorCode'}'
+      '${requestId == null ? '' : ' requestId=$requestId'}';
+}
+
+class CoreGateway {
+  CoreGateway({MobileCoreApi? api}) : _api = api ?? MobileCoreApi();
+  final MobileCoreApi _api;
+  final List<DiagnosticEntry> _diagnostics = [];
+  static const EventChannel _eventChannel = EventChannel(
+    'work_anywhere/mobile_events',
+  );
+
+  List<DiagnosticEntry> get diagnostics => List.unmodifiable(_diagnostics);
+  Stream<Map<String, dynamic>> get events => _eventChannel
+      .receiveBroadcastStream()
+      .where((value) => value is String)
+      .cast<String>()
+      .map((value) => jsonDecode(value) as Map<String, dynamic>);
+  String exportDiagnostics() =>
+      _diagnostics.map((item) => item.format()).join('\n');
+
+  Future<Map<String, dynamic>> pair(String uri) async {
+    final reply = await _api.pair(uri);
+    return _decodeReply(reply);
+  }
+
+  Future<Map<String, dynamic>> restoreStored() async {
+    final reply = await _api.restoreStored();
+    return _decodeReply(reply);
+  }
+
+  Future<void> persistCredentials() async =>
+      _decodeReply(await _api.persistCredentials());
+
+  Future<void> deleteStoredCredentials() async =>
+      _decodeReply(await _api.deleteStoredCredentials());
+
+  Future<Map<String, dynamic>> call(
+    String method,
+    Map<String, dynamic> params, {
+    int timeoutMilliseconds = 30000,
+  }) async {
+    final stopwatch = Stopwatch()..start();
+    try {
+      final reply = await _api.call(
+        method,
+        jsonEncode(params),
+        timeoutMilliseconds,
+      );
+      final decoded = _decodeReply(
+        reply,
+        controlEnvelope: true,
+        method: method,
+      );
+      _record(method, stopwatch.elapsedMilliseconds, 'ok', decoded: decoded);
+      return decoded;
+    } on CoreFault catch (error) {
+      _record(
+        method,
+        stopwatch.elapsedMilliseconds,
+        'error',
+        errorCode: error.code,
+        requestId: error.requestId,
+      );
+      rethrow;
+    } catch (_) {
+      _record(
+        method,
+        stopwatch.elapsedMilliseconds,
+        'error',
+        errorCode: 'unexpected_error',
+      );
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>> status() async =>
+      _decodeReply(await _api.status());
+
+  void close() => _api.close();
+
+  Map<String, dynamic> _decodeReply(
+    CoreReply reply, {
+    bool controlEnvelope = false,
+    String? method,
+  }) {
+    final decoded = jsonDecode(reply.payload) as Map<String, dynamic>;
+    if (!reply.ok || decoded['ok'] == false) {
+      final error = decoded['error'] as Map<String, dynamic>? ?? decoded;
+      throw CoreFault(
+        error['code'] as String? ?? 'core_error',
+        error['message'] as String? ?? 'Core request failed',
+        method: method,
+        requestId: decoded['id'] as String?,
+      );
+    }
+    if (controlEnvelope && decoded['error'] != null) {
+      final error = decoded['error'] as Map<String, dynamic>;
+      throw CoreFault(
+        error['code'] as String? ?? 'control_error',
+        error['message'] as String? ?? 'Desktop request failed',
+        method: method,
+        requestId: decoded['id'] as String?,
+      );
+    }
+    return decoded;
+  }
+
+  void _record(
+    String method,
+    int durationMilliseconds,
+    String outcome, {
+    String? errorCode,
+    String? requestId,
+    Map<String, dynamic>? decoded,
+  }) {
+    final entry = DiagnosticEntry(
+      timestamp: DateTime.now().toUtc(),
+      method: method,
+      durationMilliseconds: durationMilliseconds,
+      outcome: outcome,
+      errorCode: errorCode,
+      requestId: requestId ?? decoded?['id'] as String?,
+    );
+    _diagnostics.add(entry);
+    if (_diagnostics.length > 100) {
+      _diagnostics.removeRange(0, _diagnostics.length - 100);
+    }
+    if (kDebugMode) {
+      debugPrint('WorkAnywhere ${entry.format()}');
+    }
+  }
+}

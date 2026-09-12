@@ -21,7 +21,7 @@
 | scope | Mobile 能力 | control methods |
 | --- | --- | --- |
 | `status.read` | Daemon/Agent 状态 | `system.status`, `instance.list/get`, `agent.list` |
-| `conversation.read` | 项目/对话列表、搜索、snapshot、增量 | `project.list`, `conversation.list/read/subscribe` |
+| `conversation.read` | 项目/对话列表、搜索、snapshot、增量与大内容读取 | `project.list`, `conversation.list/read/subscribe`, `conversation.timeline.list`, `conversation.content.read/resolve` |
 | `conversation.create` | 首次发送时在当前项目创建 Codex thread | `conversation.create` |
 | `turn.start` | 继续已有 thread | `turn.start` |
 | `turn.interrupt` | 中断活跃 Turn | `turn.interrupt` |
@@ -40,13 +40,14 @@ Desktop 的 `instance` 在 `mobile-control-v1` 中映射为 `Agent`，不把 Win
 agent.list()
 project.list(agentId, limit, cursor?)
 conversation.list(agentId, projectId?, query?, limit, cursor?)
-conversation.read(agentId, threadId, limit=30)
-conversation.timeline.list(agentId, threadId, cursor, limit=30)
+conversation.read(agentId, threadId, limit=20)
+conversation.timeline.list(agentId, threadId, cursor, limit=20)
 conversation.content.read(agentId, threadId, contentRef, offset)
+conversation.content.resolve(agentId, threadId, turnId, itemId, blockIndex)
 conversation.subscribe(agentId, threadId, cursor)
 ```
 
-`agent.list` 的 Codex adapter 可由现有 `instance.list` 投影；`project.list` 必须由 Desktop 根据权威 thread/workspace metadata 聚合稳定 project ID，不能由 Mobile 对最近 30 条记录按路径字符串猜测。`conversation.list` 的 `projectId`、`query`、`limit` 和 cursor 由 Desktop 执行，排序固定为 `updatedAt desc, id desc`，同一 cursor 下不能因并列时间重复或漏项。
+`agent.list` 的 Codex adapter 可由现有 `instance.list` 投影；`project.list` 必须由 Desktop 根据权威 thread/workspace metadata 聚合稳定 project ID，不能由 Mobile 对最近 20 条记录按路径字符串猜测。`conversation.list` 的 `projectId`、`query`、`limit` 和 cursor 由 Desktop 执行，排序固定为 `updatedAt desc, id desc`，同一 cursor 下不能因并列时间重复或漏项。
 
 Agent 声明 `navigationKind = projects | bots | none`。Codex 为 `projects`；Hermes 未来为 `bots`，并在实现时增加同属 `conversation.read` scope 的 `bot.list`。未适配的 Claude Code、OpenCode、Pi 等可以由 `agent.list` 返回 discovery metadata，但 `supported=false`，Mobile 不调用项目/对话写接口。
 
@@ -95,32 +96,34 @@ online
 进入 `syncing` 后顺序执行：
 
 1. 对上次选中的 Daemon建立安全会话并调用 `system.status` / `agent.list`；无有效记录时回退到第一个 ready Codex。
-2. 对选中 Agent 并发调用 `project.list(limit=10)`、`conversation.list(limit=30)` 与 `action.list`。`navigationKind=bots` 时把 project call 替换为 `bot.list`；Codex-first V1 不进入该分支。
+2. 对选中 Agent 并发调用 `project.list(limit=10)`、`conversation.list(limit=20)` 与 `action.list`。`navigationKind=bots` 时把 project call 替换为 `bot.list`；Codex-first V1 不进入该分支。
 3. 点击项目后调用 `conversation.list(projectId, limit=15)`；“显示更多”只使用 response next cursor，不用 offset 猜页。
-4. 搜索时分别调用 `project.list(query, limit, cursor)` 与 `conversation.list(query, limit, cursor)`，搜索服务端全集而不是当前 10/30 条内存列表。
-5. 打开会话时调用 `conversation.read(limit=30)` 获取 metadata、revision/sequence 和最近 timeline 页；页面按 ID 去重并倒转为正序展示。滚动到顶部用 opaque `nextCursor` 调用 `conversation.timeline.list`，不使用 offset。
-6. 仅应用 `sequence == current + 1` 的 event；duplicate 丢弃，gap、过期 cursor 或 `snapshot=true` 触发重新 `conversation.read/subscribe`。
+4. 搜索时分别调用 `project.list(query, limit, cursor)` 与 `conversation.list(query, limit, cursor)`，搜索服务端全集而不是当前 10/20 条内存列表。
+5. 打开会话时调用 `conversation.read(limit=20)` 获取 metadata、revision/sequence 和最近 timeline 页；页面按 ID 去重并倒转为正序展示。滚动到顶部用 opaque `nextCursor` 调用 `conversation.timeline.list`，不使用 offset。
+6. EventSink 中的 event 只作为失效提示：约 150 ms 内合并 burst，同一时刻只允许一个 conversation refresh，期间到达新事件则再刷新一次；sequence 低于当前 snapshot 的迟到 response 不得覆盖 UI。gap、过期 cursor 或 `snapshot=true` 触发重新 `conversation.read/subscribe`。
 7. `revision` 随 snapshot/event 更新；`turn.start` 必须提交最后已确认的 `expectedRevision`。
 
 App 前台对未选中 Daemon 以有界短连接依次执行 status probe，更新下拉列表的 `connecting/online/offline + checkedAt` 后关闭；只有选中 Daemon 保持前台 session。切换 Daemon/Agent/project/thread 或 search query 时取消旧 read request，并用 selection generation 丢弃迟到 response。实时 event 可以更新项目/对话摘要，但只有属于当前 Agent/thread 且 sequence 连续的 event 才能写入详情 reducer。
 
 ### 规范化 DTO 当前边界与发布门槛
 
-`mobile-control-v1` envelope 会回显 contract，未知 contract 返回 `unsupported_contract`。Mobile-facing target 参数统一使用 `agentId`，Desktop 只在 provider 边界内转换为 `instanceId`；附件上传会先绑定该实例，再把 `instanceId` 从 provider 参数中移除。`agent.list`、`project.list`、`conversation.list` 和 conversation timeline 已输出稳定 DTO；catalog 与 action 仍有 provider-shaped payload。
+`mobile-control-v1` envelope 会回显 contract，未知 contract 返回 `unsupported_contract`。Mobile-facing target 参数统一使用 `agentId`，Desktop 只在 provider 边界内转换为 `instanceId`；附件上传会先绑定该实例，再把 `instanceId` 从 provider 参数中移除。`agent.list`、`project.list`、`conversation.list` 和 conversation timeline 已输出稳定 DTO；project list 不暴露 root，conversation list 不暴露 preview；catalog 与 action 仍有 provider-shaped payload。
 
-`conversation.read` 组合 metadata-only `thread/read` 与 `thread/items/list(sortDirection=desc)`，默认 30、最大 50。snapshot 包含 metadata、revision、sequence、timeline 和 opaque `nextCursor`。`TimelineItem` 固定为 id、可选 turnId、kind、status 与 blocks，不透传 provider JSON。单 block 超过 64 KiB 时内联 UTF-8 前 16 KiB，并用 15 分钟滑动过期的 `contentRef` 按 128 KiB 分块读取。项目下对话列表优先按 `projectId` 查询；Desktop 若发现历史线程项目关联未迁移，会按项目根目录 `cwd` 回退查询。Desktop control response 不超过 512 KiB；页面超预算时以相同 cursor 将 limit 逐次减半。发布前仍必须完成：
+`conversation.read` 组合 metadata-only `thread/read` 与 `thread/items/list(sortDirection=desc)`，默认 20、最大 50。snapshot 包含 metadata、revision、sequence、timeline 和 opaque `nextCursor`。`TimelineItem` 固定为 id、可选 turnId、kind、status 与 blocks，不透传 provider JSON。Plan item 使用单个 `kind=plan` block，daemon 保留原始 Markdown；真正超过 5 个源文件行时普通 Timeline response 只返回前 5 行，并为完整正文返回 `contentRef` 与 `totalBytes`，不生成 title/summary。Plan 和其他大 block 通过 `conversation.content.read` 按 128 KiB 分块读取；引用过期后，Flutter 使用私有的 turnId/itemId/blockIndex 调用 `conversation.content.resolve`，daemon 在该 turn 内分页查找 item 并重新签发引用，找不到时返回 `content_not_found`，不要求刷新或丢弃已加载旧页。
 
-`conversation.subscribe` 的 event 是 metadata-only invalidation hint，不携带 provider 正文；当客户端游标过旧或待追赶事件超过 Desktop 的有界窗口时，服务端返回 `snapshot=true`，Mobile 必须重新读取 snapshot。
+`hookPrompt` 不进入 DTO；function/tool、协作、搜索、图片、sleep、review 和 compaction item 只返回单个 `kind=summary` block。该 block 的 `summaryKind` 是原始类型，`summaryValue` 是脱敏、单行且不超过 512 UTF-8 字节的值，`text` 是语言无关 fallback；完整句子和 status 由 Flutter ARB 本地化。summary 不包含 arguments/output/result/error/path/prompt，不生成 `contentRef`；commandExecution 只返回 command block。过滤后可见 item 不足请求数量时 daemon 沿 provider cursor 补读后续页面，最多 8 页。其他单 block 超过 64 KiB 时内联 UTF-8 前 16 KiB，并用 15 分钟滑动过期的 `contentRef` 分块读取。项目下对话列表优先按 `projectId` 查询；Desktop 若发现历史线程项目关联未迁移，会按项目根目录 `cwd` 回退查询。Desktop control response 不超过 512 KiB；页面超预算时以相同 cursor 将 limit 逐次减半。
+
+`conversation.subscribe` 保留为恢复用的 cursor/snapshot 接口；Android 正常路径由 Relay unsolicited event 主动推送 metadata-only event，Go Core 通过 EventSink/EventChannel 转交 Flutter。endpoint 只转发 `type=event`，无 sink 时按到达顺序保留最近 1000 条，迟到/未知 response 不进入事件流；连接生命周期另发 `type=transport` 的 `online/disconnected/revoked/closed`。Flutter 在 disconnected、stream error/done 时立即 catch-up 并每 2 秒轮询；online 时停止轮询并再 catch-up 一次，revoked/closed 停止恢复。事件 burst 合并刷新，旧 snapshot 不覆盖新 sequence，刷新最新页时保留用户已加载的旧页。当前尚未完成 iOS Go Core/事件宿主接入的平台直接使用恢复路径。事件和轮询都不携带 provider 正文；当客户端游标过旧或待追赶事件超过 Desktop 的有界窗口时，服务端返回 `snapshot=true`。
 
 - `DaemonSummary`：由本地 pairing + live probe 组合的 id、display name、connection state、checked time；
 - `AgentSummary`：agent id、provider (`codex` 等)、display name、state、supported、navigation kind、capabilities、active turn/pending action count、last error；
-- `ProjectSummary`：稳定 project id、name、display path、conversation/running counts、updated time；
+- `ProjectSummary`：稳定 project id、name、conversation/running counts、updated time；
 - `BotSummary`：为 Hermes 预留的稳定 bot id/name/state/capabilities，Codex 不返回；
-- `ConversationSummary`：thread id、title、project id/label、status、`isRunning`、updated time、revision、last item preview；
+- `ConversationSummary`：thread id、title、project id/label、status、`isRunning`、updated time、revision；
 - `PendingAction`：id、kind (`approval`/`question`)、title、explanation、choices/input schema、created time；
 - `Catalog`：稳定 ID/label/capability/availability，不把 provider enum 当 UI 文案；
-- `Page<T>`：items、next cursor、has more；project 默认请求 10、项目对话 15、最近对话 30，数量是 client request 而非 server hard limit；
-- 稳定 error code 包含 `payload_too_large`、`response_too_large`、`content_ref_expired`、`peer_offline`、`ambiguous_write`、`queue_full`、`request_timeout`，并保留 busy、revision conflict、already resolved 与 forbidden。
+- `Page<T>`：items、next cursor、has more；project 默认请求 10、项目对话 15、最近对话 20，数量是 client request 而非 server hard limit；
+- 稳定 error code 包含 `payload_too_large`、`response_too_large`、`content_ref_expired`、`content_not_found`、`peer_offline`、`ambiguous_write`、`queue_full`、`request_timeout`，并保留 busy、revision conflict、already resolved 与 forbidden。
 
 Mobile 产品页面只消费稳定 timeline DTO；尚未规范化的 action/catalog 仍按预发布边界处理。
 
@@ -194,7 +197,7 @@ Mobile 获取新 APNs/FCM token 后递增本地 generation，并由 host 直接�
 
 - 对 `gomobile` AAR/XCFramework 中的真实 core 跑 auth、pair proof/grant、Noise prologue/handshake/transport 的相同 golden vectors与 Relay/Desktop E2E，不能只测 host Go package。
 - 模拟 duplicate/reorder/gap/expiry/tamper、late response、connection epoch race、route ACK 后掉线和 revoke。
-- 验证上次 Daemon/Agent 恢复、删除后的 fallback、未选中 Daemon status probe、Agent 切换 generation、project 10 条分页、project conversation 15 条分页、recent 30 条和 project/conversation 全集搜索。
+- 验证上次 Daemon/Agent 恢复、删除后的 fallback、未选中 Daemon status probe、Agent 切换 generation、project 10 条分页、project conversation 15 条分页、recent 20 条和 project/conversation 全集搜索。
 - 弱网 E2E 验证所有写操作不自动重复；action 多端 race 正确归类 `already_resolved`。
 - 48 MiB 边界、1 MiB route 分块、取消上传、图片 MIME 和跨 instance attachment 拒绝测试。
 - push cold/background/terminated/token rotation/permission denied 场景，确认点击必先同步且 payload/log 无业务正文。

@@ -171,7 +171,7 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
       _gateway.call('project.list', {'agentId': selected, 'limit': 10}),
       _gateway.call('conversation.list', {
         'agentId': selected,
-        'limit': 30,
+        'limit': 20,
         'sortKey': 'updated_at',
         'sortDirection': 'desc',
       }),

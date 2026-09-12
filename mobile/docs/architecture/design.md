@@ -13,7 +13,7 @@
 - 使用 Flutter/Dart 构建 iOS 与 Android UI，采用 feature-first 目录和 MVVM：View 只渲染 immutable UI state，ViewModel 编排 use case，Repository 按 Daemon、Agent、Project/Bot、Conversation 聚合本地状态与远端 service。
 - App shell 使用单工作台与系统返回栈，不建立底部导航状态；Daemon/Agent 是工作台上下文 selection，项目和会话是可恢复的下钻 route。
 - 路由、依赖注入和状态容器使用锁定版本的 Dart package；具体 package 在 scaffold PoC 后写入 `pubspec.lock`，不得让其类型泄漏到 protocol/repository public interface。
-- Flutter 与 host 的边界集中在 `app/pigeons/mobile_core.dart` 生成的 Pigeon typed channel。业务 widget 不直接依赖 `MethodChannel` 字符串，也不接触 key bytes 或 protobuf frame；当前 summary 已在 Desktop 规范化，conversation snapshot/action/catalog仍含受控的 provider-shaped payload。
+- Flutter 到 host 的命令边界集中在 `app/pigeons/mobile_core.dart` 生成的 Pigeon typed channel，host 到 Flutter 的主动状态/事件通过专用 EventChannel 传递。业务 widget 不直接依赖 channel 字符串，也不接触 key bytes 或 protobuf frame；当前 timeline summary 已在 Desktop 结构化，完整句子由 Flutter 本地化，action/catalog 仍含受控的 provider-shaped payload。
 - endpoint core 使用 Go，与 Desktop/Relay 保持同一仓库工具链；一个窄 `mobilecore` facade 通过锁定 commit 的 `gomobile bind` 生成 Android AAR 和 iOS XCFramework。Go 官方工具明确支持这两类 library artifact：[gomobile bind](https://pkg.go.dev/golang.org/x/mobile/cmd/gomobile)。
 - Relay endpoint 的 canonical/protobuf/Noise 代码从 `relay/internal` 重构到可复用但不暴露服务端存储的 `relay/pkg/endpoint`；Mobile core 依赖该 package，Relay schema 仍是唯一所有者。生成脚本比较 schema hash，禁止手工编辑生成物。
 - Android Kotlin host 已使用 Android Keystore 中不可导出的 AES key，以 AES-GCM wrapping 保存 pairing credential；导出和恢复发生在 native host 与 Go Core 之间，private key 不经过 Dart heap。Android manifest 禁止备份 credential ciphertext；Activity 启动时显式清除 `FLAG_SECURE`，并保留在最近任务列表中，因此系统截图、录屏和后台任务缩略图保持可用。Swift Keychain/APNs、Android FCM、应用锁和 app-switcher 敏感内容遮罩尚未实现。
@@ -37,9 +37,9 @@ Flutter 适合共享 UI 与业务逻辑，同时保留 Swift/Kotlin 平台接入
 
 ## 内部 binding 接口
 
-Flutter 只通过 versioned `CoreApi` 发出高层 typed command：`initialize`、`pair/cancelPair`、`activateDaemon/suspendDaemon`、`listAgents`、`listProjects`、`listConversations`、`search`、`loadConversation`、`startTurn`、`resolveAction`、`interruptTurn` 和 `removePairing`。列表命令都携带 daemon/agent/selection generation 和 cursor；`startTurn` 传图片 sandbox path/metadata，不把 base64 大对象穿过 Pigeon。
+当前 Flutter 通过 Pigeon `MobileCoreApi` 发出 `pair`、`restoreStored`、credential 持久化/删除、通用 versioned control `call`、`status` 和 `close`；业务 method/DTO 位于 `mobile-control-v1` envelope 内。Android host 把 Go Core 的 `EventSink` 接到 `work_anywhere/mobile_events` EventChannel，主动发送 daemon event 和 transport state；iOS 事件宿主尚未实现。
 
-Host 把 command 转给 gomobile facade；Go core 通过单一 event sink 返回 `CoreStateEvent`，至少包含 `coreApiVersion`、command ID、pairing ID、connection epoch、event sequence、stable kind、规范化 payload 或 stable error。Dart Repository 只接受当前 epoch/generation 的 event，未知 optional field 忽略，未知 required kind 进入兼容错误页。网络任务永不在 platform main thread 同步等待。
+Host 把 command 转给 gomobile facade；Go core 的 event sink 只返回两类 JSON envelope：metadata-only `type=event` 与连接生命周期 `type=transport`。endpoint 不把迟到 response 当事件，未注册 sink 时仅在内存保留最近 1000 条 daemon event。Dart controller 合并 event burst，并用 snapshot sequence 丢弃迟到结果。网络任务永不在 platform main thread 同步等待。
 
 Go core 向 host 反向请求的窄接口只有：`SecretStore.load/save/delete`、应用私有文件读取和脱敏诊断 sink；host-only API 包含 `registerPushToken`，provider token 不经过 Flutter。Key bytes、完整配对 URI、provider token、ciphertext 和 control raw body 不可进入 `CoreStateEvent`。Core/Flutter API 与 Relay wire、Desktop control 是三个独立版本域，任何一层升级都要单独协商和测试。
 
@@ -61,7 +61,7 @@ V1 不把 Prompt、消息、工具输出、diff、action 内容、附件或完�
 View ── intent ──► ViewModel ── use case ──► Repository
  ▲                    │                         │
  └── immutable state ─┘                         ├─ typed CoreBridge
-                                               │      │ Pigeon
+                                               │      │ Pigeon commands / EventChannel events
                                                │      ▼
                                                │  Swift/Kotlin host ── secure store
                                                │      │
@@ -77,9 +77,9 @@ Repository 中的权威划分：
 - Desktop snapshot 是会话与 action 的远端权威。
 - Go `PairingRuntime` 是连接/握手、request map 和 wire sequence 的内存权威；Dart Repository 是规范化 view projection/cursor 的内存 owner。
 - Workspace ViewModel 恢复并持有当前 Daemon/Agent、项目展开页数、搜索 query 和滚动位置；切换 context 时只接受当前 selection generation 的结果。
-- `ConversationController` 拥有 metadata、正序 timeline、older cursor、revision/sequence、分页与 snapshot/action/旧页局部错误；按 item ID 去重。它不自行推导远端成功，gap、重连或内容引用过期都回到权威 snapshot。
+- `ConversationController` 拥有 metadata、正序 timeline、older cursor、revision/sequence、分页与 snapshot/action/旧页局部错误；按 item ID 去重。事件触发最新页合并，既不覆盖已加载旧页，也不允许较低 sequence 覆盖新状态；内容引用过期时通过稳定 locator 重新签发，不刷新整页。
 
-会话正文只存在 Dart/Go 进程内存。Desktop 对大 block 返回临时定位引用，Mobile 按 128 KiB 分块拼接查看；引用和正文都不持久化。`CoreGateway` 的 100 条内存诊断环只记录 method、耗时、结果、稳定 error code 和 request ID，Debug 构建将相同脱敏元数据写入 Logcat。
+会话正文只存在 Dart/Go 进程内存。Desktop 对大 block 返回临时定位引用，Mobile 按 128 KiB 分块拼接查看；引用过期时使用 turn/item/block locator 重新签发，引用和正文都不持久化。`CoreGateway` 的 100 条内存诊断环只记录 method、耗时、结果、稳定 error code 和 request ID，Debug 构建将相同脱敏元数据写入 Logcat。
 
 ## 应用生命周期与通知
 

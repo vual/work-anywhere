@@ -66,7 +66,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get conversationSearchResults => 'Conversation results';
 
   @override
-  String get recentConversations => 'Recent 30';
+  String get recentConversations => 'Recent 20';
 
   @override
   String get noConversations => 'No conversations yet';
@@ -182,10 +182,84 @@ class AppLocalizationsEn extends AppLocalizations {
   String get retryOlder => 'Older content failed to load. Tap to retry';
 
   @override
+  String get plan => 'Plan';
+
+  @override
+  String get viewFullPlan => 'View full plan';
+
+  @override
+  String get planLoadFailed => 'Unable to load the full plan. Try again.';
+
+  @override
   String get viewFullContent => 'View full content';
 
   @override
   String get fullContent => 'Full content';
+
+  @override
+  String summaryFunctionCall(String value) {
+    return 'Called function: $value';
+  }
+
+  @override
+  String summaryMcpToolCall(String value) {
+    return 'Called MCP: $value';
+  }
+
+  @override
+  String summaryDynamicToolCall(String value) {
+    return 'Called tool: $value';
+  }
+
+  @override
+  String summaryCollabAgentToolCall(String value) {
+    return 'Collaboration call: $value';
+  }
+
+  @override
+  String summarySubAgentActivity(String value) {
+    return 'Sub-agent: $value';
+  }
+
+  @override
+  String summaryWebSearch(String value) {
+    return 'Searched: $value';
+  }
+
+  @override
+  String summaryImageView(String value) {
+    return 'Viewed image: $value';
+  }
+
+  @override
+  String summarySleep(String value) {
+    return 'Waited: $value';
+  }
+
+  @override
+  String get summaryImageGeneration => 'Generated an image';
+
+  @override
+  String summaryEnteredReviewMode(String value) {
+    return 'Entered review mode: $value';
+  }
+
+  @override
+  String summaryExitedReviewMode(String value) {
+    return 'Exited review mode: $value';
+  }
+
+  @override
+  String get summaryContextCompaction => 'Context compacted';
+
+  @override
+  String get summaryStatusCompleted => 'Completed';
+
+  @override
+  String get summaryStatusRunning => 'Running';
+
+  @override
+  String get summaryStatusFailed => 'Failed';
 
   @override
   String get externalLinkTitle => 'Open external link?';
