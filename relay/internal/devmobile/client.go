@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"sort"
 	"sync"
@@ -37,25 +38,28 @@ type QRPayload struct {
 }
 
 type Client struct {
-	mu            sync.Mutex
-	eventMu       sync.Mutex
-	conn          *websocket.Conn
-	writeMu       sync.Mutex
-	reconnectMu   sync.Mutex
-	secure        *e2ee.Session
-	pairingID     uuid.UUID
-	deviceID      uuid.UUID
-	daemonID      uuid.UUID
-	sessionID     []byte
-	scopes        []string
-	pending       map[string]chan json.RawMessage
-	pendingRoutes map[string]chan routeResult
-	events        []json.RawMessage
-	eventSink     func(string)
-	lastError     string
-	connected     bool
-	cancel        context.CancelFunc
-	credential    CredentialSet
+	mu             sync.Mutex
+	eventMu        sync.Mutex
+	conn           *websocket.Conn
+	writeMu        sync.Mutex
+	reconnectMu    sync.Mutex
+	secure         *e2ee.Session
+	pairingID      uuid.UUID
+	deviceID       uuid.UUID
+	daemonID       uuid.UUID
+	sessionID      []byte
+	scopes         []string
+	pending        map[string]chan json.RawMessage
+	pendingRoutes  map[string]chan routeResult
+	events         []json.RawMessage
+	eventSink      func(string)
+	lastError      string
+	connected      bool
+	cancel         context.CancelFunc
+	credential     CredentialSet
+	connectUntil   time.Time
+	connectCode    string
+	connectBackoff time.Duration
 }
 
 type routeResult struct {
@@ -67,6 +71,8 @@ type CallError struct {
 	Code    string
 	Message string
 }
+
+const sessionHandshakeTimeout = 30 * time.Second
 
 func (e *CallError) Error() string { return e.Message }
 
@@ -242,14 +248,10 @@ func (c *Client) Pair(ctx context.Context, uri string) error {
 	if result.GrantExpiresAtMs < time.Now().UnixMilli() || !ed25519.Verify(ed25519.PublicKey(daemonEd), grantInput, result.GrantSignature) {
 		return errors.New("pairing grant signature is invalid")
 	}
-	if err = c.connect(ctx, qr.RelayURL, pairingID, daemonID, mobileID, edPrivate, xKey, daemonX, daemonCapability, mobileCapability[:], result.Scopes); err != nil {
-		return err
-	}
-	c.mu.Lock()
-	wipeCredential(&c.credential)
-	c.credential = CredentialSet{RelayURL: qr.RelayURL, PairingID: pairingID.String(), DaemonDeviceID: daemonID.String(), MobileDeviceID: mobileID.String(), Ed25519Private: append([]byte(nil), edPrivate...), X25519Private: append([]byte(nil), xKey.Private...), X25519Public: append([]byte(nil), xKey.Public...), DaemonX25519: append([]byte(nil), daemonX...), DaemonCapability: append([]byte(nil), daemonCapability...), MobileCapability: append([]byte(nil), mobileCapability[:]...), Scopes: append([]string(nil), result.Scopes...)}
-	c.mu.Unlock()
-	return nil
+	credential := CredentialSet{RelayURL: qr.RelayURL, PairingID: pairingID.String(), DaemonDeviceID: daemonID.String(), MobileDeviceID: mobileID.String(), Ed25519Private: append([]byte(nil), edPrivate...), X25519Private: append([]byte(nil), xKey.Private...), X25519Public: append([]byte(nil), xKey.Public...), DaemonX25519: append([]byte(nil), daemonX...), DaemonCapability: append([]byte(nil), daemonCapability...), MobileCapability: append([]byte(nil), mobileCapability[:]...), Scopes: append([]string(nil), result.Scopes...)}
+	c.storeCredential(credential, pairingID, daemonID, mobileID)
+	defer wipeCredential(&credential)
+	return c.reconnect(ctx)
 }
 
 func (c *Client) ExportCredentials() ([]byte, error) {
@@ -272,23 +274,26 @@ func (c *Client) Restore(ctx context.Context, raw []byte) error {
 	if pairErr != nil || daemonErr != nil || mobileErr != nil || len(credential.Ed25519Private) != ed25519.PrivateKeySize || len(credential.X25519Private) != 32 || len(credential.X25519Public) != 32 || len(credential.DaemonX25519) != 32 || len(credential.DaemonCapability) == 0 || len(credential.MobileCapability) == 0 || credential.RelayURL == "" {
 		return errors.New("stored pairing credentials are incomplete")
 	}
-	xKey := noise.DHKey{Private: append([]byte(nil), credential.X25519Private...), Public: append([]byte(nil), credential.X25519Public...)}
-	if err := c.connect(ctx, credential.RelayURL, pairingID, daemonID, mobileID, ed25519.PrivateKey(append([]byte(nil), credential.Ed25519Private...)), xKey, credential.DaemonX25519, credential.DaemonCapability, credential.MobileCapability, credential.Scopes); err != nil {
-		return err
-	}
-	c.mu.Lock()
-	wipeCredential(&c.credential)
-	c.credential = credential
-	c.mu.Unlock()
-	return nil
+	c.storeCredential(credential, pairingID, daemonID, mobileID)
+	defer wipeCredential(&credential)
+	return c.reconnect(ctx)
 }
 
 func (c *Client) connect(parent context.Context, relayURL string, pairingID, daemonID, mobileID uuid.UUID, edPrivate ed25519.PrivateKey, xKey noise.DHKey, daemonX, daemonCapability, mobileCapability []byte, scopes []string) error {
-	ctx, cancel := context.WithCancel(parent)
-	endpoint, _ := websocketEndpoint(relayURL, "/v1/connect")
-	connection, _, err := websocket.Dial(ctx, endpoint, &websocket.DialOptions{CompressionMode: websocket.CompressionDisabled})
+	establishCtx, establishCancel := context.WithTimeout(parent, sessionHandshakeTimeout)
+	defer establishCancel()
+	endpoint, err := websocketEndpoint(relayURL, "/v1/connect")
 	if err != nil {
-		cancel()
+		return err
+	}
+	connection, response, err := websocket.Dial(establishCtx, endpoint, &websocket.DialOptions{CompressionMode: websocket.CompressionDisabled})
+	if err != nil {
+		if response != nil && response.Body != nil {
+			response.Body.Close()
+		}
+		if response != nil && response.StatusCode == http.StatusTooManyRequests {
+			return &CallError{Code: "rate_limited", Message: "Relay rate limited the mobile connection"}
+		}
 		return err
 	}
 	// coder/websocket defaults to a 32 KiB message read limit, while control
@@ -298,27 +303,20 @@ func (c *Client) connect(parent context.Context, relayURL string, pairingID, dae
 	defer func() {
 		if !keepConnection {
 			connection.CloseNow()
-			cancel()
 		}
 	}()
-	challengeFrame, err := readFrame(ctx, connection)
+	challengeFrame, err := readFrame(establishCtx, connection)
 	if err != nil || challengeFrame.GetServerChallenge() == nil {
-		connection.CloseNow()
-		cancel()
 		return errors.New("connect endpoint did not provide a challenge")
 	}
 	challenge := challengeFrame.GetServerChallenge()
 	signature := ed25519.Sign(edPrivate, waProtocol.AuthSignatureInput(challenge.ConnectionId, challenge.Challenge, challenge.ExpiresAtMs, mobileCapability))
 	auth := &relayv1.ClientFrame{WireMajor: waProtocol.WireMajor, WireMinor: waProtocol.WireMinor, MessageId: newID(), Body: &relayv1.ClientFrame_ClientAuth{ClientAuth: &relayv1.ClientAuth{DeviceId: mobileID[:], Role: relayv1.DeviceRole_DEVICE_ROLE_MOBILE, CapabilityHash: mobileCapability, Signature: signature}}}
-	if err = writeFrame(ctx, connection, auth); err != nil {
-		connection.CloseNow()
-		cancel()
+	if err = writeFrame(establishCtx, connection, auth); err != nil {
 		return err
 	}
-	authResult, err := readFrame(ctx, connection)
+	authResult, err := readFrame(establishCtx, connection)
 	if err != nil || authResult.GetAuthOk() == nil {
-		connection.CloseNow()
-		cancel()
 		return errors.New("mobile authentication failed")
 	}
 	sessionID := newID()
@@ -331,32 +329,32 @@ func (c *Client) connect(parent context.Context, relayURL string, pairingID, dae
 	if err != nil {
 		return err
 	}
-	open := &relayv1.ClientFrame{WireMajor: waProtocol.WireMajor, WireMinor: waProtocol.WireMinor, MessageId: newID(), Body: &relayv1.ClientFrame_SessionOpen{SessionOpen: &relayv1.SessionOpen{PairingId: pairingID[:], SessionId: sessionID, RecipientDeviceId: daemonID[:], Handshake: firstMessage}}}
-	if err = writeFrame(ctx, connection, open); err != nil {
+	openMessageID := newID()
+	open := &relayv1.ClientFrame{WireMajor: waProtocol.WireMajor, WireMinor: waProtocol.WireMinor, MessageId: openMessageID, Body: &relayv1.ClientFrame_SessionOpen{SessionOpen: &relayv1.SessionOpen{PairingId: pairingID[:], SessionId: sessionID, RecipientDeviceId: daemonID[:], Handshake: firstMessage}}}
+	if err = writeFrame(establishCtx, connection, open); err != nil {
 		return err
 	}
-	var handshakeFrame *relayv1.ServerFrame
-	for handshakeFrame == nil || handshakeFrame.GetSessionHandshake() == nil {
-		handshakeFrame, err = readFrame(ctx, connection)
-		if err != nil {
-			return err
-		}
+	handshakeMessage, err := waitForSessionHandshake(establishCtx, connection, openMessageID, pairingID, sessionID, daemonID, mobileID)
+	if err != nil {
+		return err
 	}
-	_, first, second, err := handshake.ReadMessage(nil, handshakeFrame.GetSessionHandshake().Handshake)
+	_, first, second, err := handshake.ReadMessage(nil, handshakeMessage.Handshake)
 	if err != nil {
 		return err
 	}
 	secure, _ := e2ee.NewSession(true, first, second, binding)
+	connectionCtx, connectionCancel := context.WithCancel(context.Background())
 	c.mu.Lock()
 	if c.cancel != nil {
 		c.cancel()
 	}
-	c.conn, c.secure, c.cancel = connection, secure, cancel
+	c.conn, c.secure, c.cancel = connection, secure, connectionCancel
 	c.pairingID, c.deviceID, c.daemonID, c.sessionID = pairingID, mobileID, daemonID, sessionID
 	c.scopes, c.connected, c.lastError = append([]string(nil), scopes...), true, ""
+	c.connectUntil, c.connectCode, c.connectBackoff = time.Time{}, "", 0
 	c.mu.Unlock()
 	c.emitTransport("online", "")
-	go c.readLoop(ctx, connection)
+	go c.readLoop(connectionCtx, connection)
 	keepConnection = true
 	return nil
 }
@@ -372,6 +370,9 @@ func (c *Client) Call(ctx context.Context, method string, params json.RawMessage
 	c.mu.Unlock()
 	if !connected {
 		if err := c.reconnect(ctx); err != nil {
+			if callError, ok := err.(*CallError); ok {
+				return nil, callError
+			}
 			return nil, &CallError{Code: "peer_offline", Message: "mobile endpoint is not connected: " + err.Error()}
 		}
 	}
@@ -457,6 +458,18 @@ func (c *Client) reconnect(ctx context.Context) error {
 		c.mu.Unlock()
 		return nil
 	}
+	if time.Now().Before(c.connectUntil) {
+		code := c.connectCode
+		if code == "" {
+			code = "peer_offline"
+		}
+		message := c.lastError
+		if message == "" {
+			message = "mobile endpoint reconnect is backing off"
+		}
+		c.mu.Unlock()
+		return &CallError{Code: code, Message: message}
+	}
 	credential := cloneCredential(c.credential)
 	c.mu.Unlock()
 	defer wipeCredential(&credential)
@@ -476,7 +489,99 @@ func (c *Client) reconnect(ctx context.Context) error {
 		return err
 	}
 	xKey := noise.DHKey{Private: credential.X25519Private, Public: credential.X25519Public}
-	return c.connect(ctx, credential.RelayURL, pairingID, daemonID, mobileID, ed25519.PrivateKey(credential.Ed25519Private), xKey, credential.DaemonX25519, credential.DaemonCapability, credential.MobileCapability, credential.Scopes)
+	err = c.connect(ctx, credential.RelayURL, pairingID, daemonID, mobileID, ed25519.PrivateKey(credential.Ed25519Private), xKey, credential.DaemonX25519, credential.DaemonCapability, credential.MobileCapability, credential.Scopes)
+	if err == nil {
+		return nil
+	}
+	c.recordConnectFailure(err)
+	if callError, ok := err.(*CallError); ok {
+		return callError
+	}
+	return err
+}
+
+func (c *Client) storeCredential(credential CredentialSet, pairingID, daemonID, mobileID uuid.UUID) {
+	stored := cloneCredential(credential)
+	c.mu.Lock()
+	samePairing := c.credential.PairingID == credential.PairingID
+	wipeCredential(&c.credential)
+	c.credential = stored
+	if !samePairing {
+		c.connectUntil, c.connectCode, c.connectBackoff = time.Time{}, "", 0
+	}
+	if !c.connected {
+		c.pairingID, c.daemonID, c.deviceID = pairingID, daemonID, mobileID
+		c.scopes = append([]string(nil), credential.Scopes...)
+	}
+	c.mu.Unlock()
+}
+
+func (c *Client) recordConnectFailure(err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.connectBackoff == 0 {
+		c.connectBackoff = 500 * time.Millisecond
+	} else {
+		c.connectBackoff *= 2
+		if c.connectBackoff > 30*time.Second {
+			c.connectBackoff = 30 * time.Second
+		}
+	}
+	c.connectUntil = time.Now().Add(c.connectBackoff)
+	c.connectCode = "peer_offline"
+	if callError, ok := err.(*CallError); ok {
+		c.connectCode = callError.Code
+	}
+	c.lastError = err.Error()
+}
+
+func waitForSessionHandshake(ctx context.Context, connection *websocket.Conn, openMessageID []byte, pairingID uuid.UUID, sessionID []byte, daemonID, mobileID uuid.UUID) (*relayv1.SessionHandshake, error) {
+	waitCtx, cancel := context.WithTimeout(ctx, sessionHandshakeTimeout)
+	defer cancel()
+	for {
+		frame, err := readFrame(waitCtx, connection)
+		if err != nil {
+			if waitCtx.Err() != nil {
+				return nil, &CallError{Code: "request_timeout", Message: "timed out waiting for the secure session handshake"}
+			}
+			return nil, err
+		}
+		candidate, err := sessionHandshakeFromFrame(frame, openMessageID, pairingID, sessionID, daemonID, mobileID)
+		if err != nil {
+			return nil, err
+		}
+		if candidate != nil {
+			return candidate, nil
+		}
+	}
+}
+
+func sessionHandshakeFromFrame(frame *relayv1.ServerFrame, openMessageID []byte, pairingID uuid.UUID, sessionID []byte, daemonID, mobileID uuid.UUID) (*relayv1.SessionHandshake, error) {
+	if ack := frame.GetRouteAck(); ack != nil && bytes.Equal(ack.RoutedMessageId, openMessageID) {
+		if !ack.Accepted {
+			code := ack.ErrorCode
+			if code == "" {
+				code = "peer_offline"
+			}
+			return nil, &CallError{Code: code, Message: "Relay rejected the secure session request: " + code}
+		}
+		return nil, nil
+	}
+	if protocolError := frame.GetProtocolError(); protocolError != nil && bytes.Equal(protocolError.RelatedMessageId, openMessageID) {
+		code := protocolError.Code
+		if code == "" {
+			code = "temporarily_unavailable"
+		}
+		return nil, &CallError{Code: code, Message: protocolError.Message}
+	}
+	if revoked := frame.GetPairRevoked(); revoked != nil && bytes.Equal(revoked.PairingId, pairingID[:]) {
+		return nil, &CallError{Code: "pairing_revoked", Message: "pairing was revoked while opening the secure session"}
+	}
+	candidate := frame.GetSessionHandshake()
+	if candidate == nil || !bytes.Equal(candidate.PairingId, pairingID[:]) || !bytes.Equal(candidate.SessionId, sessionID) || !bytes.Equal(candidate.SenderDeviceId, daemonID[:]) || !bytes.Equal(candidate.RecipientDeviceId, mobileID[:]) {
+		return nil, nil
+	}
+	return candidate, nil
 }
 
 func (c *Client) Close() {
@@ -595,9 +700,17 @@ func (c *Client) readLoop(ctx context.Context, connection *websocket.Conn) {
 		c.mu.Lock()
 		secure := c.secure
 		activeConnection := c.conn == connection
+		activeSessionID := append([]byte(nil), c.sessionID...)
 		c.mu.Unlock()
 		if !activeConnection || secure == nil {
 			return
+		}
+		// A daemon may have emitted a late frame from the previous Noise
+		// session while Relay was replacing this device's connection. It is
+		// not decryptable with the current session and must not tear down the
+		// replacement connection.
+		if !bytes.Equal(data.SessionId, activeSessionID) {
+			continue
 		}
 		payload, decryptErr := secure.Decrypt(data.Ciphertext)
 		if decryptErr != nil || payload.Sequence != data.SenderSequence {

@@ -183,6 +183,25 @@ func TestRejectedPairingRouteAckAllowsRetry(t *testing.T) {
 	}
 }
 
+func TestInstallSessionReplacesPreviousSessionForPairing(t *testing.T) {
+	oldSessionID := uuid.NewString()
+	newSessionID := uuid.NewString()
+	pairingID := uuid.NewString()
+	service := &Service{sessions: map[string]*sessionState{
+		oldSessionID: {pairing: Pairing{ID: pairingID}},
+	}}
+	newSession := &sessionState{pairing: Pairing{ID: pairingID}}
+
+	service.installSession(newSessionID, newSession)
+
+	if _, exists := service.sessions[oldSessionID]; exists {
+		t.Fatal("previous session was not removed")
+	}
+	if service.sessions[newSessionID] != newSession {
+		t.Fatal("new session was not installed")
+	}
+}
+
 func containsBytes(haystack, needle []byte) bool {
 	if len(needle) == 0 || len(haystack) < len(needle) {
 		return false

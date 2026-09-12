@@ -600,10 +600,28 @@ func (s *Service) handleSessionOpen(open *relayv1.SessionOpen) error {
 	if err != nil {
 		return err
 	}
+	if err = s.send(&relayv1.ClientFrame{WireMajor: wireMajor, WireMinor: wireMinor, MessageId: newMessageID(), Body: &relayv1.ClientFrame_SessionHandshake{SessionHandshake: &relayv1.SessionHandshake{PairingId: open.PairingId, SessionId: open.SessionId, RecipientDeviceId: mobileID[:], Handshake: message}}}); err != nil {
+		return err
+	}
+	// Install only after the handshake frame has been queued. This prevents a
+	// concurrent event from reaching the new socket before Mobile can finish
+	// establishing the new Noise session.
+	s.installSession(string(open.SessionId), &sessionState{pairing: pairing, secure: newResponderSession(first, second, binding)})
+	return nil
+}
+
+// installSession replaces a previous session for the same pairing. Relay
+// registers one live connection per device, so keeping an old session would
+// allow its asynchronous events to be routed to the replacement connection.
+func (s *Service) installSession(sessionID string, session *sessionState) {
 	s.mu.Lock()
-	s.sessions[string(open.SessionId)] = &sessionState{pairing: pairing, secure: newResponderSession(first, second, binding)}
-	s.mu.Unlock()
-	return s.send(&relayv1.ClientFrame{WireMajor: wireMajor, WireMinor: wireMinor, MessageId: newMessageID(), Body: &relayv1.ClientFrame_SessionHandshake{SessionHandshake: &relayv1.SessionHandshake{PairingId: open.PairingId, SessionId: open.SessionId, RecipientDeviceId: mobileID[:], Handshake: message}}})
+	defer s.mu.Unlock()
+	for existingID, existing := range s.sessions {
+		if existingID != sessionID && existing.pairing.ID == session.pairing.ID {
+			delete(s.sessions, existingID)
+		}
+	}
+	s.sessions[sessionID] = session
 }
 
 func (s *Service) handleSessionData(data *relayv1.SessionData) error {

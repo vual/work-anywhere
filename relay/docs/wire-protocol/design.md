@@ -50,9 +50,9 @@ Remote allowlist：
 - socket ping：25 秒，write/ping timeout 10 秒。
 - auth challenge：30 秒；pairing TTL：10 秒到 5 分钟；notify expiry：最多 1 小时。
 
-route 是 at-most-once。`route_ack.accepted` 只表示 frame 进入目标内存队列；`delivery_ack` 可表示 endpoint 接收；业务完成只能由 E2EE response/event 表达。Mobile endpoint 以外层 `message_id` 关联 route ACK，拒绝时立即结束对应请求；若 route 已 accepted 但响应前连接断开，endpoint 返回 `ambiguous_write`，由 Mobile 通过 snapshot 对账，禁止自动重发。断线、迟到 ACK 和未知 ID 不得迁移到新 connection。Desktop 对被拒绝的 response/event 只记录 kind 和错误码，不自动重发业务结果。offline、queue full、expired 和 pairing failure 不持久化。Relay 对 attachment begin/chunk/commit/abort 仍只转发 Noise 加密的 control JSON，不解密、不保存附件正文。
+route 是 at-most-once。`route_ack.accepted` 只表示 frame 进入目标内存队列；`delivery_ack` 可表示 endpoint 接收；业务完成只能由 E2EE response/event 表达。Mobile endpoint 以外层 `message_id` 关联业务请求和 `SessionOpen` 的 route ACK，拒绝时立即结束对应等待；建链只消费 pairing/session/sender/recipient 与当前尝试一致的 `SessionHandshake`，并设置有限等待时间。若业务 route 已 accepted 但响应前连接断开，endpoint 返回 `ambiguous_write`，由 Mobile 通过 snapshot 对账，禁止自动重发。断线、迟到 ACK、旧 session frame 和未知 ID 不得迁移到新 connection。Desktop 对被拒绝的 response/event 只记录 kind 和错误码，不自动重发业务结果。offline、queue full、expired 和 pairing failure 不持久化。Relay 对 attachment begin/chunk/commit/abort 仍只转发 Noise 加密的 control JSON，不解密、不保存附件正文。
 
-server 对 auth/pairing/push 提供细分 error code；route 明确区分 `payload_too_large`、`peer_offline`、`queue_full`，其余不可用错误为 `temporarily_unavailable`。routed ciphertext 仍保持 1 MiB，不能通过提高上限承载完整会话历史。
+server 对 auth/pairing/push 提供细分 error code；连接入口按直接 peer 地址限流，超限返回 HTTP 429，endpoint client 将其映射为 `rate_limited` 并执行本地重连冷却。route 明确区分 `payload_too_large`、`peer_offline`、`queue_full`，其余不可用错误为 `temporarily_unavailable`。routed ciphertext 仍保持 1 MiB，不能通过提高上限承载完整会话历史。
 
 ## 兼容与安全不变量
 

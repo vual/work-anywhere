@@ -55,13 +55,13 @@ Desktop 解密并验证 desktop-control-json-v1 后，仅允许：
 
 remote Service 订阅 daemon event bus。action 相关事件要求 action.read，其他会话事件要求 conversation.read；每个 active Noise session 单独加密发送。action request 和 Turn complete/fail/interrupt 生成 metadata-only notify hint。
 
-socket 断开会销毁内存 Noise sessions，不中断 Desktop Turn。重连后 Mobile 必须重新握手，并使用 conversation read/sequence/revision 获取 snapshot 或增量；Relay 不保存丢失 event。daemon/PC 离线时 Mobile 写命令立即失败。
+socket 断开会销毁内存 Noise sessions，不中断 Desktop Turn。重连后 Mobile 必须重新握手，并使用 conversation read/sequence/revision 获取 snapshot 或增量；同一 pairing 的新 session 会替换 daemon 内存中的旧 session，Mobile 也会丢弃跨 session 的迟到 frame，避免旧密文被投递到新 WebSocket 后触发解密断线。Relay 不保存丢失 event。daemon/PC 离线时 Mobile 写命令立即失败。
 
 ## Security and failure handling
 
 - production URL 必须 HTTPS/WSS，不提供跳过证书校验。
 - pairing secret、enrollment token、private key、ciphertext 和 control body不写结构化日志。
-- malformed JSON、Noise tamper、binding/sequence/expiry 或 endpoint mismatch 会拒绝 frame；无效 control request 关闭 session。Relay route ACK 明确拒绝配对决定时，daemon 清除本地 submitted 状态并允许重新提交；response/event 的拒绝 ACK 只记录 kind 和 error code，业务消息不自动重发。发送前若发现本地 device identity 与当前 WebSocket 身份不一致，则拒绝发送并要求重连。
+- malformed JSON、Noise tamper、binding/sequence/expiry 或 endpoint mismatch 会拒绝 frame；无效 control request 关闭 session。旧 session 的迟到 frame 不会迁移到新 session。Relay route ACK 明确拒绝配对决定时，daemon 清除本地 submitted 状态并允许重新提交；response/event 的拒绝 ACK 只记录 kind 和 error code，业务消息不自动重发。发送前若发现本地 device identity 与当前 WebSocket 身份不一致，则拒绝发送并要求重连。
 - socket writes 串行化并有 10 秒 timeout；失败只影响 remote connector。
 - 当前没有独立 attachment content type、远程 traffic capture 或 Mobile 离线 queue。
 
@@ -80,7 +80,7 @@ Relay schema 主归属为 [Relay wire protocol](../../../relay/docs/wire-protoco
 
 ## 验证方式
 
-单元测试覆盖 URL、identity persistence、scope allowlist、QR/canonical inputs、normalized Mobile summary 和 crypto；Relay server tests 覆盖 auth/pair/route。人工 E2E 使用 browser simulator 完成 enroll、明确批准、Noise system.status、forbidden system.shutdown 和 revoke。仍需 Android 真机 Mobile、多设备 action race、图片 Turn 和长时间断网/恢复测试。
+单元测试覆盖 URL、identity persistence、scope allowlist、QR/canonical inputs、normalized Mobile summary、旧 session 替换和 crypto；Relay server tests 覆盖 auth/pair/route。人工 E2E 使用 browser simulator 完成 enroll、明确批准、Noise system.status、forbidden system.shutdown 和 revoke。仍需 Android 真机 Mobile、多设备 action race、图片 Turn 和长时间断网/恢复测试。
 
 ## 文档更新触发
 

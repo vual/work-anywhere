@@ -89,7 +89,7 @@ online
   └─ pair_revoked → revoked
 ```
 
-当前 Go endpoint 在已有 pairing credential 且请求发现 socket 已断开时，会在该请求边界同步重建 authenticated WSS/Noise session；旧连接的迟到 callback 不得修改新 session。Flutter 前台带 jitter 的 1、2、4、8、16、30 秒退避、后台生命周期断开和单一 `PairingRuntime` reducer 仍是正式 Mobile 发布前的实现要求。鉴权失败、grant/key 不匹配和 revoke 不进入无限重试。
+当前 Go endpoint 在已有 pairing credential 且请求发现 socket 已断开时，会在该请求边界同步重建 authenticated WSS/Noise session；同一 runtime 的并发请求由单一重连门闩串行化，失败后共享 500 ms 起、最大 30 s 的指数冷却。Relay `/v1/connect` 的 429 映射为 `rate_limited`，不会被伪装成新的拨号错误；冷却只抑制重复连接，不重放已路由的写请求。endpoint 为 `SessionOpen` 关联 route ACK，明确拒绝时立即返回对应错误，整个建链最多等待 30 秒；只接受 pairing、session、sender 和 recipient 全部匹配当前建链尝试的 `SessionHandshake`，迟到的旧握手直接丢弃。建链成功后，socket 生命周期转交给 runtime 自有 context，不继承触发重连的单次业务请求 deadline。Mobile 收到不属于当前 session 的迟到 data frame 时同样直接丢弃，Desktop daemon 在新握手完成时清理同一 pairing 的旧 session，避免旧密文触发新连接的解密失败。已验证 credential 在建链前进入 runtime，启动恢复失败后仍可由后续请求重连；配对批准后的 credential 即使首次建链失败也必须持久化。旧连接的迟到 callback 不得修改新 session。Flutter 前台仍在 disconnected 状态每 2 秒进行 best-effort 同步，鉴权失败、grant/key 不匹配和 revoke 不进入无限重试。
 
 ## 初始同步与增量
 
@@ -198,7 +198,7 @@ Mobile 获取新 APNs/FCM token 后递增本地 generation，并由 host 直接�
 - 对 `gomobile` AAR/XCFramework 中的真实 core 跑 auth、pair proof/grant、Noise prologue/handshake/transport 的相同 golden vectors与 Relay/Desktop E2E，不能只测 host Go package。
 - 模拟 duplicate/reorder/gap/expiry/tamper、late response、connection epoch race、route ACK 后掉线和 revoke。
 - 验证上次 Daemon/Agent 恢复、删除后的 fallback、未选中 Daemon status probe、Agent 切换 generation、project 10 条分页、project conversation 15 条分页、recent 20 条和 project/conversation 全集搜索。
-- 弱网 E2E 验证所有写操作不自动重复；action 多端 race 正确归类 `already_resolved`。
+- 弱网 E2E 验证所有写操作不自动重复、断线轮询不会重复拨号，并验证 Relay 429 映射为 `rate_limited` 后按冷却窗口恢复；覆盖 `SessionOpen` route 拒绝、握手超时、旧 session handshake/data 迟到和启动 restore 首次失败后的重试；action 多端 race 正确归类 `already_resolved`。
 - 48 MiB 边界、1 MiB route 分块、取消上传、图片 MIME 和跨 instance attachment 拒绝测试。
 - push cold/background/terminated/token rotation/permission denied 场景，确认点击必先同步且 payload/log 无业务正文。
 

@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:work_anywhere/core/core_gateway.dart';
+import 'package:work_anywhere/core/models.dart';
 import 'package:work_anywhere/features/workspace/workspace_controller.dart';
 
 void main() {
@@ -47,6 +48,35 @@ void main() {
     expect(gateway.persisted, isTrue);
   });
 
+  test(
+    'approved pair is persisted when its first connection is rate limited',
+    () async {
+      final gateway = _FakeCoreGateway(retainedPairAfterFailure: true);
+      final container = ProviderContainer(
+        overrides: [coreGatewayProvider.overrideWithValue(gateway)],
+      );
+      addTearDown(container.dispose);
+      await container.read(workspaceProvider.future);
+
+      await expectLater(
+        container.read(workspaceProvider.notifier).pair('waw://pair?test'),
+        throwsA(
+          isA<CoreFault>().having(
+            (error) => error.code,
+            'code',
+            'rate_limited',
+          ),
+        ),
+      );
+
+      final result = container.read(workspaceProvider).requireValue;
+      expect(result.needsPairing, isFalse);
+      expect(result.syncFailed, isTrue);
+      expect(result.daemons.single.phase, ConnectionPhase.offline);
+      expect(gateway.persisted, isTrue);
+    },
+  );
+
   test('startup sync failure keeps an already connected daemon', () async {
     final gateway = _FakeCoreGateway(connectedOnStatus: true, syncFails: true);
     final container = ProviderContainer(
@@ -67,11 +97,13 @@ class _FakeCoreGateway extends CoreGateway {
     this.pairFails = false,
     this.syncFails = false,
     this.connectedOnStatus = false,
+    this.retainedPairAfterFailure = false,
   });
 
   final bool pairFails;
   final bool syncFails;
   final bool connectedOnStatus;
+  final bool retainedPairAfterFailure;
   bool persisted = false;
 
   @override
@@ -79,7 +111,7 @@ class _FakeCoreGateway extends CoreGateway {
     'ok': true,
     'result': {
       'connected': connectedOnStatus,
-      if (connectedOnStatus) 'daemonId': 'daemon-1',
+      if (connectedOnStatus || retainedPairAfterFailure) 'daemonId': 'daemon-1',
     },
   };
 
@@ -89,6 +121,9 @@ class _FakeCoreGateway extends CoreGateway {
 
   @override
   Future<Map<String, dynamic>> pair(String uri) async {
+    if (retainedPairAfterFailure) {
+      throw CoreFault('rate_limited', 'try again later');
+    }
     if (pairFails) throw CoreFault('pair_failed', 'unreachable');
     return {
       'ok': true,

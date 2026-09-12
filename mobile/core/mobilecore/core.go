@@ -60,6 +60,10 @@ func (c *Core) Pair(uri string) string {
 	client := c.client
 	c.mu.Unlock()
 	if err := client.Pair(context.Background(), uri); err != nil {
+		var callError *endpoint.CallError
+		if errors.As(err, &callError) {
+			return failure(callError.Code, callError.Message)
+		}
 		return failure("pair_failed", err.Error())
 	}
 	return success(client.Status())
@@ -74,6 +78,10 @@ func (c *Core) Restore(credentialsJSON string) string {
 	client := c.client
 	c.mu.Unlock()
 	if err := client.Restore(context.Background(), []byte(credentialsJSON)); err != nil {
+		var callError *endpoint.CallError
+		if errors.As(err, &callError) {
+			return failure(callError.Code, callError.Message)
+		}
 		return failure("restore_failed", err.Error())
 	}
 	return success(client.Status())

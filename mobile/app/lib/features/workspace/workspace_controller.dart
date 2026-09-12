@@ -124,7 +124,37 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
       await preferences.setString('lastDaemonId', daemonId);
       await _gateway.persistCredentials();
     } catch (_) {
-      state = AsyncData(previous);
+      var retained = false;
+      try {
+        final statusEnvelope = await _gateway.status();
+        final retainedStatus =
+            statusEnvelope['result'] as Map<String, dynamic>? ?? statusEnvelope;
+        final daemonId = retainedStatus['daemonId'] as String?;
+        if (daemonId != null) {
+          await _gateway.persistCredentials();
+          final preferences = await SharedPreferences.getInstance();
+          await preferences.setString('lastDaemonId', daemonId);
+          state = AsyncData(
+            WorkspaceState(
+              needsPairing: false,
+              daemons: [
+                DaemonSummary(
+                  id: daemonId,
+                  name: 'My PC',
+                  phase: ConnectionPhase.offline,
+                ),
+              ],
+              selectedDaemonId: daemonId,
+              syncFailed: true,
+            ),
+          );
+          retained = true;
+        }
+      } catch (_) {
+        // The pairing did not reach a validated grant, so there are no new
+        // credentials to preserve.
+      }
+      if (!retained) state = AsyncData(previous);
       rethrow;
     }
 

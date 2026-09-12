@@ -70,7 +70,7 @@ View ── intent ──► ViewModel ── use case ──► Repository
                                                └─ PushIntentService (system notification entry)
 ```
 
-一个 Go `PairingRuntime` 对应一条 daemon—Mobile pairing，拥有独立连接状态、Noise session、request ID namespace、cursor map 和 in-flight request map。选中的 Daemon 保持前台连接；其余 pairing 由 coordinator 以有界短连接依次探测并缓存 `connecting/online/offline + checkedAt`，探测完成即关闭。切换 Daemon 时关闭旧常驻 session、递增 selection generation 并激活新 runtime，避免无上限 socket/battery 消耗和迟到事件串台。
+一个 Go `PairingRuntime` 对应一条 daemon—Mobile pairing，拥有独立连接状态、Noise session、request ID namespace、cursor map 和 in-flight request map。endpoint 客户端为每个 runtime 维护单一重连门闩；并发请求共享一次重连尝试，失败后使用 500 ms 起、最大 30 s 的指数冷却，避免断线轮询把 Relay 连接限流放大。选中的 Daemon 保持前台连接；其余 pairing 由 coordinator 以有界短连接依次探测并缓存 `connecting/online/offline + checkedAt`，探测完成即关闭。切换 Daemon 时关闭旧常驻 session、递增 selection generation 并激活新 runtime，避免无上限 socket/battery 消耗和迟到事件串台。
 
 Repository 中的权威划分：
 
@@ -96,6 +96,8 @@ Repository 中的权威划分：
 - 扫码内容在 grant 验证前是不可信候选；UI 只展示 Relay host、到期时间和 key fingerprint，不宣称已识别 Desktop。
 - biometric/PIN 应用锁只保护 UI 访问，不参与 endpoint key 协议。应用锁和 app-switcher 敏感内容遮罩尚未实现；当前 Android 不设置 `FLAG_SECURE`，因此允许系统截图和录屏。未来若提供隐私增强选项，应只在用户启用或应用锁定时按状态设置窗口保护，不能把默认 Activity 永久标记为 secure。
 - 只读请求在断线后可自动重试；写请求在 route/response 不确定时禁止自动重发，先同步并给出“结果待确认”。
+- Relay `/v1/connect` 的 HTTP 429 被映射为稳定的 `rate_limited` 错误；重连冷却由 Go endpoint 统一执行，Flutter 的同步轮询不能绕过该冷却窗口。该机制只抑制重复拨号，不重放已路由的写请求。
+- 已验证的 pairing credential 在首次 authenticated WSS/Noise 建链前即保留到 endpoint runtime；因此启动恢复或配对批准后遇到 429/离线时，普通重试仍可重连。配对批准后的 credential 即使首次建链失败也由 Flutter 持久化，并把 Daemon 显示为离线，而不是退回未配对状态。
 - secure store 损坏或 key 丢失时 fail closed：删除不可解密的本地 pairing，提示重新配对，不向 Relay 请求私钥恢复。
 
 ## 不变量与非目标
