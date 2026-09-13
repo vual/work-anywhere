@@ -44,9 +44,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get projectSearchResults => '项目搜索结果';
 
   @override
-  String get recentProjects => '最近 10 个';
-
-  @override
   String resultCount(int count) {
     return '$count 个';
   }
@@ -62,9 +59,6 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get conversationSearchResults => '对话搜索结果';
-
-  @override
-  String get recentConversations => '最近 20 个';
 
   @override
   String get noConversations => '还没有对话';

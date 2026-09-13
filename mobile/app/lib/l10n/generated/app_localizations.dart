@@ -166,12 +166,6 @@ abstract class AppLocalizations {
   /// **'项目搜索结果'**
   String get projectSearchResults;
 
-  /// No description provided for @recentProjects.
-  ///
-  /// In zh, this message translates to:
-  /// **'最近 10 个'**
-  String get recentProjects;
-
   /// No description provided for @resultCount.
   ///
   /// In zh, this message translates to:
@@ -201,12 +195,6 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'对话搜索结果'**
   String get conversationSearchResults;
-
-  /// No description provided for @recentConversations.
-  ///
-  /// In zh, this message translates to:
-  /// **'最近 20 个'**
-  String get recentConversations;
 
   /// No description provided for @noConversations.
   ///

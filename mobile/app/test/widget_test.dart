@@ -70,6 +70,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
+    expect(find.text('Work Any Where'), findsNothing);
   });
 
   testWidgets('workspace uses compact rows and supports 200 percent text', (
@@ -140,5 +141,7 @@ void main() {
     expect(compactRows, hasLength(2));
     expect(tester.widget<Text>(find.text('Project A')).style?.fontSize, 16);
     expect(tester.widget<Text>(find.text('项目')).style?.fontSize, 18);
+    expect(find.text('最近 10 个'), findsNothing);
+    expect(find.text('最近 20 个'), findsNothing);
   });
 }

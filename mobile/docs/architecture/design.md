@@ -126,7 +126,7 @@ Repository 中的权威划分：
 
 - Go core unit tests：canonical/Noise vectors、sequence/replay、state machine、late callback、suspend/resume 和 request retry policy。
 - Dart unit tests：DTO reducers、connection projection、selection generation、ViewModel 与错误映射。
-- widget/golden tests：无配对根页、无底栏工作台、顶栏右侧 Daemon 状态下拉、居中活跃任务提示与空闲品牌名、横向 Agent selector、项目/对话/搜索/详情的 loading/empty/offline/error/action states、动态字体、深浅主题和窄屏。
+- widget/golden tests：无配对根页、无底栏工作台、顶栏右侧 Daemon 状态下拉、左侧 App icon 与居中活跃任务提示、横向 Agent selector、项目/对话/搜索/详情的 loading/empty/offline/error/action states、动态字体、深浅主题和窄屏。
 - integration tests：模拟 Relay/Desktop 的 pair/auth/Noise/snapshot/event/gap/revoke；真实 Relay + Desktop 端到端闭环。
 - iOS/Android physical-device tests：Keychain/Keystore、重装、升级、锁屏、切后台、弱网、push token rotation、相机权限和通知权限。
 - release gate：依赖/SBOM/secret scan、release build 中无 debug entitlement、日志与本机文件扫描无 fixture 明文；HTTP/WS 与 HTTPS/WSS 均为受支持的 Relay transport，部署方负责选择安全传输。

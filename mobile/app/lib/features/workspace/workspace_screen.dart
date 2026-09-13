@@ -74,7 +74,7 @@ class WorkspaceScreen extends ConsumerWidget {
                         ? context.l10n.projects
                         : context.l10n.projectSearchResults,
                     trailing: query.isEmpty
-                        ? context.l10n.recentProjects
+                        ? null
                         : context.l10n.resultCount(projects.length),
                   ),
                 ),
@@ -110,7 +110,7 @@ class WorkspaceScreen extends ConsumerWidget {
                         ? context.l10n.recent
                         : context.l10n.conversationSearchResults,
                     trailing: query.isEmpty
-                        ? context.l10n.recentConversations
+                        ? null
                         : context.l10n.resultCount(conversations.length),
                   ),
                 ),
@@ -183,19 +183,6 @@ class _TopBar extends StatelessWidget {
                         width: 44,
                         height: 44,
                       ),
-                      if (data.runningCount == 0) ...[
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            'Work Any Where',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: WawCompact.listTitle.copyWith(
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ],
                     ],
                   ),
                 ),
@@ -453,12 +440,16 @@ class _ConversationRow extends StatelessWidget {
 class _SectionTitle extends StatelessWidget {
   const _SectionTitle({required this.title, required this.trailing});
   final String title;
-  final String trailing;
+  final String? trailing;
   @override
   Widget build(BuildContext context) => Row(
     children: [
       Expanded(child: Text(title, style: WawCompact.sectionTitle)),
-      Text(trailing, style: WawCompact.metadata.copyWith(color: Colors.grey)),
+      if (trailing != null)
+        Text(
+          trailing!,
+          style: WawCompact.metadata.copyWith(color: Colors.grey),
+        ),
     ],
   );
 }

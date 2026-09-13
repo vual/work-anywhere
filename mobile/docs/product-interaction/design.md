@@ -22,7 +22,7 @@ App 不使用底部导航栏。无 pairing 时根页面是添加配对；至少�
 添加配对（无 Daemon）
 
 工作台（有 Daemon）
-  ├─ 左上角 App icon / 空闲品牌名
+  ├─ 左上角 App icon
   ├─ 顶栏中间活跃任务提示
   ├─ 顶栏右侧 Daemon selector
   ├─ 下一行横向 Agent selector
@@ -60,9 +60,9 @@ App 不使用底部导航栏。无 pairing 时根页面是添加配对；至少�
 
 ### Daemon selector
 
-工作台顶栏右侧显示当前 Daemon 的本地别名和状态 icon。默认恢复上次成功选择的 Daemon；该记录已不存在或已 revoke 时选择第一条可用 pairing，没有可用 pairing 时回到添加配对页。左侧显示 Work Anywhere App icon；没有待处理或运行中任务时，图标后靠左显示品牌名 `Work Any Where`。
+工作台顶栏右侧显示当前 Daemon 的本地别名和状态 icon。默认恢复上次成功选择的 Daemon；该记录已不存在或已 revoke 时选择第一条可用 pairing，没有可用 pairing 时回到添加配对页。左侧始终显示 Work Anywhere App icon；不额外显示品牌名。
 
-顶栏中间使用条件式任务提示：存在待处理 action 时优先显示“n 个待处理”，否则存在运行中对话时显示蓝色 loading icon 和“n 个运行中”；点击进入对应的第一条对话。没有活跃任务时不保留空提示控件，由左侧品牌名承担稳定识别。
+顶栏中间使用条件式任务提示：存在待处理 action 时优先显示“n 个待处理”，否则存在运行中对话时显示蓝色 loading icon 和“n 个运行中”；点击进入对应的第一条对话。没有活跃任务时不保留空提示控件，左侧只保留 App icon。
 
 点击后使用 menu/bottom sheet 展示所有 Daemon：
 
@@ -106,7 +106,7 @@ Agent selector 每项至少显示 display name 和 provider icon/label；当前�
 
 ## 工作台内容
 
-页面固定顺序为：App icon/空闲品牌名 + 居中活跃任务提示 + 右侧 Daemon selector 顶栏 → 横向 Agent selector → Provider 主对象列表 → 最近对话 → 底部搜索框。下拉刷新重建当前 Daemon/Agent snapshot，不打断运行中的对话。
+页面固定顺序为：App icon + 居中活跃任务提示 + 右侧 Daemon selector 顶栏 → 横向 Agent selector → Provider 主对象列表 → 最近对话 → 底部搜索框。下拉刷新重建当前 Daemon/Agent snapshot，不打断运行中的对话。
 
 ### Codex 项目
 

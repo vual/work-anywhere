@@ -46,9 +46,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get projectSearchResults => 'Project results';
 
   @override
-  String get recentProjects => 'Recent 10';
-
-  @override
   String resultCount(int count) {
     return '$count';
   }
@@ -64,9 +61,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get conversationSearchResults => 'Conversation results';
-
-  @override
-  String get recentConversations => 'Recent 20';
 
   @override
   String get noConversations => 'No conversations yet';
