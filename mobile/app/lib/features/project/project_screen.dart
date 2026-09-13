@@ -74,7 +74,7 @@ class _ProjectScreenState extends ConsumerState<ProjectScreen> {
           children: [
             Text(
               project?.name ?? context.l10n.project,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+              style: WawCompact.appBarTitle,
             ),
           ],
         ),
@@ -90,13 +90,13 @@ class _ProjectScreenState extends ConsumerState<ProjectScreen> {
               ),
             )
           : ListView.builder(
-              padding: const EdgeInsets.only(bottom: 30),
+              padding: const EdgeInsets.only(bottom: 24),
               itemCount: _items.length + 1,
               itemBuilder: (context, index) {
                 if (index == _items.length) {
                   if (_loading) {
                     return const Padding(
-                      padding: EdgeInsets.all(24),
+                      padding: EdgeInsets.all(18),
                       child: Center(child: CircularProgressIndicator()),
                     );
                   }
@@ -106,16 +106,19 @@ class _ProjectScreenState extends ConsumerState<ProjectScreen> {
                       child: Text(context.l10n.showMore),
                     );
                   }
-                  return const SizedBox(height: 24);
+                  return const SizedBox(height: 18);
                 }
                 final item = _items[index];
                 return ListTile(
-                  minTileHeight: 74,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 22),
+                  minTileHeight: WawCompact.listTileHeight,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: WawCompact.horizontalPadding,
+                  ),
                   title: Text(
                     item.title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
+                    style: WawCompact.listTitle,
                   ),
                   trailing: item.running
                       ? const SizedBox.square(

@@ -304,6 +304,25 @@ class AppLocalizationsEn extends AppLocalizations {
   String get addAttachment => 'Add attachment';
 
   @override
+  String imageSelectionLimit(int count) {
+    return 'Select up to $count images per message';
+  }
+
+  @override
+  String get imageSelectionTooLarge =>
+      'Each image and all selected images together must not exceed 48 MiB';
+
+  @override
+  String selectedImage(String name) {
+    return 'Selected image: $name';
+  }
+
+  @override
+  String removeSelectedImage(String name) {
+    return 'Remove image: $name';
+  }
+
+  @override
   String get noTimeline => 'No content to display';
 
   @override

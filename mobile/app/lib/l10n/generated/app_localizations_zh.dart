@@ -296,6 +296,24 @@ class AppLocalizationsZh extends AppLocalizations {
   String get addAttachment => '添加附件';
 
   @override
+  String imageSelectionLimit(int count) {
+    return '一次最多选择 $count 张图片';
+  }
+
+  @override
+  String get imageSelectionTooLarge => '单张图片和图片总大小均不能超过 48 MiB';
+
+  @override
+  String selectedImage(String name) {
+    return '已选择图片：$name';
+  }
+
+  @override
+  String removeSelectedImage(String name) {
+    return '移除图片：$name';
+  }
+
+  @override
   String get noTimeline => '暂无可显示的内容';
 
   @override

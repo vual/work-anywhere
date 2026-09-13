@@ -3,6 +3,26 @@ import 'package:flutter/material.dart';
 const wawBlue = Color(0xFF2F80ED);
 const wawGreen = Color(0xFF34C759);
 
+/// Typography and spacing shared by the information-dense workspace screens.
+/// Pairing/onboarding deliberately keeps the default Material sizing.
+abstract final class WawCompact {
+  static const horizontalPadding = 20.0;
+  static const listTileHeight = 52.0;
+  static const body = TextStyle(fontSize: 15, height: 1.45);
+  static const listTitle = TextStyle(fontSize: 16, height: 1.25);
+  static const sectionTitle = TextStyle(
+    fontSize: 18,
+    height: 1.25,
+    fontWeight: FontWeight.w700,
+  );
+  static const appBarTitle = TextStyle(
+    fontSize: 17,
+    height: 1.2,
+    fontWeight: FontWeight.w700,
+  );
+  static const metadata = TextStyle(fontSize: 13, height: 1.25);
+}
+
 ThemeData buildLightTheme() => _theme(
   Brightness.light,
   Colors.white,

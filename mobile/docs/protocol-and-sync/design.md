@@ -132,12 +132,12 @@ Mobile 产品页面只消费稳定 timeline DTO；尚未规范化的 action/cata
 ### Turn start
 
 1. 本地检查 `online`、`turn.start` scope、conversation idle、无 blocking action。
-2. 一次发送先生成唯一 `clientMessageId`，图片 begin/chunk/commit 全部使用该 ID；begin 同时传递当前会话 metadata 中的 `projectId`、conversation ID、MIME、原始文件名和大小。显示逐文件进度，分块大小为 256 KiB。
+2. 一次发送先生成唯一 `clientMessageId`；Mobile 每条消息最多接受 10 张图片，按用户选择顺序逐张执行 begin/chunk/commit，所有图片共用该 ID。begin 同时传递当前会话 metadata 中的 `projectId`、conversation ID、MIME、原始文件名和大小。显示逐文件进度，分块大小为 256 KiB。
 3. 上传失败调用 `attachment.abort` 清理 Desktop 的 `.part` 文件，不提交 Turn；用户重试时重新生成消息 ID并上传整份文件。
 4. response 成功只显示“已提交”；收到 matching turn event/snapshot 后才进入“运行中”。
-5. 若 response 前断线，禁止自动重发。重连同步后按 `clientMessageId`/snapshot 判定；无法判定则显示“提交结果未知，请先在电脑端确认”。
+5. 全部图片 commit 后，`turn.start.attachmentIds` 按选择顺序一次提交 0–10 个 ID。任一图片上传失败时不调用 `turn.start`，abort 当前未完成上传并保留 Mobile 内存草稿；若 `turn.start` response 前断线，禁止自动重发。重连同步后按 `clientMessageId`/snapshot 判定；无法判定则显示“提交结果未知，请先在电脑端确认”。
 
-V1 只支持图片附件，单文件和总大小须低于 Desktop 48 MiB 上限并预留 base64/1 MiB route frame 的分块余量。Desktop 会把附件保存到项目目录而不是数据库；`turn.start` 只提交 attachment ID，不向 Mobile 或 Relay 暴露本地绝对路径。压缩/缩放必须在用户确认的预览基础上进行，不能改变原图后仍显示原始大小。
+V1 只支持图片附件，一条消息最多 10 张；单文件和图片总大小均不得超过 Desktop 48 MiB 上限，并预留 base64/1 MiB route frame 的分块余量。Desktop 会把附件保存到项目目录而不是数据库；`turn.start` 只提交 attachment ID，不向 Mobile 或 Relay 暴露本地绝对路径。压缩/缩放必须在用户确认的预览基础上进行，不能改变原图后仍显示原始大小。
 
 ### Action resolve
 

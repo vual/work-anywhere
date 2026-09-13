@@ -71,4 +71,74 @@ void main() {
 
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('workspace uses compact rows and supports 200 percent text', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    const data = WorkspaceState(
+      needsPairing: false,
+      daemons: [
+        DaemonSummary(
+          id: 'daemon-1',
+          name: 'My PC',
+          phase: ConnectionPhase.online,
+        ),
+      ],
+      agents: [
+        AgentSummary(
+          id: 'agent-1',
+          name: 'Codex',
+          kind: 'codex',
+          status: 'ready',
+        ),
+      ],
+      projects: [
+        ProjectSummary(
+          id: 'project-1',
+          agentId: 'agent-1',
+          name: 'Project A',
+          updatedAt: 0,
+        ),
+      ],
+      conversations: [
+        ConversationSummary(
+          id: 'thread-1',
+          agentId: 'agent-1',
+          projectId: 'project-1',
+          title: 'Conversation A',
+          status: 'idle',
+          running: false,
+          updatedAt: 0,
+        ),
+      ],
+      selectedDaemonId: 'daemon-1',
+      selectedAgentId: 'agent-1',
+    );
+
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MaterialApp(
+          locale: Locale('zh', 'CN'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: MediaQuery(
+            data: MediaQueryData(textScaler: TextScaler.linear(2)),
+            child: WorkspaceScreen(data: data),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    final compactRows = tester
+        .widgetList<ListTile>(find.byType(ListTile))
+        .where((tile) => tile.minTileHeight == 52);
+    expect(compactRows, hasLength(2));
+    expect(tester.widget<Text>(find.text('Project A')).style?.fontSize, 16);
+    expect(tester.widget<Text>(find.text('项目')).style?.fontSize, 18);
+  });
 }

@@ -62,7 +62,12 @@ class WorkspaceScreen extends ConsumerWidget {
                 ),
               SliverToBoxAdapter(child: _AgentRail(data: data)),
               SliverPadding(
-                padding: const EdgeInsets.fromLTRB(22, 22, 22, 0),
+                padding: const EdgeInsets.fromLTRB(
+                  WawCompact.horizontalPadding,
+                  16,
+                  WawCompact.horizontalPadding,
+                  0,
+                ),
                 sliver: SliverToBoxAdapter(
                   child: _SectionTitle(
                     title: query.isEmpty
@@ -93,7 +98,12 @@ class WorkspaceScreen extends ConsumerWidget {
                   ),
                 ),
               SliverPadding(
-                padding: const EdgeInsets.fromLTRB(22, 26, 22, 0),
+                padding: const EdgeInsets.fromLTRB(
+                  WawCompact.horizontalPadding,
+                  18,
+                  WawCompact.horizontalPadding,
+                  0,
+                ),
                 sliver: SliverToBoxAdapter(
                   child: _SectionTitle(
                     title: query.isEmpty
@@ -115,13 +125,18 @@ class WorkspaceScreen extends ConsumerWidget {
                   itemBuilder: (context, index) =>
                       _ConversationRow(conversation: conversations[index]),
                 ),
-              const SliverToBoxAdapter(child: SizedBox(height: 104)),
+              const SliverToBoxAdapter(child: SizedBox(height: 88)),
             ],
           ),
         ),
       ),
       bottomSheet: SafeArea(
-        minimum: const EdgeInsets.fromLTRB(22, 8, 22, 18),
+        minimum: const EdgeInsets.fromLTRB(
+          WawCompact.horizontalPadding,
+          6,
+          WawCompact.horizontalPadding,
+          14,
+        ),
         child: TextField(
           onChanged: ref.read(workspaceProvider.notifier).setSearch,
           decoration: InputDecoration(
@@ -142,7 +157,12 @@ class _TopBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final daemon = data.daemons.first;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(22, 16, 22, 8),
+      padding: const EdgeInsets.fromLTRB(
+        WawCompact.horizontalPadding,
+        10,
+        WawCompact.horizontalPadding,
+        4,
+      ),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final compact = constraints.maxWidth < 380;
@@ -150,8 +170,9 @@ class _TopBar extends StatelessWidget {
             compact ? 160.0 : 220.0,
             constraints.maxWidth * (compact ? .52 : .48),
           );
+          final scaledTitle = MediaQuery.textScalerOf(context).scale(16);
           return SizedBox(
-            height: 72,
+            height: math.max(60, 60 + (scaledTitle - 16) * 2),
             child: Row(
               children: [
                 Expanded(
@@ -159,19 +180,18 @@ class _TopBar extends StatelessWidget {
                     children: [
                       SvgPicture.asset(
                         'assets/waw-app-icon.svg',
-                        width: 50,
-                        height: 50,
+                        width: 44,
+                        height: 44,
                       ),
                       if (data.runningCount == 0) ...[
-                        const SizedBox(width: 12),
-                        const Expanded(
+                        const SizedBox(width: 10),
+                        Expanded(
                           child: Text(
                             'Work Any Where',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
+                            style: WawCompact.listTitle.copyWith(
                               fontWeight: FontWeight.w700,
-                              fontSize: 16,
                             ),
                           ),
                         ),
@@ -194,7 +214,7 @@ class _TopBar extends StatelessWidget {
                           context.push('/conversation/${item.id}');
                         },
                         child: Padding(
-                          padding: const EdgeInsets.all(10),
+                          padding: const EdgeInsets.all(8),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -238,8 +258,8 @@ class _TopBar extends StatelessWidget {
                       onTap: () => _showDaemons(context, data.daemons),
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 17,
-                          vertical: 10,
+                          horizontal: 14,
+                          vertical: 8,
                         ),
                         decoration: BoxDecoration(
                           color: Theme.of(context).cardColor,
@@ -259,6 +279,7 @@ class _TopBar extends StatelessWidget {
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: const TextStyle(
+                                      fontSize: 15,
                                       fontWeight: FontWeight.w700,
                                     ),
                                   ),
@@ -266,8 +287,7 @@ class _TopBar extends StatelessWidget {
                                     _statusLabel(context, daemon.phase),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 12,
+                                    style: WawCompact.metadata.copyWith(
                                       color: Colors.grey,
                                     ),
                                   ),
@@ -332,38 +352,44 @@ class _AgentRail extends ConsumerWidget {
   final WorkspaceState data;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) => SizedBox(
-    height: 62,
-    child: ListView.separated(
-      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 7),
-      scrollDirection: Axis.horizontal,
-      itemCount: data.agents.length,
-      separatorBuilder: (_, _) => const SizedBox(width: 10),
-      itemBuilder: (context, index) {
-        final agent = data.agents[index];
-        final selected = agent.id == data.selectedAgentId;
-        return ChoiceChip(
-          selected: selected,
-          onSelected: (_) =>
-              ref.read(workspaceProvider.notifier).selectAgent(agent.id),
-          label: Text(agent.name),
-          avatar: Text(
-            agent.kind == 'codex'
-                ? 'C'
-                : agent.kind.characters.first.toUpperCase(),
-          ),
-          showCheckmark: false,
-          selectedColor: Colors.black,
-          labelStyle: TextStyle(
-            color: selected ? Colors.white : null,
-            fontWeight: FontWeight.w600,
-          ),
-          shape: const StadiumBorder(side: BorderSide.none),
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
-        );
-      },
-    ),
-  );
+  Widget build(BuildContext context, WidgetRef ref) {
+    final scaledLabel = MediaQuery.textScalerOf(context).scale(16);
+    return SizedBox(
+      height: math.max(52, 52 + (scaledLabel - 16) * 2),
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(
+          horizontal: WawCompact.horizontalPadding,
+          vertical: 5,
+        ),
+        scrollDirection: Axis.horizontal,
+        itemCount: data.agents.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 10),
+        itemBuilder: (context, index) {
+          final agent = data.agents[index];
+          final selected = agent.id == data.selectedAgentId;
+          return ChoiceChip(
+            selected: selected,
+            onSelected: (_) =>
+                ref.read(workspaceProvider.notifier).selectAgent(agent.id),
+            label: Text(agent.name),
+            avatar: Text(
+              agent.kind == 'codex'
+                  ? 'C'
+                  : agent.kind.characters.first.toUpperCase(),
+            ),
+            showCheckmark: false,
+            selectedColor: Colors.black,
+            labelStyle: TextStyle(
+              color: selected ? Colors.white : null,
+              fontWeight: FontWeight.w600,
+            ),
+            shape: const StadiumBorder(side: BorderSide.none),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          );
+        },
+      ),
+    );
+  }
 }
 
 class _ProjectRow extends StatelessWidget {
@@ -371,18 +397,20 @@ class _ProjectRow extends StatelessWidget {
   final ProjectSummary project;
   @override
   Widget build(BuildContext context) => ListTile(
-    minTileHeight: 74,
-    contentPadding: const EdgeInsets.symmetric(horizontal: 22),
-    leading: const Icon(Icons.folder_outlined, size: 30),
+    minTileHeight: WawCompact.listTileHeight,
+    contentPadding: const EdgeInsets.symmetric(
+      horizontal: WawCompact.horizontalPadding,
+    ),
+    leading: const Icon(Icons.folder_outlined, size: 24),
     title: Text(
       project.name,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
-      style: const TextStyle(fontWeight: FontWeight.w600),
+      style: WawCompact.listTitle.copyWith(fontWeight: FontWeight.w600),
     ),
     trailing: Text(
       _relativeTime(context, project.updatedAt),
-      style: const TextStyle(color: Colors.grey),
+      style: WawCompact.metadata.copyWith(color: Colors.grey),
     ),
     onTap: () => context.push('/project/${project.id}'),
   );
@@ -393,12 +421,15 @@ class _ConversationRow extends StatelessWidget {
   final ConversationSummary conversation;
   @override
   Widget build(BuildContext context) => ListTile(
-    minTileHeight: 72,
-    contentPadding: const EdgeInsets.symmetric(horizontal: 22),
+    minTileHeight: WawCompact.listTileHeight,
+    contentPadding: const EdgeInsets.symmetric(
+      horizontal: WawCompact.horizontalPadding,
+    ),
     title: Text(
       conversation.title,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
+      style: WawCompact.listTitle,
     ),
     trailing: conversation.running
         ? Semantics(
@@ -413,7 +444,7 @@ class _ConversationRow extends StatelessWidget {
           )
         : Text(
             _relativeTime(context, conversation.updatedAt),
-            style: const TextStyle(color: Colors.grey),
+            style: WawCompact.metadata.copyWith(color: Colors.grey),
           ),
     onTap: () => context.push('/conversation/${conversation.id}'),
   );
@@ -426,14 +457,8 @@ class _SectionTitle extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Row(
     children: [
-      Expanded(
-        child: Text(
-          title,
-          style: Theme.of(context).textTheme.titleLarge
-              ?.copyWith(fontWeight: FontWeight.w700),
-        ),
-      ),
-      Text(trailing, style: const TextStyle(color: Colors.grey)),
+      Expanded(child: Text(title, style: WawCompact.sectionTitle)),
+      Text(trailing, style: WawCompact.metadata.copyWith(color: Colors.grey)),
     ],
   );
 }
@@ -465,8 +490,11 @@ class _Empty extends StatelessWidget {
   final String label;
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.all(28),
-    child: Text(label, style: const TextStyle(color: Colors.grey)),
+    padding: const EdgeInsets.symmetric(
+      horizontal: WawCompact.horizontalPadding,
+      vertical: 18,
+    ),
+    child: Text(label, style: WawCompact.body.copyWith(color: Colors.grey)),
   );
 }
 
@@ -476,8 +504,13 @@ class _SyncFailure extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-    margin: const EdgeInsets.fromLTRB(22, 4, 22, 8),
-    padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+    margin: const EdgeInsets.fromLTRB(
+      WawCompact.horizontalPadding,
+      4,
+      WawCompact.horizontalPadding,
+      6,
+    ),
+    padding: const EdgeInsets.fromLTRB(14, 9, 6, 9),
     decoration: BoxDecoration(
       color: Theme.of(context).colorScheme.errorContainer,
       borderRadius: BorderRadius.circular(16),

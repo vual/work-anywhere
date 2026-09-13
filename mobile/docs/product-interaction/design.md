@@ -157,12 +157,12 @@ Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项�
 
 ### Composer
 
-仅当 `online + idle + turn.start scope + no blocking action` 时可发送。输入框左侧内嵌附件添加 icon，右侧提供发送按钮；输入区同时支持图片、文本和一个设置入口。没有文字且没有附件时发送按钮禁用，输入文字或选中附件后启用。设置 bottom sheet 展示 Desktop catalog 提供的模型、思考等级、approval/sandbox profile，并记住“本 thread 本次 UI 选择”，不把未确认值持久化为全局事实。
+仅当 `online + idle + turn.start scope + no blocking action` 时可发送。输入框左侧内嵌附件添加 icon，右侧提供发送按钮；输入区同时支持图片、文本和一个设置入口。相册一次或分次最多选择 10 张图片，按选择顺序去重并追加；已选图片在输入框内部以单行缩略图展示，每张可单独移除，超出屏幕宽度后横向滑动。没有文字且没有附件时发送按钮禁用，输入文字或选中附件后启用。设置 bottom sheet 展示 Desktop catalog 提供的模型、思考等级、approval/sandbox profile，并记住“本 thread 本次 UI 选择”，不把未确认值持久化为全局事实。
 
 - running：保留文本输入框和附件添加入口，仅将右侧发送圆按钮切换为圆形“停止”按钮；若 Provider 支持 steer 且 Desktop 将来开放，再另行设计，不把输入内容默认为排队。
 - awaiting action：composer 收起，突出“先处理待办”。
 - offline/syncing/revision conflict：保留草稿于当前进程内，发送按钮禁用并给出原因。
-- text + image：发送前显示缩略图、大小和移除；上传阶段锁定附件编辑，允许取消整次提交。
+- text + image：发送前显示缩略图和移除入口；单张与整条消息的图片总大小均不得超过 48 MiB。上传阶段锁定附件编辑并按选择顺序上传，任一图片失败则不提交 Turn，保留整条草稿供用户处理或重试。
 
 提交后的展示分三层：`正在上传` → `已提交，等待电脑确认` → 收到 snapshot/event 后 `运行中`。断线导致结果不明时，保留本地草稿副本和醒目的“提交结果未知”，不自动生成第二条消息。
 
@@ -224,6 +224,7 @@ Daemon selector 底部提供“添加电脑”和“管理电脑”。管理页�
 
 - 所有状态不仅靠颜色表达；运行、等待、失败同时有图标和文本。
 - 支持系统动态字体到至少 200%、屏幕阅读器 label、逻辑焦点顺序、44/48dp 最小触控目标和 reduced motion。
+- 工作台、项目列表和会话详情采用紧凑信息密度：常规正文 14–15sp、列表标题 16sp、section 标题 18sp、列表基础高度 52dp；动态字体放大时高度随内容增长，不以固定高度裁切文字。
 - Daemon 与 Agent selector 在大字体下保持独立可访问性 label；Daemon 下拉菜单和横向 Agent 项允许名称省略并提供完整朗读。横屏/平板使用列表—详情双栏，但保持相同返回栈语义，手机窄屏使用单列。
 - Markdown、diff 和 code block 支持选择/复制，但复制前对疑似 secret 不做不可靠自动脱敏承诺，使用明确隐私提示。
 

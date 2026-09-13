@@ -610,6 +610,30 @@ abstract class AppLocalizations {
   /// **'添加附件'**
   String get addAttachment;
 
+  /// No description provided for @imageSelectionLimit.
+  ///
+  /// In zh, this message translates to:
+  /// **'一次最多选择 {count} 张图片'**
+  String imageSelectionLimit(int count);
+
+  /// No description provided for @imageSelectionTooLarge.
+  ///
+  /// In zh, this message translates to:
+  /// **'单张图片和图片总大小均不能超过 48 MiB'**
+  String get imageSelectionTooLarge;
+
+  /// No description provided for @selectedImage.
+  ///
+  /// In zh, this message translates to:
+  /// **'已选择图片：{name}'**
+  String selectedImage(String name);
+
+  /// No description provided for @removeSelectedImage.
+  ///
+  /// In zh, this message translates to:
+  /// **'移除图片：{name}'**
+  String removeSelectedImage(String name);
+
   /// No description provided for @noTimeline.
   ///
   /// In zh, this message translates to:

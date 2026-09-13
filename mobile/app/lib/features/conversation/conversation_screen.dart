@@ -14,6 +14,12 @@ import '../workspace/workspace_controller.dart';
 import 'conversation_controller.dart';
 import 'markdown_renderer.dart';
 
+const _maxImageCount = 10;
+const _maxImageBytes = 48 * 1024 * 1024;
+
+@visibleForTesting
+final imagePickerProvider = Provider<ImagePicker>((ref) => ImagePicker());
+
 class ConversationScreen extends ConsumerStatefulWidget {
   const ConversationScreen({
     required this.conversationId,
@@ -34,14 +40,17 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   final _composer = TextEditingController();
   final _scroll = ScrollController();
   ConversationController? _controller;
-  XFile? _image;
+  final List<XFile> _images = [];
   bool _submitting = false;
+  bool _selectingImages = false;
   bool _didAutoScrollToBottom = false;
   late String? _activeConversationId = widget.conversationId;
 
   bool get _isDraft => _activeConversationId == null;
   bool get _canSend =>
-      !_submitting && (_composer.text.trim().isNotEmpty || _image != null);
+      !_submitting &&
+      !_selectingImages &&
+      (_composer.text.trim().isNotEmpty || _images.isNotEmpty);
 
   String? get _agentId => ref.read(workspaceProvider).value?.selectedAgentId;
 
@@ -204,74 +213,143 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     });
   }
 
-  Future<String?> _uploadImage(String clientMessageId) async {
+  Future<List<String>> _uploadImages(String clientMessageId) async {
     final conversationId = _activeConversationId;
-    if (_image == null || _agentId == null || conversationId == null) {
-      return null;
+    if (_images.isEmpty || _agentId == null || conversationId == null) {
+      return const [];
     }
-    final bytes = await File(_image!.path).readAsBytes();
     final projectId =
         _controller?.state.metadata?['projectId'] as String? ??
         widget.projectId;
-    String? attachmentId;
-    try {
-      final begin = await ref.read(coreGatewayProvider).call(
-        'attachment.begin',
-        {
-          'agentId': _agentId,
-          'conversationId': conversationId,
-          'clientMessageId': clientMessageId,
-          if (projectId != null && projectId.isNotEmpty) 'projectId': projectId,
-          'mimeType': _image!.mimeType ?? 'image/jpeg',
-          'fileName': _image!.name,
-          'size': bytes.length,
-        },
-      );
-      attachmentId =
-          (begin['result'] as Map<String, dynamic>)['attachmentId'] as String;
-      const chunkSize = 256 * 1024;
-      for (var offset = 0; offset < bytes.length; offset += chunkSize) {
-        final end = (offset + chunkSize).clamp(0, bytes.length);
-        await ref.read(coreGatewayProvider).call('attachment.chunk', {
-          'attachmentId': attachmentId,
-          'data': base64Encode(bytes.sublist(offset, end)),
-        });
-      }
-      await ref.read(coreGatewayProvider).call('attachment.commit', {
-        'attachmentId': attachmentId,
-      });
-      return attachmentId;
-    } catch (error) {
-      if (attachmentId != null) {
-        try {
-          await ref.read(coreGatewayProvider).call('attachment.abort', {
+    final attachmentIds = <String>[];
+    for (final image in _images) {
+      final bytes = await image.readAsBytes();
+      String? attachmentId;
+      try {
+        final begin = await ref.read(coreGatewayProvider).call(
+          'attachment.begin',
+          {
+            'agentId': _agentId,
+            'conversationId': conversationId,
+            'clientMessageId': clientMessageId,
+            if (projectId != null && projectId.isNotEmpty)
+              'projectId': projectId,
+            'mimeType': _imageMimeType(image),
+            'fileName': image.name,
+            'size': bytes.length,
+          },
+        );
+        attachmentId =
+            (begin['result'] as Map<String, dynamic>)['attachmentId'] as String;
+        const chunkSize = 256 * 1024;
+        for (var offset = 0; offset < bytes.length; offset += chunkSize) {
+          final end = (offset + chunkSize).clamp(0, bytes.length);
+          await ref.read(coreGatewayProvider).call('attachment.chunk', {
             'attachmentId': attachmentId,
+            'data': base64Encode(bytes.sublist(offset, end)),
           });
-        } catch (_) {
-          // The original upload error is more useful to the user.
         }
+        await ref.read(coreGatewayProvider).call('attachment.commit', {
+          'attachmentId': attachmentId,
+        });
+        attachmentIds.add(attachmentId);
+      } catch (_) {
+        if (attachmentId != null) {
+          try {
+            await ref.read(coreGatewayProvider).call('attachment.abort', {
+              'attachmentId': attachmentId,
+            });
+          } catch (_) {
+            // The original upload error is more useful to the user.
+          }
+        }
+        rethrow;
       }
-      rethrow;
+    }
+    return attachmentIds;
+  }
+
+  String _imageMimeType(XFile image) {
+    final supplied = image.mimeType;
+    if (supplied != null && supplied.startsWith('image/')) return supplied;
+    final lowerName = image.name.toLowerCase();
+    if (lowerName.endsWith('.png')) return 'image/png';
+    if (lowerName.endsWith('.webp')) return 'image/webp';
+    if (lowerName.endsWith('.gif')) return 'image/gif';
+    if (lowerName.endsWith('.heic') || lowerName.endsWith('.heif')) {
+      return 'image/heic';
+    }
+    return 'image/jpeg';
+  }
+
+  Future<bool> _imagesWithinSizeLimit(List<XFile> images) async {
+    var total = 0;
+    for (final image in images) {
+      final length = await image.length();
+      if (length > _maxImageBytes) return false;
+      total += length;
+      if (total > _maxImageBytes) return false;
+    }
+    return true;
+  }
+
+  void _showComposerMessage(String message) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _pickImages() async {
+    if (_submitting || _selectingImages) return;
+    final remaining = _maxImageCount - _images.length;
+    if (remaining <= 0) {
+      _showComposerMessage(context.l10n.imageSelectionLimit(_maxImageCount));
+      return;
+    }
+    setState(() => _selectingImages = true);
+    try {
+      final selected = await ref
+          .read(imagePickerProvider)
+          .pickMultiImage(imageQuality: 88, limit: remaining);
+      if (!mounted || selected.isEmpty) return;
+
+      final existingPaths = _images.map((image) => image.path).toSet();
+      final additions = <XFile>[];
+      for (final image in selected) {
+        if (existingPaths.add(image.path)) additions.add(image);
+      }
+      final accepted = additions.take(remaining).toList();
+      final candidates = [..._images, ...accepted];
+      if (!await _imagesWithinSizeLimit(candidates)) {
+        if (mounted) _showComposerMessage(context.l10n.imageSelectionTooLarge);
+        return;
+      }
+      if (!mounted) return;
+      setState(() => _images.addAll(accepted));
+      if (additions.length > remaining) {
+        _showComposerMessage(context.l10n.imageSelectionLimit(_maxImageCount));
+      }
+    } finally {
+      if (mounted) setState(() => _selectingImages = false);
     }
   }
 
-  Future<void> _pickImage() async {
+  void _removeImage(XFile image) {
     if (_submitting) return;
-    final selected = await ImagePicker().pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 88,
-    );
-    if (mounted && selected != null) setState(() => _image = selected);
+    setState(() => _images.removeWhere((item) => item.path == image.path));
   }
 
   Future<void> _send() async {
     final text = _composer.text.trim();
-    if (_submitting || (text.isEmpty && _image == null)) {
+    if (_submitting || (text.isEmpty && _images.isEmpty)) {
       return;
     }
     setState(() => _submitting = true);
     var turnStartSent = false;
     try {
+      if (!await _imagesWithinSizeLimit(_images)) {
+        if (mounted) _showComposerMessage(context.l10n.imageSelectionTooLarge);
+        return;
+      }
       final workspace = await ref.read(workspaceProvider.future);
       final agentId = workspace.selectedAgentId;
       if (agentId == null) {
@@ -279,17 +357,17 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       }
       final conversationId = await _ensureConversation();
       final clientMessageId = '${DateTime.now().microsecondsSinceEpoch}';
-      final attachment = await _uploadImage(clientMessageId);
+      final attachmentIds = await _uploadImages(clientMessageId);
       turnStartSent = true;
       await ref.read(coreGatewayProvider).call('turn.start', {
         'agentId': agentId,
         'threadId': conversationId,
         'text': text,
-        if (attachment != null) 'attachmentIds': [attachment],
+        if (attachmentIds.isNotEmpty) 'attachmentIds': attachmentIds,
         'clientMessageId': clientMessageId,
       }, timeoutMilliseconds: 60000);
       _composer.clear();
-      setState(() => _image = null);
+      setState(_images.clear);
       await _refresh();
     } catch (error) {
       final ambiguous =
@@ -298,7 +376,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
           (error.code == 'ambiguous_write' || error.code == 'peer_offline');
       if (ambiguous && await _reconcileAmbiguousTurn()) {
         _composer.clear();
-        if (mounted) setState(() => _image = null);
+        if (mounted) setState(_images.clear);
         return;
       }
       if (mounted) {
@@ -394,7 +472,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
               title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+              style: WawCompact.appBarTitle,
             ),
             Row(
               children: [
@@ -409,7 +487,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                 const SizedBox(width: 6),
                 Text(
                   context.l10n.secureConnection,
-                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  style: WawCompact.metadata.copyWith(color: Colors.grey),
                 ),
               ],
             ),
@@ -443,9 +521,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
           if (state.actions.isNotEmpty)
             for (final action in state.actions)
               Card(
-                margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                margin: const EdgeInsets.fromLTRB(14, 6, 14, 0),
                 child: Padding(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(12),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -453,12 +531,12 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                         context.l10n.confirmationRequired,
                         style: const TextStyle(fontWeight: FontWeight.w700),
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 6),
                       Text(
                         action['method'] as String? ??
                             context.l10n.agentContinueRequest,
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 8),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: [
@@ -494,60 +572,73 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
           ),
           SafeArea(
             top: false,
-            minimum: const EdgeInsets.fromLTRB(16, 8, 16, 14),
-            child: Column(
+            minimum: const EdgeInsets.fromLTRB(12, 6, 12, 10),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                if (_image != null)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: const Icon(Icons.image_outlined),
-                    title: Text(_image!.name),
-                    trailing: IconButton(
-                      onPressed: () => setState(() => _image = null),
-                      icon: const Icon(Icons.close_rounded),
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).cardColor,
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (_images.isNotEmpty)
+                          _AttachmentStrip(
+                            images: _images,
+                            enabled: !_submitting,
+                            onRemove: _removeImage,
+                          ),
+                        TextField(
+                          controller: _composer,
+                          enabled: !_submitting,
+                          minLines: 1,
+                          maxLines: 5,
+                          style: WawCompact.body,
+                          decoration: InputDecoration(
+                            filled: false,
+                            border: InputBorder.none,
+                            enabledBorder: InputBorder.none,
+                            focusedBorder: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                            prefixIcon: IconButton(
+                              onPressed: _submitting || _selectingImages
+                                  ? null
+                                  : _pickImages,
+                              icon: const Icon(Icons.add_rounded, size: 24),
+                              tooltip: context.l10n.addAttachment,
+                            ),
+                            hintText: context.l10n.continueWorking,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _composer,
-                        enabled: !_submitting,
-                        minLines: 1,
-                        maxLines: 5,
-                        decoration: InputDecoration(
-                          prefixIcon: IconButton(
-                            onPressed: _submitting ? null : _pickImage,
-                            icon: const Icon(Icons.add_rounded),
-                            tooltip: context.l10n.addAttachment,
+                ),
+                const SizedBox(width: 8),
+                IconButton.filled(
+                  onPressed: running ? _interrupt : (_canSend ? _send : null),
+                  tooltip: running ? context.l10n.stop : context.l10n.send,
+                  style: IconButton.styleFrom(
+                    backgroundColor: running ? Colors.black : wawBlue,
+                    foregroundColor: Colors.white,
+                  ),
+                  icon: running
+                      ? const Icon(Icons.stop_rounded)
+                      : _submitting
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
                           ),
-                          hintText: context.l10n.continueWorking,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    IconButton.filled(
-                      onPressed: running
-                          ? _interrupt
-                          : (_canSend ? _send : null),
-                      tooltip: running ? context.l10n.stop : context.l10n.send,
-                      style: IconButton.styleFrom(
-                        backgroundColor: running ? Colors.black : wawBlue,
-                        foregroundColor: Colors.white,
-                      ),
-                      icon: running
-                          ? const Icon(Icons.stop_rounded)
-                          : _submitting
-                          ? const SizedBox.square(
-                              dimension: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Icon(Icons.arrow_upward_rounded),
-                    ),
-                  ],
+                        )
+                      : const Icon(Icons.arrow_upward_rounded),
                 ),
               ],
             ),
@@ -556,6 +647,85 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       ),
     );
   }
+}
+
+class _AttachmentStrip extends StatelessWidget {
+  const _AttachmentStrip({
+    required this.images,
+    required this.enabled,
+    required this.onRemove,
+  });
+
+  final List<XFile> images;
+  final bool enabled;
+  final ValueChanged<XFile> onRemove;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    key: const ValueKey('attachment-thumbnail-strip'),
+    height: 72,
+    child: ListView.separated(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      itemCount: images.length,
+      separatorBuilder: (_, _) => const SizedBox(width: 8),
+      itemBuilder: (context, index) {
+        final image = images[index];
+        return Semantics(
+          label: context.l10n.selectedImage(image.name),
+          image: true,
+          child: SizedBox.square(
+            dimension: 64,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Positioned.fill(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: Image.file(
+                      File(image.path),
+                      key: ValueKey('attachment-thumbnail-${image.path}'),
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => ColoredBox(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest,
+                        child: const Icon(Icons.broken_image_outlined),
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 2,
+                  right: 2,
+                  child: Semantics(
+                    button: true,
+                    label: context.l10n.removeSelectedImage(image.name),
+                    child: IconButton.filled(
+                      key: ValueKey('remove-attachment-${image.path}'),
+                      onPressed: enabled ? () => onRemove(image) : null,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints.tightFor(
+                        width: 28,
+                        height: 28,
+                      ),
+                      style: IconButton.styleFrom(
+                        backgroundColor: Colors.black87,
+                        foregroundColor: Colors.white,
+                        disabledBackgroundColor: Colors.black38,
+                        disabledForegroundColor: Colors.white70,
+                      ),
+                      icon: const Icon(Icons.close_rounded, size: 17),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    ),
+  );
 }
 
 class _Timeline extends StatelessWidget {
@@ -590,7 +760,12 @@ class _Timeline extends StatelessWidget {
     }
     return ListView.builder(
       controller: scrollController,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(
+        WawCompact.horizontalPadding,
+        10,
+        WawCompact.horizontalPadding,
+        6,
+      ),
       itemCount: items.length + 1,
       itemBuilder: (context, index) {
         if (index == 0) {
@@ -625,13 +800,13 @@ class _DraftConversationEmpty extends StatelessWidget {
     child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        SvgPicture.asset('assets/waw-app-icon.svg', width: 72, height: 72),
-        const SizedBox(height: 18),
+        SvgPicture.asset('assets/waw-app-icon.svg', width: 64, height: 64),
+        const SizedBox(height: 14),
         Text(
           projectName,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+          style: WawCompact.appBarTitle,
         ),
       ],
     ),
@@ -687,7 +862,7 @@ class _TimelineItem extends StatelessWidget {
               icon: const Icon(Icons.open_in_full_rounded),
               label: Text(context.l10n.viewFullContent),
             ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
         ],
       ],
     );
@@ -703,9 +878,9 @@ class _TimelineItem extends StatelessWidget {
       alignment: user ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
         constraints: const BoxConstraints(maxWidth: 560),
-        margin: const EdgeInsets.only(bottom: 14),
+        margin: const EdgeInsets.only(bottom: 10),
         padding: user
-            ? const EdgeInsets.symmetric(horizontal: 16, vertical: 12)
+            ? const EdgeInsets.symmetric(horizontal: 14, vertical: 9)
             : EdgeInsets.zero,
         decoration: user
             ? BoxDecoration(
@@ -879,10 +1054,10 @@ class _PlanTimelineCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final truncated = block['truncated'] == true;
     return Card(
-      margin: const EdgeInsets.only(bottom: 14),
+      margin: const EdgeInsets.only(bottom: 10),
       clipBehavior: Clip.antiAlias,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+        padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -896,7 +1071,7 @@ class _PlanTimelineCard extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             SafeMarkdownMessage(data: block['text'] as String? ?? ''),
             if (truncated)
               Align(

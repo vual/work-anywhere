@@ -5,6 +5,7 @@ import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../app/localization.dart';
+import '../../app/theme.dart';
 
 /// Renders conversation text as safe GitHub-Flavored Markdown.
 ///
@@ -19,10 +20,12 @@ class SafeMarkdownMessage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final body = theme.textTheme.bodyMedium;
+    final body = WawCompact.body.copyWith(
+      color: theme.textTheme.bodyMedium?.color,
+    );
     final styleSheet = MarkdownStyleSheet.fromTheme(theme).copyWith(
       p: body,
-      code: body?.copyWith(
+      code: body.copyWith(
         fontFamily: 'monospace',
         backgroundColor: theme.colorScheme.surfaceContainerHighest,
       ),
