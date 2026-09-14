@@ -16,6 +16,7 @@ import 'markdown_renderer.dart';
 
 const _maxImageCount = 10;
 const _maxImageBytes = 48 * 1024 * 1024;
+const _bottomFollowThreshold = 24.0;
 
 @visibleForTesting
 final imagePickerProvider = Provider<ImagePicker>((ref) => ImagePicker());
@@ -44,6 +45,8 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   bool _submitting = false;
   bool _selectingImages = false;
   bool _didAutoScrollToBottom = false;
+  bool _followScrollScheduled = false;
+  int _timelineTailSignature = 0;
   late String? _activeConversationId = widget.conversationId;
 
   bool get _isDraft => _activeConversationId == null;
@@ -110,7 +113,54 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   }
 
   void _changed() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    final signature = _tailSignature(_controller?.state.items ?? const []);
+    final timelineChanged = signature != _timelineTailSignature;
+    _timelineTailSignature = signature;
+    final shouldFollow =
+        timelineChanged &&
+        _didAutoScrollToBottom &&
+        _scroll.hasClients &&
+        _scroll.position.extentAfter <= _bottomFollowThreshold;
+
+    setState(() {});
+    if (shouldFollow) _followTimelineToBottom();
+  }
+
+  int _tailSignature(List<Map<String, dynamic>> items) {
+    if (items.isEmpty) return 0;
+    final tail = items.last;
+    final blocks = (tail['blocks'] as List? ?? const [])
+        .whereType<Map<String, dynamic>>();
+    return Object.hash(
+      items.length,
+      tail['id'],
+      tail['kind'],
+      tail['status'],
+      Object.hashAll(
+        blocks.map(
+          (block) => Object.hash(
+            block['kind'],
+            block['text'],
+            block['summaryKind'],
+            block['summaryValue'],
+            block['truncated'],
+            block['contentRef'],
+            block['totalBytes'],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _followTimelineToBottom() {
+    if (_followScrollScheduled) return;
+    _followScrollScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _followScrollScheduled = false;
+      if (!mounted || !_scroll.hasClients) return;
+      _scroll.jumpTo(_scroll.position.maxScrollExtent);
+    });
   }
 
   void _composerChanged() {

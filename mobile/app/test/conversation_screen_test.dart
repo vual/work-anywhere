@@ -347,6 +347,135 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('new timeline content follows when already at the bottom', (
+    tester,
+  ) async {
+    var reads = 0;
+    final gateway = _FakeGateway((method, params) async {
+      if (method == 'action.list') return {'result': <dynamic>[]};
+      if (method == 'conversation.subscribe') return {'result': const {}};
+      reads += 1;
+      final newest = reads == 1 ? 30 : 31;
+      return {
+        'result': {
+          'conversation': {
+            'id': 'thread-follow',
+            'title': 'Following thread',
+            'running': true,
+          },
+          'sequence': reads,
+          'timeline': {
+            'items': [
+              for (var index = newest; index > 0; index--) _item('item-$index'),
+            ],
+          },
+        },
+      };
+    });
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          coreGatewayProvider.overrideWithValue(gateway),
+          workspaceProvider.overrideWith(_FakeWorkspaceController.new),
+        ],
+        child: const MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: ConversationScreen(conversationId: 'thread-follow'),
+        ),
+      ),
+    );
+    for (var index = 0; index < 10; index++) {
+      await tester.pump();
+    }
+
+    final scrollable = tester.state<ScrollableState>(
+      find
+          .descendant(
+            of: find.byType(ListView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    expect(scrollable.position.extentAfter, closeTo(0, 0.001));
+
+    await tester.tap(find.byIcon(Icons.refresh_rounded));
+    for (var index = 0; index < 5; index++) {
+      await tester.pump();
+    }
+
+    expect(reads, 2);
+    expect(scrollable.position.extentAfter, closeTo(0, 0.001));
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('new timeline content preserves position when reading above', (
+    tester,
+  ) async {
+    var reads = 0;
+    final gateway = _FakeGateway((method, params) async {
+      if (method == 'action.list') return {'result': <dynamic>[]};
+      if (method == 'conversation.subscribe') return {'result': const {}};
+      reads += 1;
+      final newest = reads == 1 ? 30 : 31;
+      return {
+        'result': {
+          'conversation': {
+            'id': 'thread-reading',
+            'title': 'Reading thread',
+            'running': true,
+          },
+          'sequence': reads,
+          'timeline': {
+            'items': [
+              for (var index = newest; index > 0; index--) _item('item-$index'),
+            ],
+          },
+        },
+      };
+    });
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          coreGatewayProvider.overrideWithValue(gateway),
+          workspaceProvider.overrideWith(_FakeWorkspaceController.new),
+        ],
+        child: const MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: ConversationScreen(conversationId: 'thread-reading'),
+        ),
+      ),
+    );
+    for (var index = 0; index < 10; index++) {
+      await tester.pump();
+    }
+
+    final scrollable = tester.state<ScrollableState>(
+      find
+          .descendant(
+            of: find.byType(ListView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    scrollable.position.jumpTo(scrollable.position.maxScrollExtent - 300);
+    final readingOffset = scrollable.position.pixels;
+    expect(scrollable.position.extentAfter, greaterThan(24));
+
+    await tester.tap(find.byIcon(Icons.refresh_rounded));
+    for (var index = 0; index < 5; index++) {
+      await tester.pump();
+    }
+
+    expect(reads, 2);
+    expect(scrollable.position.pixels, closeTo(readingOffset, 0.001));
+    expect(scrollable.position.extentAfter, greaterThan(24));
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('draft conversation is local until the first message is sent', (
     tester,
   ) async {

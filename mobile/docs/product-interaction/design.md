@@ -151,7 +151,7 @@ Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项�
 - diff：文件名与增删摘要，点击进入只读 diff viewer；
 - system/error：非气泡 banner，提供可恢复动作。
 
-打开页面在首屏 snapshot 加载并完成布局后自动定位到时间线底部，展示最新内容；运行时保持“跟随最新”仅在用户接近底部时自动滚动。用户向上阅读后，新内容显示悬浮“有新进展”按钮，不抢滚动位置。streaming block 原位更新，完成后固定；event gap 时顶部显示“正在重新同步”，不重复渲染已存在 block。
+打开页面在首屏 snapshot 加载并完成布局后自动定位到时间线底部，展示最新内容。运行时在时间线刷新前距离底部不超过 24 logical pixels，且新增 item 或末项 streaming 内容发生变化时，布局完成后自动滚动到新的底部；如果用户已经向上阅读、刷新前不在这个范围内，则保持原滚动位置不变。streaming block 原位更新，完成后固定；event gap 时顶部显示“正在重新同步”，不重复渲染已存在 block。“有新进展”悬浮入口尚未实现。
 
 首屏只读取最近 20 项并正序显示；滚动到顶部使用 opaque cursor 加载更早页，按 item ID 去重，并以新增内容高度补偿滚动位置。刷新最新页时替换同 ID item、追加新 item 并保留已加载旧页；迟到 snapshot 不得降低 sequence。Android 正常路径由 EventSink 接收 daemon 主动事件，约 150 ms 合并事件 burst 后刷新当前会话；EventSink 断开或平台尚未接入事件宿主时才使用 2 秒 `conversation.subscribe` 轮询恢复。`action.list` 失败只显示独立 banner，不阻断正文。Plan 卡片按原始 Markdown 行边界显示前 5 行，完整内容在底部弹窗中滚动查看；普通大 block 显示 16 KiB 摘要和“查看完整内容”，查看器按 128 KiB 连续加载。引用过期时用 item 的稳定定位重新签发并从 offset 0 读取，失败则保留当前页面和弹窗重试入口。
 
