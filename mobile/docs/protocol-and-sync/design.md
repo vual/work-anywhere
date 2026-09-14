@@ -95,8 +95,8 @@ online
 
 进入 `syncing` 后顺序执行：
 
-1. 对上次选中的 Daemon建立安全会话并调用 `system.status` / `agent.list`；无有效记录时回退到第一个 ready Codex。
-2. 对选中 Agent 并发调用 `project.list(limit=10)`、`conversation.list(limit=20)` 与 `action.list`。`navigationKind=bots` 时把 project call 替换为 `bot.list`；Codex-first V1 不进入该分支。
+1. 对上次选中的 Daemon建立安全会话并调用 `system.status` / `agent.list`；恢复该 Daemon 上次选中的 Agent，记录不存在时使用返回列表中的第一个 Agent，不根据 ready/error 状态自动改选其他 Agent。
+2. 独立保留完整 Agent 列表与当前选择，再对选中 Agent 并发调用 `project.list(limit=10)`、`conversation.list(limit=20)` 与 `action.list`。`navigationKind=bots` 时把 project call 替换为 `bot.list`；Codex-first V1 不进入该分支。当前 Agent 的项目或对话同步失败时，只清空该 Agent 的内容并显示局部重试状态，Agent selector 必须继续保留；切换 Agent 时立即更新选择并独立同步新 Agent，前一个 Agent 的迟到结果或失败不得覆盖当前 Agent。
 3. 点击项目后调用 `conversation.list(projectId, limit=15)`；“显示更多”只使用 response next cursor，不用 offset 猜页。
 4. 搜索时分别调用 `project.list(query, limit, cursor)` 与 `conversation.list(query, limit, cursor)`，搜索服务端全集而不是当前 10/20 条内存列表。
 5. 打开会话时调用 `conversation.read(limit=20)` 获取 metadata、revision/sequence 和最近 timeline 页；页面按 ID 去重并倒转为正序展示。滚动到顶部用 opaque `nextCursor` 调用 `conversation.timeline.list`，不使用 offset。

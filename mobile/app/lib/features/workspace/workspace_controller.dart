@@ -69,6 +69,8 @@ class WorkspaceState {
 }
 
 class WorkspaceController extends AsyncNotifier<WorkspaceState> {
+  int _selectionGeneration = 0;
+
   CoreGateway get _gateway => ref.read(coreGatewayProvider);
 
   @override
@@ -197,49 +199,68 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
     final selected = agentItems.any((item) => item.id == stored)
         ? stored!
         : agentItems.first.id;
-    final responses = await Future.wait([
-      _gateway.call('project.list', {'agentId': selected, 'limit': 10}),
-      _gateway.call('conversation.list', {
-        'agentId': selected,
-        'limit': 20,
-        'sortKey': 'updated_at',
-        'sortDirection': 'desc',
-      }),
-    ]);
-    final projectResult =
-        responses[0]['result'] as Map<String, dynamic>? ?? const {};
-    final conversationResult =
-        responses[1]['result'] as Map<String, dynamic>? ?? const {};
-    return base.copyWith(
+    final selectedBase = base.copyWith(
       agents: agentItems,
       selectedAgentId: selected,
-      projects: _projects(projectResult),
-      conversations: _conversations(conversationResult),
-      projectCursor: projectResult['nextCursor'] as String?,
+      projects: const [],
+      conversations: const [],
+      projectCursor: null,
     );
+    return _loadAgentContent(selectedBase);
+  }
+
+  Future<WorkspaceState> _loadAgentContent(WorkspaceState base) async {
+    final selected = base.selectedAgentId;
+    if (selected == null) return base.copyWith(syncFailed: false);
+    try {
+      final responses = await Future.wait([
+        _gateway.call('project.list', {'agentId': selected, 'limit': 10}),
+        _gateway.call('conversation.list', {
+          'agentId': selected,
+          'limit': 20,
+          'sortKey': 'updated_at',
+          'sortDirection': 'desc',
+        }),
+      ]);
+      final projectResult =
+          responses[0]['result'] as Map<String, dynamic>? ?? const {};
+      final conversationResult =
+          responses[1]['result'] as Map<String, dynamic>? ?? const {};
+      return base.copyWith(
+        projects: _projects(projectResult),
+        conversations: _conversations(conversationResult),
+        projectCursor: projectResult['nextCursor'] as String?,
+        syncFailed: false,
+      );
+    } catch (_) {
+      return base.copyWith(syncFailed: true);
+    }
   }
 
   Future<void> selectAgent(String id) async {
     final current = state.value;
     if (current == null || current.selectedAgentId == id) return;
+    final generation = ++_selectionGeneration;
+    final selected = current.copyWith(
+      selectedAgentId: id,
+      projects: const [],
+      conversations: const [],
+      projectCursor: null,
+      syncFailed: false,
+    );
+    state = AsyncData(selected);
     final preferences = await SharedPreferences.getInstance();
     await preferences.setString('lastAgent:${current.selectedDaemonId}', id);
-    state = AsyncData(
-      await _loadOrKeepPairing(
-        current.copyWith(
-          selectedAgentId: id,
-          projects: const [],
-          conversations: const [],
-          syncFailed: false,
-        ),
-      ),
-    );
+    final loaded = await _loadAgentContent(selected);
+    if (generation == _selectionGeneration) state = AsyncData(loaded);
   }
 
   Future<void> refresh() async {
     final current = state.value;
     if (current == null || current.needsPairing) return;
-    state = AsyncData(await _loadOrKeepPairing(current));
+    final generation = ++_selectionGeneration;
+    final loaded = await _loadOrKeepPairing(current);
+    if (generation == _selectionGeneration) state = AsyncData(loaded);
   }
 
   Future<void> loadMoreProjects() async {

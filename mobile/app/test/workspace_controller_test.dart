@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -90,6 +92,102 @@ void main() {
     expect(result.syncFailed, isTrue);
     expect(result.daemons.single.id, 'daemon-1');
   });
+
+  test('failed agent content sync keeps the agent selector usable', () async {
+    final gateway = _FakeCoreGateway(
+      connectedOnStatus: true,
+      agents: const [
+        {
+          'id': 'agent-broken',
+          'name': 'Broken Codex',
+          'kind': 'codex',
+          'status': 'error',
+        },
+        {
+          'id': 'agent-ready',
+          'name': 'Ready Codex',
+          'kind': 'codex',
+          'status': 'ready',
+        },
+      ],
+      failedAgentIds: const {'agent-broken'},
+    );
+    final container = ProviderContainer(
+      overrides: [coreGatewayProvider.overrideWithValue(gateway)],
+    );
+    addTearDown(container.dispose);
+
+    var result = await container.read(workspaceProvider.future);
+
+    expect(result.selectedAgentId, 'agent-broken');
+    expect(result.syncFailed, isTrue);
+    expect(result.agents.map((agent) => agent.id), [
+      'agent-broken',
+      'agent-ready',
+    ]);
+    expect(result.projects, isEmpty);
+    expect(result.conversations, isEmpty);
+
+    await container.read(workspaceProvider.notifier).selectAgent('agent-ready');
+    result = container.read(workspaceProvider).requireValue;
+
+    expect(result.selectedAgentId, 'agent-ready');
+    expect(result.syncFailed, isFalse);
+    expect(result.projects.single.id, 'project-agent-ready');
+    expect(result.conversations.single.id, 'conversation-agent-ready');
+  });
+
+  test(
+    'late failure from a previous agent does not replace the current agent',
+    () async {
+      final gateway = _FakeCoreGateway(
+        connectedOnStatus: true,
+        agents: const [
+          {
+            'id': 'agent-initial',
+            'name': 'Initial Codex',
+            'kind': 'codex',
+            'status': 'ready',
+          },
+          {
+            'id': 'agent-slow',
+            'name': 'Slow Codex',
+            'kind': 'codex',
+            'status': 'error',
+          },
+          {
+            'id': 'agent-ready',
+            'name': 'Ready Codex',
+            'kind': 'codex',
+            'status': 'ready',
+          },
+        ],
+        delayedFailureAgentId: 'agent-slow',
+      );
+      final container = ProviderContainer(
+        overrides: [coreGatewayProvider.overrideWithValue(gateway)],
+      );
+      addTearDown(container.dispose);
+      await container.read(workspaceProvider.future);
+      final controller = container.read(workspaceProvider.notifier);
+
+      final slowSwitch = controller.selectAgent('agent-slow');
+      expect(
+        container.read(workspaceProvider).requireValue.selectedAgentId,
+        'agent-slow',
+      );
+
+      await controller.selectAgent('agent-ready');
+      gateway.failDelayedContent();
+      await slowSwitch;
+
+      final result = container.read(workspaceProvider).requireValue;
+      expect(result.selectedAgentId, 'agent-ready');
+      expect(result.syncFailed, isFalse);
+      expect(result.projects.single.id, 'project-agent-ready');
+      expect(result.conversations.single.id, 'conversation-agent-ready');
+    },
+  );
 }
 
 class _FakeCoreGateway extends CoreGateway {
@@ -98,13 +196,24 @@ class _FakeCoreGateway extends CoreGateway {
     this.syncFails = false,
     this.connectedOnStatus = false,
     this.retainedPairAfterFailure = false,
+    this.agents = const [],
+    this.failedAgentIds = const {},
+    this.delayedFailureAgentId,
   });
 
   final bool pairFails;
   final bool syncFails;
   final bool connectedOnStatus;
   final bool retainedPairAfterFailure;
+  final List<Map<String, dynamic>> agents;
+  final Set<String> failedAgentIds;
+  final String? delayedFailureAgentId;
+  Completer<Map<String, dynamic>>? _delayedContent;
   bool persisted = false;
+
+  void failDelayedContent() => _delayedContent?.completeError(
+    CoreFault('call_failed', 'delayed content sync failed'),
+  );
 
   @override
   Future<Map<String, dynamic>> status() async => {
@@ -144,7 +253,45 @@ class _FakeCoreGateway extends CoreGateway {
   }) async {
     if (syncFails) throw CoreFault('call_failed', 'sync failed');
     if (method == 'agent.list') {
-      return {'result': <Map<String, dynamic>>[]};
+      return {'result': agents};
+    }
+    final agentId = params['agentId'] as String?;
+    if (agentId != null && failedAgentIds.contains(agentId)) {
+      throw CoreFault('call_failed', 'sync failed for $agentId');
+    }
+    if (method == 'project.list') {
+      if (agentId == delayedFailureAgentId) {
+        return (_delayedContent ??= Completer<Map<String, dynamic>>()).future;
+      }
+      return {
+        'result': {
+          'items': [
+            {
+              'id': 'project-$agentId',
+              'agentId': agentId,
+              'name': 'Project for $agentId',
+              'updatedAt': 2,
+            },
+          ],
+        },
+      };
+    }
+    if (method == 'conversation.list') {
+      return {
+        'result': {
+          'items': [
+            {
+              'id': 'conversation-$agentId',
+              'agentId': agentId,
+              'projectId': 'project-$agentId',
+              'title': 'Conversation for $agentId',
+              'status': 'idle',
+              'running': false,
+              'updatedAt': 1,
+            },
+          ],
+        },
+      };
     }
     return {'result': <String, dynamic>{}};
   }

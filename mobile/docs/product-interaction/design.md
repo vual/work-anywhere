@@ -76,9 +76,9 @@ App 不使用底部导航栏。无 pairing 时根页面是添加配对；至少�
 
 ### Agent selector
 
-Daemon 顶栏下一行横向展示该电脑上可发现的 Agent，例如 `Codex 1`、`Codex 2`、`Claude Code`、`Hermes`、`OpenCode`、`Pi`；超出屏幕宽度时左右滑动。默认恢复“该 Daemon 上次选择的 Agent”；已不存在时优先选择第一个 ready 的 Codex，否则选择第一个可用 Agent。
+Daemon 顶栏下一行横向展示该电脑上可发现的 Agent，例如 `Codex 1`、`Codex 2`、`Claude Code`、`Hermes`、`OpenCode`、`Pi`；超出屏幕宽度时左右滑动。默认恢复“该 Daemon 上次选择的 Agent”；已不存在时选择发现列表中的第一个 Agent，不因其他 Agent 处于 ready 状态而自动切换。
 
-Agent selector 每项至少显示 display name 和 provider icon/label；当前项使用明确选中态，未适配项显示“预留”。V1 只完整适配 Codex；未适配 Provider 可以被发现，但选择后进入只读说明页，不展示无法工作的项目或发送入口。切换 Agent 与切换 Daemon 一样清空旧 selection generation 的内容，且每个 Daemon 分别持久化上次 Agent 选择。
+Agent selector 每项至少显示 display name 和 provider icon/label；当前项使用明确选中态，未适配项显示“预留”。V1 只完整适配 Codex；未适配 Provider 可以被发现，但选择后进入只读说明页，不展示无法工作的项目或发送入口。Agent 列表与当前 Agent 的项目、对话同步结果分别保留；当前 Agent 内容同步失败时保留整个 selector，只清空当前 Agent 内容并显示重试提示。切换到其他 Agent 时立即更新选择并重新独立加载其项目和对话，前一个 Agent 的迟到结果或失败不得覆盖当前 Agent。切换 Agent 与切换 Daemon 一样清空旧 selection generation 的内容，且每个 Daemon 分别持久化上次 Agent 选择。
 
 ## 首次使用与配对
 
