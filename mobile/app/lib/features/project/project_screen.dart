@@ -174,7 +174,7 @@ class _ProjectScreenState extends ConsumerState<ProjectScreen> {
               },
             ),
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-      floatingActionButton: FloatingActionButton.extended(
+      floatingActionButton: FloatingActionButton(
         onPressed: () => context.push(
           '/project/${widget.projectId}/new',
           extra: project?.name ?? context.l10n.project,
@@ -182,8 +182,7 @@ class _ProjectScreenState extends ConsumerState<ProjectScreen> {
         tooltip: context.l10n.newConversation,
         backgroundColor: wawBlue,
         foregroundColor: Colors.white,
-        icon: const Icon(Icons.edit_outlined),
-        label: Text(context.l10n.newConversation),
+        child: const Icon(Icons.edit_outlined),
       ),
     );
   }

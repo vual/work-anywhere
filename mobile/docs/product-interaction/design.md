@@ -116,7 +116,7 @@ Codex Agent 下默认展示最近活跃的 10 个项目，按最近一条对话�
 
 点击项目进入项目详情，默认加载该项目最近 15 条对话，按最后更新时间倒序；底部使用“显示更多”继续分页。项目页标题下显示 Agent，不展示 Desktop 本机路径；返回后恢复工作台滚动位置、已展开项目数量和搜索前状态。
 
-项目详情页采用圆形返回按钮、项目名称和当前电脑/连接状态标题，右下角显示蓝色扩展胶囊“新建对话”按钮。点击只打开当前项目的空白会话详情页，不立即访问 Desktop；页面中央显示 WAW logo 和项目名，底部显示 Composer。用户第一次发送文字或图片时，客户端才通过 `conversation.create` 创建当前项目的 Codex thread，并随后发送第一条 Turn。创建/发送期间输入区显示 loading 且不可重复提交；失败时保留空白页和输入内容，不创建本地 outbox。
+项目详情页采用圆形返回按钮、项目名称和当前电脑/连接状态标题，右下角显示蓝色圆形铅笔图标按钮；按钮不显示文字，使用 tooltip 和无障碍标签表达“新建对话”。点击只打开当前项目的空白会话详情页，不立即访问 Desktop；页面中央显示 WAW logo 和项目名，底部显示 Composer。用户第一次发送文字或图片时，客户端才通过 `conversation.create` 创建当前项目的 Codex thread，并随后发送第一条 Turn。创建/发送期间输入区显示 loading 且不可重复提交；失败时保留空白页和输入内容，不创建本地 outbox。
 
 ### Hermes Bot
 
@@ -135,7 +135,7 @@ Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项�
 点击项目结果进入该项目的对话列表，点击对话结果进入会话详情。清空 query 恢复工作台此前的项目展开数量、对话列表和滚动位置。Hermes 完成适配后搜索对象改为 Bot + 对话。
 
 - 初次同步：skeleton，不显示“暂无任务”。
-- 在线但 Codex 无项目：说明“请先在电脑端创建一个 Codex 项目”。项目详情页即使没有对话也保留“新建对话”入口。
+- 在线但 Codex 无项目：说明“请先在电脑端创建一个 Codex 项目”。项目详情页即使没有对话也保留圆形“新建对话”图标入口。
 - Desktop 离线：固定 banner“电脑未连接，无法读取或发送”，显示重试与故障提示；不展示正文磁盘缓存。
 - Agent error：保留 selector 中其他正常 Agent；问题 Agent 显示 stable error，并建议去 Desktop 检查。
 
@@ -259,7 +259,7 @@ Daemon selector 底部提供“添加电脑”和“管理电脑”。管理页�
 
 ## 验证方式
 
-- 每个页面覆盖 loading、empty、online、offline、stale、error、restricted 和 revoked golden/widget tests；项目页额外验证“新建对话”按钮、重复点击保护、创建成功跳转和创建失败提示；Daemon 绿色/灰色状态点与两类 loading icon 都验证文本语义。
+- 每个页面覆盖 loading、empty、online、offline、stale、error、restricted 和 revoked golden/widget tests；项目页额外验证圆形图标“新建对话”按钮、tooltip/无障碍语义、重复点击保护、创建成功跳转和创建失败提示；Daemon 绿色/灰色状态点与两类 loading icon 都验证文本语义。
 - E2E 覆盖首次配对、拒绝/过期、恢复上次 Daemon/Agent、多 Daemon/Agent 切换、项目 10 条展开、项目会话 15 条分页、最近对话 20 条、跨项目搜索、运行中蓝色 icon、流式输出、cursor gap、action race、图片失败、interrupt race 和 push cold start。
 - Markdown widget 测试覆盖 GFM 常用格式、文本选择、代码块、链接确认入口和远程图片拦截；链接只允许 `http/https`，打开失败保留在当前页面并显示可解释提示。
 - VoiceOver/TalkBack、200% 字体、reduced motion、窄屏/平板、深色模式和本地化伪语言人工验收。
