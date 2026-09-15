@@ -38,12 +38,18 @@ class WawTitleBlock extends StatelessWidget {
     required this.title,
     this.subtitle,
     this.pill = false,
+    this.titleStyle,
+    this.pillMinHeight = 56,
+    this.pillPadding = const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
     super.key,
   });
 
   final String title;
   final Widget? subtitle;
   final bool pill;
+  final TextStyle? titleStyle;
+  final double pillMinHeight;
+  final EdgeInsetsGeometry pillPadding;
 
   @override
   Widget build(BuildContext context) {
@@ -55,15 +61,15 @@ class WawTitleBlock extends StatelessWidget {
           title,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: WawCompact.appBarTitle,
+          style: titleStyle ?? WawCompact.appBarTitle,
         ),
         if (subtitle != null) ...[const SizedBox(height: 2), subtitle!],
       ],
     );
     if (!pill) return content;
     return Container(
-      constraints: const BoxConstraints(minHeight: 56),
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+      constraints: BoxConstraints(minHeight: pillMinHeight),
+      padding: pillPadding,
       decoration: BoxDecoration(
         color: Theme.of(context).floatingSurface,
         borderRadius: BorderRadius.circular(28),

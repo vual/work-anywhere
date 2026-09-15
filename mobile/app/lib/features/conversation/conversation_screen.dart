@@ -684,6 +684,25 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     final title =
         conversation?['title'] as String? ??
         (_isDraft ? context.l10n.newConversation : context.l10n.conversation);
+    final workspace = ref.watch(workspaceProvider).value;
+    final summary = workspace?.conversations
+        .where((item) => item.id == _activeConversationId)
+        .firstOrNull;
+    final projectId =
+        conversation?['projectId'] as String? ??
+        summary?.projectId ??
+        widget.projectId;
+    final agentId =
+        conversation?['agentId'] as String? ?? summary?.agentId ?? _agentId;
+    final project = workspace?.projects
+        .where((item) => item.id == projectId)
+        .firstOrNull;
+    final agent = workspace?.agents
+        .where((item) => item.id == agentId)
+        .firstOrNull;
+    final projectName =
+        widget.projectName ?? project?.name ?? context.l10n.project;
+    final agentName = agent?.name ?? workspace?.selectedAgent?.name ?? 'Codex';
     final running = conversation?['running'] as bool? ?? false;
     final online = state.online;
     final planConfirmation = _showPlanConfirmation(state)
@@ -691,10 +710,12 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         : null;
     return Scaffold(
       appBar: AppBar(
-        leadingWidth: 76,
+        toolbarHeight: 60,
+        leadingWidth: 64,
         leading: Padding(
           padding: const EdgeInsets.only(left: 12),
           child: WawCircleButton(
+            size: 44,
             icon: Icons.arrow_back_rounded,
             tooltip: MaterialLocalizations.of(context).backButtonTooltip,
             onPressed: () => Navigator.maybePop(context),
@@ -704,28 +725,38 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         title: WawTitleBlock(
           title: title,
           pill: true,
-          subtitle: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: online ? wawGreen : Colors.grey,
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  online ? context.l10n.secureConnection : context.l10n.offline,
-                  overflow: TextOverflow.ellipsis,
-                  style: WawCompact.metadata.copyWith(
-                    color: Theme.of(context).mutedInk,
+          titleStyle: WawCompact.conversationTitle,
+          pillMinHeight: 48,
+          pillPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+          subtitle: Semantics(
+            label:
+                '${online ? context.l10n.secureConnection : context.l10n.offline}, '
+                '$projectName, $agentName',
+            excludeSemantics: true,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 7,
+                  height: 7,
+                  decoration: BoxDecoration(
+                    color: online ? wawGreen : Colors.grey,
+                    shape: BoxShape.circle,
                   ),
                 ),
-              ),
-            ],
+                const SizedBox(width: 5),
+                Flexible(
+                  child: Text(
+                    '$projectName · $agentName',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: WawCompact.metadata.copyWith(
+                      color: Theme.of(context).mutedInk,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
         actions: [
@@ -1445,7 +1476,7 @@ class _ActivityTimelineItemState extends State<_ActivityTimelineItem> {
           ),
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.only(bottom: 8),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -1455,17 +1486,17 @@ class _ActivityTimelineItemState extends State<_ActivityTimelineItem> {
                         ? () => setState(() => _expanded = !_expanded)
                         : null,
                     child: ConstrainedBox(
-                      constraints: const BoxConstraints(minHeight: 48),
+                      constraints: const BoxConstraints(minHeight: 44),
                       child: Row(
                         children: [
-                          Icon(icon, size: 20, color: statusColor),
-                          const SizedBox(width: 10),
+                          Icon(icon, size: 18, color: statusColor),
+                          const SizedBox(width: 8),
                           Expanded(
                             child: Text(
                               title,
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
-                              style: WawCompact.body.copyWith(
+                              style: WawCompact.activity.copyWith(
                                 color: Theme.of(context).mutedInk,
                               ),
                             ),
@@ -1486,8 +1517,9 @@ class _ActivityTimelineItemState extends State<_ActivityTimelineItem> {
                                   : context.l10n.showDetails,
                               child: Icon(
                                 _expanded
-                                    ? Icons.keyboard_arrow_up_rounded
-                                    : Icons.keyboard_arrow_down_rounded,
+                                    ? Icons.keyboard_arrow_down_rounded
+                                    : Icons.keyboard_arrow_right_rounded,
+                                size: 20,
                                 color: Theme.of(context).mutedInk,
                               ),
                             ),
@@ -1497,8 +1529,8 @@ class _ActivityTimelineItemState extends State<_ActivityTimelineItem> {
                   ),
                   if (_expanded)
                     Container(
-                      margin: const EdgeInsets.only(top: 4),
-                      padding: const EdgeInsets.all(12),
+                      margin: const EdgeInsets.only(top: 2),
+                      padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
                         color: Theme.of(context).softSurface,
                         borderRadius: BorderRadius.circular(14),
@@ -1510,12 +1542,10 @@ class _ActivityTimelineItemState extends State<_ActivityTimelineItem> {
                             SelectableText(
                               block['text'] as String? ?? '',
                               style: command
-                                  ? const TextStyle(
+                                  ? WawCompact.activityDetail.copyWith(
                                       fontFamily: 'monospace',
-                                      fontSize: 13,
-                                      height: 1.45,
                                     )
-                                  : WawCompact.body,
+                                  : WawCompact.activityDetail,
                             ),
                             if (block['truncated'] == true &&
                                 widget.controller != null)

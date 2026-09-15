@@ -66,6 +66,8 @@ App 不使用底部导航栏。无 pairing 时根页面是添加配对；至少�
 
 点击后使用 menu/bottom sheet 展示所有 Daemon：
 
+Bottom sheet 使用不透明的页面表面和顶部圆角，必须完整遮住其后的工作台内容；底部搜索框等常驻控件不得透出或与“添加电脑 / 管理电脑”操作重叠。
+
 | 状态 | 图形 | 语义 |
 | --- | --- | --- |
 | `connecting/authenticating/handshaking/syncing` | 旋转 loading icon | 正在连接或同步 |
@@ -110,7 +112,7 @@ Agent selector 每项至少显示 display name 和 provider icon/label；当前�
 
 ### Codex 项目
 
-Codex Agent 下默认展示最近活跃的 10 个项目，按最近一条对话更新时间倒序。项目使用约 26dp 线框文件夹图标、正常字重名称和 64–68dp 的纯文本行，不使用卡片或分割线；Mobile DTO 不携带本机根路径。项目超过 10 个时列表底部显示“展开更多项目”，每次追加一页且保持已加载顺序；没有更多数据时移除入口，不显示无效按钮。
+Codex Agent 下默认展示最近活跃的 10 个项目，按最近一条对话更新时间倒序。项目使用约 26dp 线框文件夹图标、正常字重名称和约 54dp 的紧凑纯文本行，不使用卡片或分割线；Mobile DTO 不携带本机根路径。项目超过 10 个时列表底部显示“展开更多项目”，每次追加一页且保持已加载顺序；没有更多数据时移除入口，不显示无效按钮。
 
 点击项目进入项目详情，默认加载该项目最近 15 条对话，按最后更新时间倒序；底部使用“显示更多”继续分页。项目页标题下显示 Agent，不展示 Desktop 本机路径；返回后恢复工作台滚动位置、已展开项目数量和搜索前状态。
 
@@ -122,7 +124,7 @@ Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项�
 
 ### 最近对话
 
-项目/Bot 区域下方展示当前 Agent 最近 20 条对话，跨项目合并且不按项目分组，按最后更新时间倒序。对话使用扁平文本行，左侧单行标题、右侧相对时间；列表 DTO 不携带 preview，状态优先级为 `等待处理 > 运行中 > 正在停止 > 失败 > 空闲`。
+项目/Bot 区域下方展示当前 Agent 最近 20 条对话，跨项目合并且不按项目分组，按最后更新时间倒序。对话使用与项目一致的约 54dp 紧凑扁平文本行，左侧单行标题、右侧相对时间；项目详情中的对话列表沿用相同行高。列表 DTO 不携带 preview，状态优先级为 `等待处理 > 运行中 > 正在停止 > 失败 > 空闲`。
 
 运行中的对话在卡片最右侧显示蓝色旋转 loading icon，并提供“运行中”的无障碍文本；它与 Daemon selector 的连接 loading 分属不同语义。点击任意对话进入会话详情。超过 20 条时工作台不继续分页，用户通过底部搜索访问更早对话；项目详情仍可独立分页。
 
@@ -141,13 +143,13 @@ Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项�
 
 ### Timeline
 
-顶部显示返回、标题、connection/status pill 和 overflow。内容 block：
+顶部使用约 60dp 的紧凑栏，返回和操作按钮同步缩小；对话标题使用约 15sp 常规字重并单行省略，标题下方显示“项目名称 · Agent 名称”。连接状态保留为标题下方前导状态点及完整无障碍朗读，overflow 继续承载低频操作。内容 block：
 
 - user/assistant：常规气泡/正文；由 `app/lib/features/conversation/markdown_renderer.dart` 使用 GFM 安全 renderer，支持标题、强调、列表、引用、表格、任务列表、代码块和选择/复制；不解析任意 HTML，不自动加载图片；`http/https` 链接显示目标 host 并在打开前二次确认。
 - summary item：daemon 仅返回 `summaryKind + summaryValue` 和语言无关 fallback；Flutter 用 ARB 生成完整本地化句子，不使用气泡、Markdown 或全文展开，status 同样以本地化弱化文字/图标展示。`hookPrompt` 不渲染；`commandExecution` 只展示命令。
 - plan：独立 Timeline 卡片，直接使用 daemon 返回的原始 Markdown。默认在卡片内渲染前 5 个源文件行；超过 5 行显示“查看完整计划”，点击后打开底部弹窗，以同一 Markdown renderer 渲染完整计划。大内容通过 `contentRef` 按 offset/nextOffset/hasMore 拼接；引用过期或读取失败时在弹窗内显示错误和重试入口。
-- reasoning：默认显示本地化低对比活动行，有正文时可展开查看；
-- tool/command：默认显示本地化低对比活动行，命令存在详情时可展开并使用等宽字体；无详情 summary 不显示无效展开入口，不展示 provider 内部类型名；
+- reasoning：默认显示约 14sp、紧凑行距的本地化低对比活动行，有正文时可展开查看；折叠时尾部箭头向右，展开后箭头向下；
+- tool/command：默认显示与 reasoning 相同的紧凑低对比活动行，命令存在详情时可展开并使用约 13sp 的紧凑等宽字体；折叠时尾部箭头向右，展开后箭头向下；无详情 summary 不显示无效展开入口，不展示 provider 内部类型名；
 - diff：文件名与增删摘要，点击进入只读 diff viewer；
 - system/error：非气泡 banner，提供可恢复动作。
 
@@ -230,7 +232,7 @@ Daemon selector 底部提供“添加电脑”和“管理电脑”。管理页�
 
 - 所有状态不仅靠颜色表达；运行、等待、失败同时有图标和文本。
 - 支持系统动态字体到至少 200%、屏幕阅读器 label、逻辑焦点顺序、44/48dp 最小触控目标和 reduced motion。
-- 工作台、项目列表和会话详情采用留白充足的扁平层级：常规正文约 16sp、列表标题约 17sp、section 标题 18sp、列表基础高度 66dp；动态字体放大时高度随内容增长，不以固定高度裁切文字。
+- 工作台、项目列表和会话详情采用留白清晰的扁平层级：常规正文约 16sp、列表标题约 17sp、section 标题 18sp、项目与对话列表基础高度约 54dp；会话活动行约 14sp、详情约 13sp，并保留至少 44dp 的可点击高度。动态字体放大时高度随内容增长，不以固定高度裁切文字。
 - Daemon 与 Agent selector 在大字体下保持独立可访问性 label；Daemon 下拉菜单和横向 Agent 项允许名称省略并提供完整朗读。横屏/平板使用列表—详情双栏，但保持相同返回栈语义，手机窄屏使用单列。
 - Markdown、diff 和 code block 支持选择/复制，但复制前对疑似 secret 不做不可靠自动脱敏承诺，使用明确隐私提示。
 

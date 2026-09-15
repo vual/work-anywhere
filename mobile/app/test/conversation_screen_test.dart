@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:work_anywhere/core/core_gateway.dart';
+import 'package:work_anywhere/core/models.dart';
 import 'package:work_anywhere/features/conversation/conversation_screen.dart';
 import 'package:work_anywhere/features/workspace/workspace_controller.dart';
 import 'package:work_anywhere/l10n/generated/app_localizations.dart';
@@ -37,6 +38,22 @@ class _FakeWorkspaceController extends WorkspaceController {
   @override
   Future<WorkspaceState> build() async => const WorkspaceState(
     needsPairing: false,
+    agents: [
+      AgentSummary(
+        id: 'agent-1',
+        name: 'Codex',
+        kind: 'codex',
+        status: 'ready',
+      ),
+    ],
+    projects: [
+      ProjectSummary(
+        id: 'project-1',
+        agentId: 'agent-1',
+        name: 'Project Alpha',
+        updatedAt: 0,
+      ),
+    ],
     selectedAgentId: 'agent-1',
     selectedDaemonId: 'daemon-1',
   );
@@ -506,6 +523,8 @@ void main() {
         'result': {
           'conversation': {
             'id': 'thread-command',
+            'agentId': 'agent-1',
+            'projectId': 'project-1',
             'title': 'Command thread',
             'running': false,
           },
@@ -540,12 +559,30 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 200));
 
+    final appBar = tester.widget<AppBar>(find.byType(AppBar));
+    final title = tester.widget<Text>(find.text('Command thread'));
+    expect(appBar.toolbarHeight, 60);
+    expect(title.style?.fontSize, 15);
+    expect(title.style?.fontWeight, FontWeight.w400);
+    expect(find.text('Project Alpha · Codex'), findsOneWidget);
     expect(find.text('命令执行'), findsOneWidget);
     expect(find.text('commandExecution'), findsNothing);
     expect(find.text('echo hello'), findsNothing);
+    expect(find.byIcon(Icons.keyboard_arrow_right_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.keyboard_arrow_down_rounded), findsNothing);
+    final activityTitle = tester.widget<Text>(find.text('命令执行'));
+    expect(activityTitle.style?.fontSize, 14);
+    expect(activityTitle.style?.height, 1.25);
     await tester.tap(find.text('命令执行'));
     await tester.pumpAndSettle();
     expect(find.text('echo hello'), findsOneWidget);
+    expect(find.byIcon(Icons.keyboard_arrow_right_rounded), findsNothing);
+    expect(find.byIcon(Icons.keyboard_arrow_down_rounded), findsOneWidget);
+    final commandDetail = tester.widget<SelectableText>(
+      find.widgetWithText(SelectableText, 'echo hello'),
+    );
+    expect(commandDetail.style?.fontSize, 13);
+    expect(commandDetail.style?.height, 1.35);
   });
 
   testWidgets('timeline summary is localized in English', (tester) async {

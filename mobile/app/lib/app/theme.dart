@@ -33,9 +33,16 @@ extension WawThemeColors on ThemeData {
 /// Pairing/onboarding deliberately keeps the default Material sizing.
 abstract final class WawCompact {
   static const horizontalPadding = 24.0;
-  static const listTileHeight = 66.0;
+  static const listTileHeight = 54.0;
   static const body = TextStyle(fontSize: 16, height: 1.52);
   static const listTitle = TextStyle(fontSize: 17, height: 1.28);
+  static const conversationTitle = TextStyle(
+    fontSize: 15,
+    height: 1.2,
+    fontWeight: FontWeight.w400,
+  );
+  static const activity = TextStyle(fontSize: 14, height: 1.25);
+  static const activityDetail = TextStyle(fontSize: 13, height: 1.35);
   static const sectionTitle = TextStyle(
     fontSize: 18,
     height: 1.25,

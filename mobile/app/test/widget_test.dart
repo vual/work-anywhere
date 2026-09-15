@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:work_anywhere/app/theme.dart';
 import 'package:work_anywhere/core/models.dart';
 import 'package:work_anywhere/features/pairing/pairing_screen.dart';
 import 'package:work_anywhere/features/workspace/workspace_controller.dart';
@@ -73,6 +74,52 @@ void main() {
     expect(find.text('Work Any Where'), findsNothing);
   });
 
+  testWidgets('daemon selector sheet is opaque above workspace controls', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    const data = WorkspaceState(
+      needsPairing: false,
+      daemons: [
+        DaemonSummary(
+          id: 'daemon-1',
+          name: 'My PC',
+          phase: ConnectionPhase.offline,
+        ),
+      ],
+      selectedDaemonId: 'daemon-1',
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          locale: const Locale('zh', 'CN'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          theme: buildLightTheme(),
+          home: const WorkspaceScreen(data: data),
+        ),
+      ),
+    );
+
+    await tester.tap(
+      find.byKey(const Key('workspace-daemon-selector')),
+    );
+    await tester.pumpAndSettle();
+
+    final modalSheet = tester.widget<BottomSheet>(
+      find.ancestor(
+        of: find.text('管理电脑'),
+        matching: find.byType(BottomSheet),
+      ),
+    );
+    expect(modalSheet.backgroundColor, Colors.white);
+    expect(modalSheet.clipBehavior, Clip.antiAlias);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('workspace keeps the running hint visible and daemon at right', (
     tester,
   ) async {
@@ -125,7 +172,7 @@ void main() {
     expect(runningTextRect.right, lessThanOrEqualTo(daemonRect.left));
   });
 
-  testWidgets('workspace uses compact rows and supports 200 percent text', (
+  testWidgets('workspace uses 54dp rows and supports 200 percent text', (
     tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(360, 800));
@@ -189,7 +236,7 @@ void main() {
     expect(tester.takeException(), isNull);
     final compactRows = tester
         .widgetList<ListTile>(find.byType(ListTile))
-        .where((tile) => tile.minTileHeight == 66);
+        .where((tile) => tile.minTileHeight == 54);
     expect(compactRows, hasLength(2));
     expect(tester.widget<Text>(find.text('Project A')).style?.fontSize, 17);
     expect(tester.widget<Text>(find.text('项目')).style?.fontSize, 18);

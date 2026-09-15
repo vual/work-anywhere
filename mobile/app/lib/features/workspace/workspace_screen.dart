@@ -307,6 +307,11 @@ class _TopBar extends StatelessWidget {
   void _showDaemons(BuildContext context, List<DaemonSummary> items) {
     showModalBottomSheet<void>(
       context: context,
+      backgroundColor: Theme.of(context).floatingSurface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      clipBehavior: Clip.antiAlias,
       showDragHandle: true,
       builder: (context) => SafeArea(
         child: Column(
