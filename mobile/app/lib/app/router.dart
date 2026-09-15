@@ -25,8 +25,10 @@ final appRouter = GoRouter(
     ),
     GoRoute(
       path: '/conversation/:id',
-      builder: (context, state) =>
-          ConversationScreen(conversationId: state.pathParameters['id']!),
+      builder: (context, state) => ConversationScreen(
+        conversationId: state.pathParameters['id']!,
+        projectName: state.extra as String?,
+      ),
     ),
   ],
 );

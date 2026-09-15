@@ -166,7 +166,10 @@ class _ProjectScreenState extends ConsumerState<ProjectScreen> {
                             color: Theme.of(context).mutedInk,
                           ),
                         ),
-                  onTap: () => context.push('/conversation/${item.id}'),
+                  onTap: () => context.push(
+                    '/conversation/${item.id}',
+                    extra: project?.name,
+                  ),
                 );
               },
             ),

@@ -123,8 +123,13 @@ class WorkspaceScreen extends ConsumerWidget {
               else
                 SliverList.builder(
                   itemCount: conversations.length,
-                  itemBuilder: (context, index) =>
-                      _ConversationRow(conversation: conversations[index]),
+                  itemBuilder: (context, index) => _ConversationRow(
+                    conversation: conversations[index],
+                    projectName: _projectName(
+                      data,
+                      conversations[index].projectId,
+                    ),
+                  ),
                 ),
               const SliverToBoxAdapter(child: SizedBox(height: 88)),
             ],
@@ -203,7 +208,10 @@ class _TopBar extends StatelessWidget {
                                 final item = data.conversations.firstWhere(
                                   (item) => item.running,
                                 );
-                                context.push('/conversation/${item.id}');
+                                context.push(
+                                  '/conversation/${item.id}',
+                                  extra: _projectName(data, item.projectId),
+                                );
                               },
                               child: Padding(
                                 padding: const EdgeInsets.all(8),
@@ -413,8 +421,9 @@ class _ProjectRow extends StatelessWidget {
 }
 
 class _ConversationRow extends StatelessWidget {
-  const _ConversationRow({required this.conversation});
+  const _ConversationRow({required this.conversation, this.projectName});
   final ConversationSummary conversation;
+  final String? projectName;
   @override
   Widget build(BuildContext context) => ListTile(
     minTileHeight: WawCompact.listTileHeight,
@@ -444,8 +453,14 @@ class _ConversationRow extends StatelessWidget {
               color: Theme.of(context).mutedInk,
             ),
           ),
-    onTap: () => context.push('/conversation/${conversation.id}'),
+    onTap: () =>
+        context.push('/conversation/${conversation.id}', extra: projectName),
   );
+}
+
+String? _projectName(WorkspaceState data, String projectId) {
+  if (projectId.isEmpty) return null;
+  return data.projects.where((item) => item.id == projectId).firstOrNull?.name;
 }
 
 class _SectionTitle extends StatelessWidget {
