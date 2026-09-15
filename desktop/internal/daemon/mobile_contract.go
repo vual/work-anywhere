@@ -2,9 +2,12 @@ package daemon
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -23,6 +26,8 @@ const (
 	mobileContentRefTTL            = 15 * time.Minute
 	mobileMaxContentRefs           = 2048
 	mobileMaxTimelineProviderPages = 8
+	mobileProjectProviderPageLimit = 1000
+	mobileMaxProjectProviderPages  = 128
 	mobileSummaryValueBytes        = 512
 )
 
@@ -125,6 +130,215 @@ func normalizeProjectList(agentID string, raw json.RawMessage) (mobilePage[mobil
 		page.Items = append(page.Items, mobileProjectSummary{ID: item.ID, AgentID: agentID, Name: item.Name, UpdatedAt: item.UpdatedAt})
 	}
 	return page, nil
+}
+
+type mobileProjectCursor struct {
+	UpdatedAt int64
+	ProjectID string
+}
+
+type mobileProviderProject struct {
+	ID   string
+	Name string
+}
+
+type mobileProviderConversation struct {
+	ID        string `json:"id"`
+	ProjectID string `json:"projectId"`
+	UpdatedAt int64  `json:"updatedAt"`
+}
+
+// mobileProjectList derives project recency from the latest conversation rather
+// than the provider's project metadata timestamp. The latter changes when a
+// project is edited, but is not guaranteed to change when a thread is updated.
+func (m *Manager) mobileProjectList(instance *Instance, params json.RawMessage) (mobilePage[mobileProjectSummary], error) {
+	return m.mobileProjectListWithCaller(instance, instance, params)
+}
+
+func (m *Manager) mobileProjectListWithCaller(instance *Instance, caller mobileProviderCaller, params json.RawMessage) (mobilePage[mobileProjectSummary], error) {
+	var request struct {
+		Cursor string `json:"cursor"`
+		Limit  int    `json:"limit"`
+	}
+	if err := json.Unmarshal(params, &request); err != nil {
+		return mobilePage[mobileProjectSummary]{}, fmt.Errorf("decode project list params: %w", err)
+	}
+	limit := request.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > mobileProjectProviderPageLimit {
+		limit = mobileProjectProviderPageLimit
+	}
+
+	projects, err := fetchMobileProjects(m.ctx, caller)
+	if err != nil {
+		return mobilePage[mobileProjectSummary]{}, err
+	}
+	conversations, err := fetchMobileProjectConversations(m.ctx, caller)
+	if err != nil {
+		return mobilePage[mobileProjectSummary]{}, err
+	}
+
+	latestByProject := make(map[string]int64, len(projects))
+	for _, conversation := range conversations {
+		if conversation.ProjectID == "" {
+			continue
+		}
+		if latest, exists := latestByProject[conversation.ProjectID]; !exists || conversation.UpdatedAt > latest {
+			latestByProject[conversation.ProjectID] = conversation.UpdatedAt
+		}
+	}
+
+	items := make([]mobileProjectSummary, 0, len(projects))
+	for _, project := range projects {
+		updatedAt, hasConversation := latestByProject[project.ID]
+		if !hasConversation {
+			continue
+		}
+		items = append(items, mobileProjectSummary{ID: project.ID, AgentID: instance.descriptor.ID, Name: project.Name, UpdatedAt: updatedAt})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].UpdatedAt != items[j].UpdatedAt {
+			return items[i].UpdatedAt > items[j].UpdatedAt
+		}
+		return items[i].ID > items[j].ID
+	})
+
+	start := 0
+	if request.Cursor != "" {
+		cursor, err := decodeMobileProjectCursor(request.Cursor)
+		if err != nil {
+			return mobilePage[mobileProjectSummary]{}, err
+		}
+		for start < len(items) && !mobileProjectAfterCursor(items[start], cursor) {
+			start++
+		}
+	}
+	if start >= len(items) {
+		return mobilePage[mobileProjectSummary]{Items: []mobileProjectSummary{}}, nil
+	}
+
+	end := start + limit
+	if end > len(items) {
+		end = len(items)
+	}
+	page := mobilePage[mobileProjectSummary]{Items: items[start:end]}
+	if end < len(items) {
+		page.NextCursor = encodeMobileProjectCursor(mobileProjectCursor{UpdatedAt: items[end-1].UpdatedAt, ProjectID: items[end-1].ID})
+	}
+	return page, nil
+}
+
+func fetchMobileProjects(ctx context.Context, instance mobileProviderCaller) ([]mobileProviderProject, error) {
+	projects := make([]mobileProviderProject, 0)
+	cursor := ""
+	seenCursors := make(map[string]struct{})
+	for page := 0; page < mobileMaxProjectProviderPages; page++ {
+		params := map[string]any{"limit": mobileProjectProviderPageLimit}
+		if cursor != "" {
+			params["cursor"] = cursor
+		}
+		rawParams, err := json.Marshal(params)
+		if err != nil {
+			return nil, err
+		}
+		raw, err := instance.Call(ctx, "project/list", rawParams)
+		if err != nil {
+			return nil, err
+		}
+		var response struct {
+			Data []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"data"`
+			NextCursor *string `json:"nextCursor"`
+		}
+		if err := json.Unmarshal(raw, &response); err != nil {
+			return nil, fmt.Errorf("decode project/list: %w", err)
+		}
+		for _, item := range response.Data {
+			if item.ID == "" {
+				return nil, errors.New("project/list item has no id")
+			}
+			projects = append(projects, mobileProviderProject{ID: item.ID, Name: item.Name})
+		}
+		if response.NextCursor == nil || *response.NextCursor == "" {
+			return projects, nil
+		}
+		cursor = *response.NextCursor
+		if _, exists := seenCursors[cursor]; exists {
+			return nil, errors.New("project/list returned a cursor loop")
+		}
+		seenCursors[cursor] = struct{}{}
+	}
+	return nil, errors.New("project/list exceeded pagination limit")
+}
+
+func fetchMobileProjectConversations(ctx context.Context, instance mobileProviderCaller) ([]mobileProviderConversation, error) {
+	conversations := make([]mobileProviderConversation, 0)
+	cursor := ""
+	seenCursors := make(map[string]struct{})
+	for page := 0; page < mobileMaxProjectProviderPages; page++ {
+		params := map[string]any{
+			"limit":         mobileProjectProviderPageLimit,
+			"sortKey":       "updated_at",
+			"sortDirection": "desc",
+		}
+		if cursor != "" {
+			params["cursor"] = cursor
+		}
+		rawParams, err := json.Marshal(params)
+		if err != nil {
+			return nil, err
+		}
+		raw, err := instance.Call(ctx, "thread/list", rawParams)
+		if err != nil {
+			return nil, err
+		}
+		var response struct {
+			Data       []mobileProviderConversation `json:"data"`
+			NextCursor *string                      `json:"nextCursor"`
+		}
+		if err := json.Unmarshal(raw, &response); err != nil {
+			return nil, fmt.Errorf("decode thread/list: %w", err)
+		}
+		conversations = append(conversations, response.Data...)
+		if response.NextCursor == nil || *response.NextCursor == "" {
+			return conversations, nil
+		}
+		cursor = *response.NextCursor
+		if _, exists := seenCursors[cursor]; exists {
+			return nil, errors.New("thread/list returned a cursor loop")
+		}
+		seenCursors[cursor] = struct{}{}
+	}
+	return nil, errors.New("thread/list exceeded pagination limit")
+}
+
+func mobileProjectAfterCursor(item mobileProjectSummary, cursor mobileProjectCursor) bool {
+	return item.UpdatedAt < cursor.UpdatedAt || (item.UpdatedAt == cursor.UpdatedAt && item.ID < cursor.ProjectID)
+}
+
+func encodeMobileProjectCursor(cursor mobileProjectCursor) string {
+	value := strconv.FormatInt(cursor.UpdatedAt, 10) + ":" + cursor.ProjectID
+	return base64.RawURLEncoding.EncodeToString([]byte(value))
+}
+
+func decodeMobileProjectCursor(value string) (mobileProjectCursor, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return mobileProjectCursor{}, fmt.Errorf("invalid project cursor: %w", err)
+	}
+	parts := strings.SplitN(string(decoded), ":", 2)
+	if len(parts) != 2 || parts[1] == "" {
+		return mobileProjectCursor{}, errors.New("invalid project cursor")
+	}
+	updatedAt, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return mobileProjectCursor{}, errors.New("invalid project cursor")
+	}
+	return mobileProjectCursor{UpdatedAt: updatedAt, ProjectID: parts[1]}, nil
 }
 
 // mobileConversationList keeps project navigation working for threads created

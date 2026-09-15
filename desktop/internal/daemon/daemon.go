@@ -373,11 +373,11 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 			response.Error = &protocol.ControlError{Code: "invalid_target", Message: err.Error()}
 			break
 		}
-		result, callErr := instance.Call(m.ctx, "project/list", params)
+		result, callErr := m.mobileProjectList(instance, params)
 		if callErr != nil {
 			response.Error = &protocol.ControlError{Code: "provider_error", Message: callErr.Error()}
-		} else if response.Result, callErr = normalizeProjectList(instance.descriptor.ID, result); callErr != nil {
-			response.Error = &protocol.ControlError{Code: "invalid_provider_response", Message: callErr.Error()}
+		} else {
+			response.Result = result
 		}
 	case "conversation.read", "conversation.timeline.list", "conversation.content.read", "conversation.content.resolve":
 		if request.Contract != protocol.MobileControlContract {

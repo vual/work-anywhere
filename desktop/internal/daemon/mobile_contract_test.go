@@ -31,6 +31,22 @@ type pagedMobileCaller struct {
 	pages   map[string]json.RawMessage
 }
 
+type projectRecencyCaller struct {
+	projects      json.RawMessage
+	conversations json.RawMessage
+}
+
+func (c *projectRecencyCaller) Call(_ context.Context, method string, _ json.RawMessage) (json.RawMessage, error) {
+	switch method {
+	case "project/list":
+		return c.projects, nil
+	case "thread/list":
+		return c.conversations, nil
+	default:
+		return nil, fmt.Errorf("unexpected method %q", method)
+	}
+}
+
 func (c *recordingMobileCaller) Call(_ context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
 	if method != "thread/items/list" {
 		return nil, errors.New("unexpected method")
@@ -546,6 +562,34 @@ func TestNormalizeProjectList(t *testing.T) {
 	encoded, _ := json.Marshal(page)
 	if strings.Contains(string(encoded), "D:/CodeSpace/work-anywhere") || strings.Contains(string(encoded), "root") {
 		t.Fatalf("project root leaked into mobile DTO: %s", encoded)
+	}
+}
+
+func TestMobileProjectListUsesLatestConversationTime(t *testing.T) {
+	caller := &projectRecencyCaller{
+		projects:      json.RawMessage(`{"data":[{"id":"p-old","name":"Old","updatedAt":900},{"id":"p-new","name":"New","updatedAt":1},{"id":"p-empty","name":"Empty","updatedAt":999}]}`),
+		conversations: json.RawMessage(`{"data":[{"id":"t-old","projectId":"p-old","updatedAt":100},{"id":"t-new","projectId":"p-new","updatedAt":200},{"id":"t-newer","projectId":"p-new","updatedAt":300}]}`),
+	}
+	manager := &Manager{ctx: context.Background()}
+	instance := &Instance{descriptor: protocol.InstanceDescriptor{ID: "agent-1"}}
+	page, err := manager.mobileProjectListWithCaller(instance, caller, json.RawMessage(`{"limit":10}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 2 || page.Items[0].ID != "p-new" || page.Items[1].ID != "p-old" {
+		t.Fatalf("projects were not ordered by latest conversation: %#v", page.Items)
+	}
+	if page.Items[0].UpdatedAt != 300 || page.Items[1].UpdatedAt != 100 {
+		t.Fatalf("project timestamps were not derived from conversations: %#v", page.Items)
+	}
+	first, err := manager.mobileProjectListWithCaller(instance, caller, json.RawMessage(`{"limit":1}`))
+	if err != nil || len(first.Items) != 1 || first.NextCursor == "" {
+		t.Fatalf("first project page was not paginated: %#v, %v", first, err)
+	}
+	secondParams, _ := json.Marshal(map[string]any{"limit": 1, "cursor": first.NextCursor})
+	second, err := manager.mobileProjectListWithCaller(instance, caller, secondParams)
+	if err != nil || len(second.Items) != 1 || second.Items[0].ID != "p-old" {
+		t.Fatalf("project cursor did not continue sorted results: %#v, %v", second, err)
 	}
 }
 

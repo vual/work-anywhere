@@ -291,11 +291,17 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
     }
   }
 
-  List<ProjectSummary> _projects(Map<String, dynamic> result) =>
-      ((result['items'] as List<dynamic>?) ?? const [])
-          .cast<Map<String, dynamic>>()
-          .map(ProjectSummary.fromJson)
-          .toList(growable: false);
+  List<ProjectSummary> _projects(Map<String, dynamic> result) {
+    final projects = ((result['items'] as List<dynamic>?) ?? const [])
+        .cast<Map<String, dynamic>>()
+        .map(ProjectSummary.fromJson)
+        .toList();
+    projects.sort((a, b) {
+      final byUpdatedAt = b.updatedAt.compareTo(a.updatedAt);
+      return byUpdatedAt != 0 ? byUpdatedAt : b.id.compareTo(a.id);
+    });
+    return List.unmodifiable(projects);
+  }
   List<ConversationSummary> _conversations(Map<String, dynamic> result) =>
       ((result['items'] as List<dynamic>?) ?? const [])
           .cast<Map<String, dynamic>>()
