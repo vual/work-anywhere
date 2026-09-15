@@ -1069,7 +1069,7 @@ class _ComposerPanel extends StatelessWidget {
               onRemove: onRemoveImage,
             ),
           Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               IconButton(
                 onPressed: enabled && !selectingImages ? onPickImages : null,
@@ -1082,6 +1082,7 @@ class _ComposerPanel extends StatelessWidget {
                   enabled: enabled,
                   minLines: 1,
                   maxLines: 5,
+                  textAlignVertical: TextAlignVertical.center,
                   style: WawCompact.body,
                   decoration: InputDecoration(
                     filled: false,

@@ -159,7 +159,7 @@ Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项�
 
 ### Composer
 
-仅当 `online + idle + turn.start scope + no blocking action` 时可发送；Desktop 的 idle 判定只针对当前 thread，同一 Agent 的其他 thread 运行中不应禁用当前会话。Composer 是 SafeArea 内单个悬浮圆角容器，整合附件、输入框和发送/停止按钮。相册一次或分次最多选择 10 张图片，按选择顺序去重并追加；已选图片在输入框内部以单行缩略图展示，每张可单独移除，超出屏幕宽度后横向滑动。没有文字且没有附件时发送按钮禁用，输入文字或选中附件后启用。
+仅当 `online + idle + turn.start scope + no blocking action` 时可发送；Desktop 的 idle 判定只针对当前 thread，同一 Agent 的其他 thread 运行中不应禁用当前会话。Composer 是 SafeArea 内单个悬浮圆角容器，整合附件、输入框和发送/停止按钮；附件加号、输入文字和发送按钮在同一行垂直居中。相册一次或分次最多选择 10 张图片，按选择顺序去重并追加；已选图片在输入框内部以单行缩略图展示，每张可单独移除，超出屏幕宽度后横向滑动。没有文字且没有附件时发送按钮禁用，输入文字或选中附件后启用。
 
 ### 计划确认
 

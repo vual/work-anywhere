@@ -1024,6 +1024,9 @@ void main() {
     expect(find.byType(TextField), findsOneWidget);
     expect(find.byIcon(Icons.add_rounded), findsOneWidget);
     expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+    final addButtonRect = tester.getRect(find.byIcon(Icons.add_rounded));
+    final composerTextRect = tester.getRect(find.byType(TextField));
+    expect(addButtonRect.center.dy, closeTo(composerTextRect.center.dy, 1));
     expect(find.text('任务运行中 · 停止'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
