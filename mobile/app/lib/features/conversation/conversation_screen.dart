@@ -1476,7 +1476,7 @@ class _ActivityTimelineItemState extends State<_ActivityTimelineItem> {
           ),
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.only(bottom: 8),
+              padding: EdgeInsets.zero,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [

@@ -41,8 +41,8 @@ abstract final class WawCompact {
     height: 1.2,
     fontWeight: FontWeight.w400,
   );
-  static const activity = TextStyle(fontSize: 14, height: 1.25);
-  static const activityDetail = TextStyle(fontSize: 13, height: 1.35);
+  static const activity = TextStyle(fontSize: 14, height: 1.15);
+  static const activityDetail = TextStyle(fontSize: 13, height: 1.25);
   static const sectionTitle = TextStyle(
     fontSize: 18,
     height: 1.25,

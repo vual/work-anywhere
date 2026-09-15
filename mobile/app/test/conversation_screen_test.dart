@@ -572,7 +572,7 @@ void main() {
     expect(find.byIcon(Icons.keyboard_arrow_down_rounded), findsNothing);
     final activityTitle = tester.widget<Text>(find.text('命令执行'));
     expect(activityTitle.style?.fontSize, 14);
-    expect(activityTitle.style?.height, 1.25);
+    expect(activityTitle.style?.height, 1.15);
     await tester.tap(find.text('命令执行'));
     await tester.pumpAndSettle();
     expect(find.text('echo hello'), findsOneWidget);
@@ -582,7 +582,7 @@ void main() {
       find.widgetWithText(SelectableText, 'echo hello'),
     );
     expect(commandDetail.style?.fontSize, 13);
-    expect(commandDetail.style?.height, 1.35);
+    expect(commandDetail.style?.height, 1.25);
   });
 
   testWidgets('timeline summary is localized in English', (tester) async {
