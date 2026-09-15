@@ -573,6 +573,13 @@ void main() {
     final activityTitle = tester.widget<Text>(find.text('命令执行'));
     expect(activityTitle.style?.fontSize, 14);
     expect(activityTitle.style?.height, 1.15);
+    final activityRow = tester.widget<ConstrainedBox>(
+      find.ancestor(
+        of: find.text('命令执行'),
+        matching: find.byType(ConstrainedBox),
+      ),
+    );
+    expect(activityRow.constraints.minHeight, 32);
     await tester.tap(find.text('命令执行'));
     await tester.pumpAndSettle();
     expect(find.text('echo hello'), findsOneWidget);

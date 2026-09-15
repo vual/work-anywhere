@@ -1486,7 +1486,7 @@ class _ActivityTimelineItemState extends State<_ActivityTimelineItem> {
                         ? () => setState(() => _expanded = !_expanded)
                         : null,
                     child: ConstrainedBox(
-                      constraints: const BoxConstraints(minHeight: 44),
+                      constraints: const BoxConstraints(minHeight: 32),
                       child: Row(
                         children: [
                           Icon(icon, size: 18, color: statusColor),
