@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/localization.dart';
+import '../../app/chrome.dart';
 import '../../app/theme.dart';
 import '../../core/models.dart';
 import '../workspace/workspace_controller.dart';
@@ -67,16 +68,47 @@ class _ProjectScreenState extends ConsumerState<ProjectScreen> {
     final project = workspace?.projects
         .where((item) => item.id == widget.projectId)
         .firstOrNull;
+    final daemon = workspace?.daemons
+        .where((item) => item.id == workspace.selectedDaemonId)
+        .firstOrNull;
     return Scaffold(
       appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              project?.name ?? context.l10n.project,
-              style: WawCompact.appBarTitle,
-            ),
-          ],
+        automaticallyImplyLeading: false,
+        leadingWidth: 80,
+        leading: Padding(
+          padding: const EdgeInsets.only(left: 20, top: 8, bottom: 8),
+          child: WawCircleButton(
+            icon: Icons.arrow_back_rounded,
+            onPressed: () => context.pop(),
+          ),
+        ),
+        titleSpacing: 12,
+        title: WawTitleBlock(
+          title: project?.name ?? context.l10n.project,
+          subtitle: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.computer_rounded, size: 14),
+              const SizedBox(width: 5),
+              Flexible(
+                child: Text(
+                  daemon?.name ?? context.l10n.computer,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: WawCompact.metadata.copyWith(
+                    color: Theme.of(context).mutedInk,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 7),
+              Text(
+                '• ${daemon?.phase == ConnectionPhase.online ? context.l10n.connected : context.l10n.offline}',
+                style: WawCompact.metadata.copyWith(
+                  color: Theme.of(context).mutedInk,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
       body: _error != null && _items.isEmpty
@@ -90,7 +122,7 @@ class _ProjectScreenState extends ConsumerState<ProjectScreen> {
               ),
             )
           : ListView.builder(
-              padding: const EdgeInsets.only(bottom: 24),
+              padding: const EdgeInsets.only(top: 12, bottom: 104),
               itemCount: _items.length + 1,
               itemBuilder: (context, index) {
                 if (index == _items.length) {
@@ -128,13 +160,18 @@ class _ProjectScreenState extends ConsumerState<ProjectScreen> {
                             strokeWidth: 2.5,
                           ),
                         )
-                      : null,
+                      : Text(
+                          _projectRelativeTime(context, item.updatedAt),
+                          style: WawCompact.metadata.copyWith(
+                            color: Theme.of(context).mutedInk,
+                          ),
+                        ),
                   onTap: () => context.push('/conversation/${item.id}'),
                 );
               },
             ),
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-      floatingActionButton: FloatingActionButton(
+      floatingActionButton: FloatingActionButton.extended(
         onPressed: () => context.push(
           '/project/${widget.projectId}/new',
           extra: project?.name ?? context.l10n.project,
@@ -142,10 +179,25 @@ class _ProjectScreenState extends ConsumerState<ProjectScreen> {
         tooltip: context.l10n.newConversation,
         backgroundColor: wawBlue,
         foregroundColor: Colors.white,
-        child: const Icon(Icons.edit_outlined),
+        icon: const Icon(Icons.edit_outlined),
+        label: Text(context.l10n.newConversation),
       ),
     );
   }
+}
+
+String _projectRelativeTime(BuildContext context, int seconds) {
+  if (seconds <= 0) return '';
+  final difference = DateTime.now().difference(
+    DateTime.fromMillisecondsSinceEpoch(seconds * 1000),
+  );
+  if (difference.inMinutes < 1) return context.l10n.justNow;
+  if (difference.inHours < 1) {
+    return context.l10n.minutesAgo(difference.inMinutes);
+  }
+  if (difference.inDays < 1) return context.l10n.hoursAgo(difference.inHours);
+  if (difference.inDays < 7) return context.l10n.daysAgo(difference.inDays);
+  return context.l10n.weeksAgo((difference.inDays / 7).floor());
 }
 
 extension _FirstOrNull<T> on Iterable<T> {

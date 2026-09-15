@@ -6,10 +6,13 @@ import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../app/chrome.dart';
 import '../../app/localization.dart';
 import '../../app/theme.dart';
 import '../../core/core_gateway.dart';
+import '../../core/models.dart';
 import '../workspace/workspace_controller.dart';
 import 'conversation_controller.dart';
 import 'markdown_renderer.dart';
@@ -17,6 +20,8 @@ import 'markdown_renderer.dart';
 const _maxImageCount = 10;
 const _maxImageBytes = 48 * 1024 * 1024;
 const _bottomFollowThreshold = 24.0;
+const _showJumpToBottomThreshold = 96.0;
+const _dismissedPlanConfirmationsKey = 'dismissedPlanConfirmations';
 
 @visibleForTesting
 final imagePickerProvider = Provider<ImagePicker>((ref) => ImagePicker());
@@ -39,6 +44,7 @@ class ConversationScreen extends ConsumerStatefulWidget {
 
 class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   final _composer = TextEditingController();
+  final _planRevision = TextEditingController();
   final _scroll = ScrollController();
   ConversationController? _controller;
   final List<XFile> _images = [];
@@ -46,6 +52,11 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   bool _selectingImages = false;
   bool _didAutoScrollToBottom = false;
   bool _followScrollScheduled = false;
+  bool _showJumpToBottom = false;
+  bool _planSubmitting = false;
+  bool _planPreferencesLoaded = false;
+  final Set<String> _dismissedPlanConfirmations = {};
+  final Set<String> _handledPlanConfirmations = {};
   int _timelineTailSignature = 0;
   late String? _activeConversationId = widget.conversationId;
 
@@ -53,15 +64,21 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   bool get _canSend =>
       !_submitting &&
       !_selectingImages &&
+      (_controller?.state.online ?? true) &&
+      (_controller?.state.actions.isEmpty ?? true) &&
       (_composer.text.trim().isNotEmpty || _images.isNotEmpty);
 
-  String? get _agentId => ref.read(workspaceProvider).value?.selectedAgentId;
+  String? get _agentId =>
+      _controller?.agentId ??
+      ref.read(workspaceProvider).value?.selectedAgentId;
 
   @override
   void initState() {
     super.initState();
     _composer.addListener(_composerChanged);
+    _planRevision.addListener(_composerChanged);
     _scroll.addListener(_onScroll);
+    Future<void>.microtask(_loadDismissedPlanConfirmations);
     Future<void>.microtask(_initializeConversation);
   }
 
@@ -91,8 +108,12 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
 
   @override
   void dispose() {
-    _composer.dispose();
-    _composer.removeListener(_composerChanged);
+    _composer
+      ..removeListener(_composerChanged)
+      ..dispose();
+    _planRevision
+      ..removeListener(_composerChanged)
+      ..dispose();
     _scroll
       ..removeListener(_onScroll)
       ..dispose();
@@ -235,8 +256,108 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   }
 
   void _onScroll() {
+    final shouldShow =
+        _scroll.hasClients &&
+        _scroll.position.extentAfter > _showJumpToBottomThreshold;
+    if (shouldShow != _showJumpToBottom && mounted) {
+      setState(() => _showJumpToBottom = shouldShow);
+    }
     if (_scroll.hasClients && _scroll.position.pixels <= 80) {
       _loadOlder();
+    }
+  }
+
+  Future<void> _loadDismissedPlanConfirmations() async {
+    final preferences = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _dismissedPlanConfirmations.addAll(
+        preferences.getStringList(_dismissedPlanConfirmationsKey) ?? const [],
+      );
+      _planPreferencesLoaded = true;
+    });
+  }
+
+  String? _planDismissalKey(Map<String, dynamic>? confirmation) {
+    final planItemId = confirmation?['planItemId'] as String?;
+    final threadId = _activeConversationId;
+    final workspace = ref.read(workspaceProvider).value;
+    final daemonId = workspace?.selectedDaemonId;
+    if (planItemId == null || threadId == null || daemonId == null) return null;
+    return '$daemonId:$threadId:$planItemId';
+  }
+
+  bool _showPlanConfirmation(ConversationState state) {
+    if (!_planPreferencesLoaded ||
+        state.actions.isNotEmpty ||
+        state.planConfirmation == null) {
+      return false;
+    }
+    final key = _planDismissalKey(state.planConfirmation);
+    return key != null &&
+        !_dismissedPlanConfirmations.contains(key) &&
+        !_handledPlanConfirmations.contains(key);
+  }
+
+  Future<void> _skipPlan(Map<String, dynamic> confirmation) async {
+    final key = _planDismissalKey(confirmation);
+    if (key == null) return;
+    setState(() {
+      _dismissedPlanConfirmations.add(key);
+      _planRevision.clear();
+    });
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setStringList(
+      _dismissedPlanConfirmationsKey,
+      _dismissedPlanConfirmations.toList(growable: false),
+    );
+  }
+
+  Future<void> _respondToPlan(
+    Map<String, dynamic> confirmation,
+    String decision,
+  ) async {
+    if (_planSubmitting || _agentId == null || _activeConversationId == null) {
+      return;
+    }
+    final text = decision == 'implement'
+        ? context.l10n.executePlanTurnPrompt
+        : _planRevision.text.trim();
+    if (text.isEmpty) return;
+    final dismissalKey = _planDismissalKey(confirmation);
+    final expectedRevision = (confirmation['revision'] as num?)?.toInt();
+    setState(() => _planSubmitting = true);
+    try {
+      await ref.read(coreGatewayProvider).call('plan.respond', {
+        'agentId': _agentId,
+        'threadId': _activeConversationId,
+        'planItemId': confirmation['planItemId'],
+        'expectedRevision': expectedRevision,
+        'decision': decision,
+        'text': text,
+      }, timeoutMilliseconds: 60000);
+      _planRevision.clear();
+      if (dismissalKey != null) {
+        _handledPlanConfirmations.add(dismissalKey);
+      }
+      await _refresh();
+    } catch (error) {
+      await _controller?.refreshConversation();
+      final refreshed = _controller?.state;
+      final currentConfirmation = refreshed?.planConfirmation;
+      final accepted =
+          refreshed != null &&
+          (refreshed.revision != expectedRevision ||
+              currentConfirmation == null ||
+              currentConfirmation['planItemId'] != confirmation['planItemId'] ||
+              currentConfirmation['turnId'] != confirmation['turnId']);
+      if (accepted && dismissalKey != null) {
+        _handledPlanConfirmations.add(dismissalKey);
+      } else if (mounted) {
+        _showComposerMessage(context.l10n.planResponseFailed(error.toString()));
+      }
+    } finally {
+      if (mounted) setState(() => _planSubmitting = false);
     }
   }
 
@@ -415,6 +536,8 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         'text': text,
         if (attachmentIds.isNotEmpty) 'attachmentIds': attachmentIds,
         'clientMessageId': clientMessageId,
+        if (_controller != null)
+          'expectedRevision': _controller!.state.revision,
       }, timeoutMilliseconds: 60000);
       _composer.clear();
       setState(_images.clear);
@@ -486,6 +609,55 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     await _refresh();
   }
 
+  Future<void> _showComputerStatus() async {
+    final workspace = ref.read(workspaceProvider).value;
+    final selectedId = workspace?.selectedDaemonId;
+    final daemon = workspace?.daemons
+        .where((item) => item.id == selectedId)
+        .firstOrNull;
+    final daemonOnline =
+        daemon?.phase == ConnectionPhase.online ||
+        (daemon == null && _stateOnline(_controller?.state));
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+          child: ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.computer_rounded, size: 28),
+            title: Text(daemon?.name ?? context.l10n.computer),
+            subtitle: Text(
+              daemon == null
+                  ? (_stateOnline(_controller?.state)
+                        ? context.l10n.online
+                        : context.l10n.offline)
+                  : _daemonPhaseLabel(context, daemon.phase),
+            ),
+            trailing: Container(
+              width: 10,
+              height: 10,
+              decoration: BoxDecoration(
+                color: daemonOnline ? wawGreen : Colors.grey,
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  bool _stateOnline(ConversationState? state) => state?.online ?? false;
+
+  String _daemonPhaseLabel(BuildContext context, ConnectionPhase phase) =>
+      switch (phase) {
+        ConnectionPhase.connecting => context.l10n.connecting,
+        ConnectionPhase.online => context.l10n.online,
+        ConnectionPhase.offline => context.l10n.offline,
+      };
+
   Future<void> _resolve(Map<String, dynamic> action, bool approved) async {
     final result = approved ? {'decision': 'accept'} : {'decision': 'decline'};
     try {
@@ -513,174 +685,398 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         conversation?['title'] as String? ??
         (_isDraft ? context.l10n.newConversation : context.l10n.conversation);
     final running = conversation?['running'] as bool? ?? false;
+    final online = state.online;
+    final planConfirmation = _showPlanConfirmation(state)
+        ? state.planConfirmation
+        : null;
     return Scaffold(
       appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: WawCompact.appBarTitle,
-            ),
-            Row(
-              children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: const BoxDecoration(
-                    color: wawGreen,
-                    shape: BoxShape.circle,
+        leadingWidth: 76,
+        leading: Padding(
+          padding: const EdgeInsets.only(left: 12),
+          child: WawCircleButton(
+            icon: Icons.arrow_back_rounded,
+            tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+            onPressed: () => Navigator.maybePop(context),
+          ),
+        ),
+        titleSpacing: 4,
+        title: WawTitleBlock(
+          title: title,
+          pill: true,
+          subtitle: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: online ? wawGreen : Colors.grey,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  online ? context.l10n.secureConnection : context.l10n.offline,
+                  overflow: TextOverflow.ellipsis,
+                  style: WawCompact.metadata.copyWith(
+                    color: Theme.of(context).mutedInk,
                   ),
                 ),
-                const SizedBox(width: 6),
-                Text(
-                  context.l10n.secureConnection,
-                  style: WawCompact.metadata.copyWith(color: Colors.grey),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          WawActionPill(
+            children: [
+              IconButton(
+                onPressed: _showComputerStatus,
+                tooltip: context.l10n.computer,
+                icon: const Icon(Icons.computer_rounded),
+              ),
+              PopupMenuButton<String>(
+                tooltip: context.l10n.moreActions,
+                onSelected: (value) {
+                  if (value == 'refresh') _refresh();
+                },
+                itemBuilder: (context) => [
+                  PopupMenuItem(
+                    value: 'refresh',
+                    enabled: !_isDraft,
+                    child: Row(
+                      children: [
+                        const Icon(Icons.refresh_rounded),
+                        const SizedBox(width: 10),
+                        Text(context.l10n.refresh),
+                      ],
+                    ),
+                  ),
+                ],
+                icon: const Icon(Icons.more_vert_rounded),
+              ),
+            ],
+          ),
+        ],
+      ),
+      body: Stack(
+        children: [
+          Column(
+            children: [
+              if (state.loading) const LinearProgressIndicator(minHeight: 2),
+              if (state.bodyError != null)
+                _ErrorBanner(
+                  title: context.l10n.syncFailed,
+                  error: state.bodyError!,
+                  onRetry: _controller!.refreshConversation,
+                  onCopyDiagnostics: _copyDiagnostics,
+                ),
+              if (state.actionError != null)
+                _ErrorBanner(
+                  title: context.l10n.actionSyncFailed,
+                  error: state.actionError!,
+                  onRetry: _controller!.refreshActions,
+                  onCopyDiagnostics: _copyDiagnostics,
+                ),
+              if (state.actions.isNotEmpty)
+                for (final action in state.actions)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+                    child: _ActionConfirmation(
+                      action: action,
+                      onResolve: (approved) => _resolve(action, approved),
+                    ),
+                  ),
+              Expanded(
+                child: _Timeline(
+                  items: state.items,
+                  controller: _controller,
+                  emptyState: _isDraft
+                      ? _DraftConversationEmpty(
+                          projectName:
+                              widget.projectName ?? context.l10n.project,
+                        )
+                      : null,
+                  scrollController: _scroll,
+                  loadingOlder: state.loadingOlder,
+                  olderError: state.olderError,
+                  onRetryOlder: _loadOlder,
+                ),
+              ),
+              if (planConfirmation != null)
+                _PlanConfirmationPanel(
+                  controller: _planRevision,
+                  submitting: _planSubmitting,
+                  online: online,
+                  onImplement: () =>
+                      _respondToPlan(planConfirmation, 'implement'),
+                  onRevise: () => _respondToPlan(planConfirmation, 'revise'),
+                  onSkip: () => _skipPlan(planConfirmation),
+                )
+              else
+                _ComposerPanel(
+                  composer: _composer,
+                  images: _images,
+                  enabled: !_submitting,
+                  selectingImages: _selectingImages,
+                  running: running,
+                  online: online,
+                  canSend: _canSend,
+                  submitting: _submitting,
+                  onPickImages: _pickImages,
+                  onRemoveImage: _removeImage,
+                  onSend: _send,
+                  onInterrupt: _interrupt,
+                ),
+            ],
+          ),
+          if (_showJumpToBottom)
+            Positioned(
+              right: 0,
+              left: 0,
+              bottom: planConfirmation != null ? 190 : 88,
+              child: Center(
+                child: WawCircleButton(
+                  size: 48,
+                  icon: Icons.arrow_downward_rounded,
+                  tooltip: context.l10n.scrollToBottom,
+                  onPressed: () {
+                    if (!_scroll.hasClients) return;
+                    _scroll.animateTo(
+                      _scroll.position.maxScrollExtent,
+                      duration: const Duration(milliseconds: 280),
+                      curve: Curves.easeOutCubic,
+                    );
+                  },
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ActionConfirmation extends StatelessWidget {
+  const _ActionConfirmation({required this.action, required this.onResolve});
+
+  final Map<String, dynamic> action;
+  final ValueChanged<bool> onResolve;
+
+  @override
+  Widget build(BuildContext context) => WawFloatingSurface(
+    padding: const EdgeInsets.all(16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          context.l10n.confirmationRequired,
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 6),
+        Text(action['method'] as String? ?? context.l10n.agentContinueRequest),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            TextButton(
+              onPressed: () => onResolve(false),
+              child: Text(context.l10n.deny),
+            ),
+            const SizedBox(width: 8),
+            IconButton.filled(
+              onPressed: () => onResolve(true),
+              tooltip: context.l10n.allow,
+              icon: const Icon(Icons.check_rounded),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
+class _PlanConfirmationPanel extends StatelessWidget {
+  const _PlanConfirmationPanel({
+    required this.controller,
+    required this.submitting,
+    required this.online,
+    required this.onImplement,
+    required this.onRevise,
+    required this.onSkip,
+  });
+
+  final TextEditingController controller;
+  final bool submitting;
+  final bool online;
+  final VoidCallback onImplement;
+  final VoidCallback onRevise;
+  final VoidCallback onSkip;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasText = controller.text.trim().isNotEmpty;
+    return SafeArea(
+      top: false,
+      minimum: const EdgeInsets.fromLTRB(16, 6, 16, 10),
+      child: WawFloatingSurface(
+        padding: const EdgeInsets.fromLTRB(16, 16, 12, 10),
+        child: Column(
+          key: const ValueKey('plan-confirmation-panel'),
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              context.l10n.planConfirmationTitle,
+              style: WawCompact.sectionTitle,
+            ),
+            const SizedBox(height: 8),
+            TextButton(
+              key: const ValueKey('implement-plan'),
+              onPressed: online && !submitting ? onImplement : null,
+              style: TextButton.styleFrom(
+                minimumSize: const Size.fromHeight(48),
+                alignment: Alignment.centerLeft,
+              ),
+              child: submitting
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Text(context.l10n.executePlan),
+            ),
+            Divider(color: Theme.of(context).activityRail, height: 1),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.only(left: 8, bottom: 14),
+                  child: Icon(Icons.edit_outlined, size: 18),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    key: const ValueKey('plan-revision-input'),
+                    controller: controller,
+                    enabled: !submitting,
+                    minLines: 1,
+                    maxLines: 4,
+                    decoration: InputDecoration(
+                      filled: false,
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      hintText: context.l10n.revisePlanHint,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                  ),
+                ),
+                TextButton(
+                  key: ValueKey(hasText ? 'submit-plan-revision' : 'skip-plan'),
+                  onPressed: submitting
+                      ? null
+                      : hasText
+                      ? (online ? onRevise : null)
+                      : onSkip,
+                  child: Text(
+                    hasText ? context.l10n.submit : context.l10n.skip,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
                 ),
               ],
             ),
           ],
         ),
-        actions: [
-          if (!_isDraft)
-            IconButton(
-              onPressed: _refresh,
-              icon: const Icon(Icons.refresh_rounded),
-            ),
-        ],
       ),
-      body: Column(
+    );
+  }
+}
+
+class _ComposerPanel extends StatelessWidget {
+  const _ComposerPanel({
+    required this.composer,
+    required this.images,
+    required this.enabled,
+    required this.selectingImages,
+    required this.running,
+    required this.online,
+    required this.canSend,
+    required this.submitting,
+    required this.onPickImages,
+    required this.onRemoveImage,
+    required this.onSend,
+    required this.onInterrupt,
+  });
+
+  final TextEditingController composer;
+  final List<XFile> images;
+  final bool enabled;
+  final bool selectingImages;
+  final bool running;
+  final bool online;
+  final bool canSend;
+  final bool submitting;
+  final VoidCallback onPickImages;
+  final ValueChanged<XFile> onRemoveImage;
+  final VoidCallback onSend;
+  final VoidCallback onInterrupt;
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    top: false,
+    minimum: const EdgeInsets.fromLTRB(16, 6, 16, 10),
+    child: WawFloatingSurface(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (state.loading) const LinearProgressIndicator(minHeight: 2),
-          if (state.bodyError != null)
-            _ErrorBanner(
-              title: context.l10n.syncFailed,
-              error: state.bodyError!,
-              onRetry: _controller!.refreshConversation,
-              onCopyDiagnostics: _copyDiagnostics,
+          if (images.isNotEmpty)
+            _AttachmentStrip(
+              images: images,
+              enabled: enabled,
+              onRemove: onRemoveImage,
             ),
-          if (state.actionError != null)
-            _ErrorBanner(
-              title: context.l10n.actionSyncFailed,
-              error: state.actionError!,
-              onRetry: _controller!.refreshActions,
-              onCopyDiagnostics: _copyDiagnostics,
-            ),
-          if (state.actions.isNotEmpty)
-            for (final action in state.actions)
-              Card(
-                margin: const EdgeInsets.fromLTRB(14, 6, 14, 0),
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Text(
-                        context.l10n.confirmationRequired,
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        action['method'] as String? ??
-                            context.l10n.agentContinueRequest,
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          TextButton(
-                            onPressed: () => _resolve(action, false),
-                            child: Text(context.l10n.deny),
-                          ),
-                          const SizedBox(width: 8),
-                          FilledButton(
-                            onPressed: () => _resolve(action, true),
-                            child: Text(context.l10n.allow),
-                          ),
-                        ],
-                      ),
-                    ],
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              IconButton(
+                onPressed: enabled && !selectingImages ? onPickImages : null,
+                tooltip: context.l10n.addAttachment,
+                icon: const Icon(Icons.add_rounded, size: 26),
+              ),
+              Expanded(
+                child: TextField(
+                  controller: composer,
+                  enabled: enabled,
+                  minLines: 1,
+                  maxLines: 5,
+                  style: WawCompact.body,
+                  decoration: InputDecoration(
+                    filled: false,
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                    hintText: context.l10n.continueWorking,
                   ),
                 ),
               ),
-          Expanded(
-            child: _Timeline(
-              items: state.items,
-              controller: _controller,
-              emptyState: _isDraft
-                  ? _DraftConversationEmpty(
-                      projectName: widget.projectName ?? context.l10n.project,
-                    )
-                  : null,
-              scrollController: _scroll,
-              loadingOlder: state.loadingOlder,
-              olderError: state.olderError,
-              onRetryOlder: _loadOlder,
-            ),
-          ),
-          SafeArea(
-            top: false,
-            minimum: const EdgeInsets.fromLTRB(12, 6, 12, 10),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Expanded(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).cardColor,
-                      borderRadius: BorderRadius.circular(24),
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (_images.isNotEmpty)
-                          _AttachmentStrip(
-                            images: _images,
-                            enabled: !_submitting,
-                            onRemove: _removeImage,
-                          ),
-                        TextField(
-                          controller: _composer,
-                          enabled: !_submitting,
-                          minLines: 1,
-                          maxLines: 5,
-                          style: WawCompact.body,
-                          decoration: InputDecoration(
-                            filled: false,
-                            border: InputBorder.none,
-                            enabledBorder: InputBorder.none,
-                            focusedBorder: InputBorder.none,
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 10,
-                            ),
-                            prefixIcon: IconButton(
-                              onPressed: _submitting || _selectingImages
-                                  ? null
-                                  : _pickImages,
-                              icon: const Icon(Icons.add_rounded, size: 24),
-                              tooltip: context.l10n.addAttachment,
-                            ),
-                            hintText: context.l10n.continueWorking,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                IconButton.filled(
-                  onPressed: running ? _interrupt : (_canSend ? _send : null),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(6, 6, 8, 6),
+                child: IconButton.filled(
+                  onPressed: online
+                      ? (running ? onInterrupt : (canSend ? onSend : null))
+                      : null,
                   tooltip: running ? context.l10n.stop : context.l10n.send,
                   style: IconButton.styleFrom(
+                    minimumSize: const Size.square(44),
                     backgroundColor: running ? Colors.black : wawBlue,
                     foregroundColor: Colors.white,
                   ),
                   icon: running
                       ? const Icon(Icons.stop_rounded)
-                      : _submitting
+                      : submitting
                       ? const SizedBox.square(
                           dimension: 18,
                           child: CircularProgressIndicator(
@@ -690,13 +1086,13 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                         )
                       : const Icon(Icons.arrow_upward_rounded),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ],
       ),
-    );
-  }
+    ),
+  );
 }
 
 class _AttachmentStrip extends StatelessWidget {
@@ -891,14 +1287,20 @@ class _TimelineItem extends StatelessWidget {
         controller: controller,
       );
     }
-    if (locatedBlocks.length == 1 && locatedBlocks.first['kind'] == 'summary') {
-      return _TimelineSummaryItem(item: item, block: locatedBlocks.first);
-    }
     final user = kind.toLowerCase().contains('user');
-    final tool =
+    final activity =
+        locatedBlocks.any((block) => block['kind'] == 'summary') ||
+        kind.toLowerCase().contains('reason') ||
         kind.toLowerCase().contains('tool') ||
         kind.toLowerCase().contains('command') ||
         kind.toLowerCase().contains('file');
+    if (activity) {
+      return _ActivityTimelineItem(
+        item: item,
+        blocks: locatedBlocks,
+        controller: controller,
+      );
+    }
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -916,29 +1318,25 @@ class _TimelineItem extends StatelessWidget {
         ],
       ],
     );
-    if (tool) {
-      return ExpansionTile(
-        tilePadding: EdgeInsets.zero,
-        leading: const Icon(Icons.settings_outlined),
-        title: Text(kind),
-        children: [content],
-      );
-    }
     return Align(
       alignment: user ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        constraints: const BoxConstraints(maxWidth: 560),
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: user
-            ? const EdgeInsets.symmetric(horizontal: 14, vertical: 9)
-            : EdgeInsets.zero,
-        decoration: user
-            ? BoxDecoration(
-                color: wawBlue.withValues(alpha: .12),
-                borderRadius: BorderRadius.circular(22),
-              )
-            : null,
-        child: content,
+      child: FractionallySizedBox(
+        widthFactor: user ? .82 : 1,
+        alignment: user ? Alignment.centerRight : Alignment.centerLeft,
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 680),
+          margin: const EdgeInsets.only(bottom: 14),
+          padding: user
+              ? const EdgeInsets.symmetric(horizontal: 18, vertical: 12)
+              : EdgeInsets.zero,
+          decoration: user
+              ? BoxDecoration(
+                  color: Theme.of(context).userBubble,
+                  borderRadius: BorderRadius.circular(24),
+                )
+              : null,
+          child: content,
+        ),
       ),
     );
   }
@@ -971,6 +1369,178 @@ class _TimelineItem extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _ActivityTimelineItem extends StatefulWidget {
+  const _ActivityTimelineItem({
+    required this.item,
+    required this.blocks,
+    required this.controller,
+  });
+
+  final Map<String, dynamic> item;
+  final List<Map<String, dynamic>> blocks;
+  final ConversationController? controller;
+
+  @override
+  State<_ActivityTimelineItem> createState() => _ActivityTimelineItemState();
+}
+
+class _ActivityTimelineItemState extends State<_ActivityTimelineItem> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final kind = (widget.item['kind'] as String? ?? '').toLowerCase();
+    final summary = widget.blocks
+        .where((block) => block['kind'] == 'summary')
+        .firstOrNull;
+    final detailBlocks = widget.blocks
+        .where((block) => block['kind'] != 'summary')
+        .toList(growable: false);
+    final command = kind.contains('command');
+    final reasoning = kind.contains('reason');
+    final file = kind.contains('file');
+    final tool = kind.contains('tool');
+    final expandable =
+        (command || reasoning) &&
+        detailBlocks.any(
+          (block) => (block['text'] as String? ?? '').trim().isNotEmpty,
+        );
+    final title = summary != null
+        ? _TimelineSummaryItem._summaryText(context, summary)
+        : command
+        ? context.l10n.commandExecution
+        : reasoning
+        ? context.l10n.reasoningActivity
+        : file
+        ? context.l10n.fileChange
+        : tool
+        ? context.l10n.toolActivity
+        : context.l10n.reasoningActivity;
+    final status = widget.item['status'] as String?;
+    final statusColor = _TimelineSummaryItem._statusColor(status);
+    final icon = command
+        ? Icons.terminal_rounded
+        : file
+        ? Icons.description_outlined
+        : reasoning
+        ? Icons.cloud_outlined
+        : _TimelineSummaryItem._statusIcon(status);
+
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            width: 3,
+            margin: const EdgeInsets.only(right: 12),
+            decoration: BoxDecoration(
+              color: Theme.of(context).activityRail,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: expandable
+                        ? () => setState(() => _expanded = !_expanded)
+                        : null,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(minHeight: 48),
+                      child: Row(
+                        children: [
+                          Icon(icon, size: 20, color: statusColor),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: WawCompact.body.copyWith(
+                                color: Theme.of(context).mutedInk,
+                              ),
+                            ),
+                          ),
+                          if (status != null && status.isNotEmpty) ...[
+                            const SizedBox(width: 8),
+                            Text(
+                              _TimelineSummaryItem._statusText(context, status),
+                              style: WawCompact.metadata.copyWith(
+                                color: statusColor,
+                              ),
+                            ),
+                          ],
+                          if (expandable)
+                            Tooltip(
+                              message: _expanded
+                                  ? context.l10n.hideDetails
+                                  : context.l10n.showDetails,
+                              child: Icon(
+                                _expanded
+                                    ? Icons.keyboard_arrow_up_rounded
+                                    : Icons.keyboard_arrow_down_rounded,
+                                color: Theme.of(context).mutedInk,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (_expanded)
+                    Container(
+                      margin: const EdgeInsets.only(top: 4),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).softSurface,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          for (final block in detailBlocks) ...[
+                            SelectableText(
+                              block['text'] as String? ?? '',
+                              style: command
+                                  ? const TextStyle(
+                                      fontFamily: 'monospace',
+                                      fontSize: 13,
+                                      height: 1.45,
+                                    )
+                                  : WawCompact.body,
+                            ),
+                            if (block['truncated'] == true &&
+                                widget.controller != null)
+                              TextButton.icon(
+                                onPressed: () =>
+                                    _TimelineItem(
+                                      item: widget.item,
+                                      controller: widget.controller,
+                                    )._showFullContent(
+                                      context,
+                                      widget.controller!,
+                                      block,
+                                    ),
+                                icon: const Icon(Icons.open_in_full_rounded),
+                                label: Text(context.l10n.viewFullContent),
+                              ),
+                          ],
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

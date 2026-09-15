@@ -31,11 +31,13 @@ type requestOrigin struct {
 }
 
 type pendingAction struct {
-	ID        json.RawMessage `json:"id"`
-	Method    string          `json:"method"`
-	Params    json.RawMessage `json:"params,omitempty"`
-	CreatedAt time.Time       `json:"createdAt"`
-	Resolved  bool            `json:"resolved"`
+	ID             json.RawMessage `json:"id"`
+	Method         string          `json:"method"`
+	Params         json.RawMessage `json:"params,omitempty"`
+	ConversationID string          `json:"conversationId,omitempty"`
+	TurnID         string          `json:"turnId,omitempty"`
+	CreatedAt      time.Time       `json:"createdAt"`
+	Resolved       bool            `json:"resolved"`
 }
 
 type conversationProjection struct {
@@ -44,6 +46,14 @@ type conversationProjection struct {
 	Sequence int64
 	Revision int64
 	Events   []protocol.Event
+}
+
+type threadCollaborationSettings struct {
+	TurnID          string `json:"turnId,omitempty"`
+	Mode            string `json:"mode"`
+	Model           string `json:"model"`
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
+	Succeeded       bool   `json:"succeeded"`
 }
 
 type initializeWaiter struct {
@@ -63,13 +73,13 @@ type Instance struct {
 	environment              []string
 	state                    string
 	lastError                string
-	active                   bool
-	activeThreadID           string
-	activeTurnID             string
+	activeTurns              map[string]string
 	desktops                 map[string]*clientConn
 	requests                 map[string]requestOrigin
 	actions                  map[string]*pendingAction
 	conversations            map[string]*conversationProjection
+	threadSettings           map[string]threadCollaborationSettings
+	pendingTurnSettings      map[string]threadCollaborationSettings
 	nextRequest              uint64
 	eventSequence            int64
 	generation               uint64
@@ -104,9 +114,152 @@ func NewInstance(manager *Manager, hello protocol.Hello) *Instance {
 		args: append([]string(nil), hello.Args...), cwd: hello.CWD,
 		environment: append([]string(nil), hello.Environment...), state: "stopped",
 		desktops: make(map[string]*clientConn), requests: make(map[string]requestOrigin),
-		actions:       make(map[string]*pendingAction),
-		conversations: make(map[string]*conversationProjection),
+		actions:             make(map[string]*pendingAction),
+		activeTurns:         make(map[string]string),
+		conversations:       make(map[string]*conversationProjection),
+		threadSettings:      make(map[string]threadCollaborationSettings),
+		pendingTurnSettings: make(map[string]threadCollaborationSettings),
 	}
+}
+
+func (i *Instance) threadSettingsKey(threadID string) string {
+	return "thread-collaboration:" + i.descriptor.ID + ":" + threadID
+}
+
+func (i *Instance) persistThreadSettings(threadID string, settings threadCollaborationSettings) {
+	if threadID == "" || settings.Mode == "" || settings.Model == "" {
+		return
+	}
+	_ = i.manager.store.PutSetting(i.threadSettingsKey(threadID), settings)
+}
+
+func (i *Instance) collaborationSettings(threadID string) (threadCollaborationSettings, bool) {
+	i.mu.Lock()
+	settings, ok := i.threadSettings[threadID]
+	i.mu.Unlock()
+	if ok {
+		return settings, true
+	}
+	var stored threadCollaborationSettings
+	found, err := i.manager.store.GetSetting(i.threadSettingsKey(threadID), &stored)
+	if err != nil || !found || stored.Mode == "" || stored.Model == "" {
+		return threadCollaborationSettings{}, false
+	}
+	i.mu.Lock()
+	if current, exists := i.threadSettings[threadID]; exists {
+		stored = current
+	} else {
+		i.threadSettings[threadID] = stored
+	}
+	i.mu.Unlock()
+	return stored, true
+}
+
+func collaborationSettingsFromParams(params json.RawMessage, notification bool) (string, threadCollaborationSettings, bool) {
+	var root map[string]any
+	if json.Unmarshal(params, &root) != nil {
+		return "", threadCollaborationSettings{}, false
+	}
+	threadID, _ := root["threadId"].(string)
+	settingsRoot := root
+	if notification {
+		if value, ok := root["threadSettings"].(map[string]any); ok {
+			settingsRoot = value
+		}
+	}
+	modeValue, ok := settingsRoot["collaborationMode"].(map[string]any)
+	if !ok {
+		return threadID, threadCollaborationSettings{}, false
+	}
+	mode, _ := modeValue["mode"].(string)
+	modeSettings, _ := modeValue["settings"].(map[string]any)
+	model, _ := modeSettings["model"].(string)
+	effort, _ := modeSettings["reasoning_effort"].(string)
+	if effort == "" {
+		effort, _ = settingsRoot["effort"].(string)
+	}
+	if model == "" {
+		model, _ = settingsRoot["model"].(string)
+	}
+	if threadID == "" || (mode != "plan" && mode != "default") || model == "" {
+		return threadID, threadCollaborationSettings{}, false
+	}
+	return threadID, threadCollaborationSettings{Mode: mode, Model: model, ReasoningEffort: effort}, true
+}
+
+func (i *Instance) observeOutgoingThreadSettings(method string, params json.RawMessage) {
+	if method != "turn/start" && method != "thread/settings/update" {
+		return
+	}
+	threadID, settings, explicit := collaborationSettingsFromParams(params, false)
+	if threadID == "" {
+		return
+	}
+	if !explicit {
+		var ok bool
+		settings, ok = i.collaborationSettings(threadID)
+		if !ok {
+			return
+		}
+		var values map[string]any
+		if json.Unmarshal(params, &values) == nil {
+			if model, valueOK := values["model"].(string); valueOK && model != "" {
+				settings.Model = model
+			}
+			if effort, valueOK := values["effort"].(string); valueOK {
+				settings.ReasoningEffort = effort
+			} else if effort, valueOK := values["reasoningEffort"].(string); valueOK {
+				settings.ReasoningEffort = effort
+			}
+		}
+	}
+	if method == "thread/settings/update" {
+		if current, exists := i.collaborationSettings(threadID); exists {
+			settings.TurnID = current.TurnID
+			settings.Succeeded = current.Succeeded
+		}
+	} else {
+		settings.TurnID = ""
+	}
+	i.mu.Lock()
+	if method == "turn/start" {
+		i.pendingTurnSettings[threadID] = settings
+	} else {
+		i.threadSettings[threadID] = settings
+	}
+	i.mu.Unlock()
+	if method != "turn/start" {
+		i.persistThreadSettings(threadID, settings)
+	}
+}
+
+func (i *Instance) clearPendingTurnSettings(method string, params json.RawMessage) {
+	if method != "turn/start" {
+		return
+	}
+	threadID := conversationIDFromPayload(json.RawMessage(params))
+	if threadID == "" {
+		return
+	}
+	i.mu.Lock()
+	delete(i.pendingTurnSettings, threadID)
+	i.mu.Unlock()
+}
+
+func (i *Instance) observeThreadSettingsNotification(params json.RawMessage) {
+	threadID, settings, ok := collaborationSettingsFromParams(params, true)
+	if !ok {
+		return
+	}
+	current, hasCurrent := i.collaborationSettings(threadID)
+	if hasCurrent {
+		settings.TurnID = current.TurnID
+		settings.Succeeded = current.Succeeded
+	}
+	i.mu.Lock()
+	i.threadSettings[threadID] = settings
+	i.mu.Unlock()
+	i.persistThreadSettings(threadID, settings)
 }
 
 func (i *Instance) RegisterRuntime(hello protocol.Hello) error {
@@ -117,7 +270,7 @@ func (i *Instance) RegisterRuntime(hello protocol.Hello) error {
 	i.environment = append([]string(nil), hello.Environment...)
 	started := i.cmd != nil
 	changed := started && i.runtime.SHA256 != "" && hello.Runtime.SHA256 != "" && i.runtime.SHA256 != hello.Runtime.SHA256
-	busy := i.active || len(i.actions) > 0
+	busy := len(i.activeTurns) > 0 || len(i.actions) > 0
 	if changed && busy {
 		candidate := hello.Runtime
 		i.pendingRuntime = &candidate
@@ -296,7 +449,10 @@ func (i *Instance) HandleDesktop(conn *clientConn, raw []byte) error {
 		return i.writeServer(raw)
 	}
 	if message.Method == "turn/start" {
+		i.observeOutgoingThreadSettings(message.Method, message.Params)
 		i.broadcastEvent("frontend.turn.start", map[string]any{"params": json.RawMessage(message.Params), "source": "desktop"})
+	} else if message.Method == "thread/settings/update" {
+		i.observeOutgoingThreadSettings(message.Method, message.Params)
 	}
 
 	if message.Method == "initialize" {
@@ -314,7 +470,7 @@ func (i *Instance) HandleDesktop(conn *clientConn, raw []byte) error {
 		if len(cached) == 0 {
 			i.initializeInFlight = true
 		}
-		busy := i.active || len(i.actions) > 0
+		busy := len(i.activeTurns) > 0 || len(i.actions) > 0
 		i.mu.Unlock()
 		if len(cached) > 0 {
 			if !sameInitializeCapabilities(cachedRequest, raw) {
@@ -374,6 +530,7 @@ func (i *Instance) resolveServerRequest(message jsonrpc.Message, raw []byte) err
 	}
 	action.Resolved = true
 	delete(i.actions, key)
+	i.updateActivityStateLocked()
 	i.mu.Unlock()
 	_ = i.manager.store.ResolvePendingAction(i.descriptor.ID, key)
 	if err := i.writeServer(raw); err != nil {
@@ -484,10 +641,16 @@ func (i *Instance) handleServerFrame(generation uint64, raw []byte) {
 		return
 	}
 	if message.IsRequest() {
-		action := &pendingAction{ID: append(json.RawMessage(nil), message.ID...), Method: message.Method, Params: append(json.RawMessage(nil), message.Params...), CreatedAt: time.Now().UTC()}
+		action := &pendingAction{
+			ID: append(json.RawMessage(nil), message.ID...), Method: message.Method,
+			Params:         append(json.RawMessage(nil), message.Params...),
+			ConversationID: conversationIDFromPayload(json.RawMessage(message.Params)),
+			TurnID:         identifierFromPayload(json.RawMessage(message.Params), "turnId"),
+			CreatedAt:      time.Now().UTC(),
+		}
 		i.mu.Lock()
 		i.actions[string(message.ID)] = action
-		i.state = "waiting_action"
+		i.updateActivityStateLocked()
 		i.mu.Unlock()
 		_ = i.manager.store.SavePendingAction(i.descriptor.ID, string(message.ID), message.Method, action)
 		i.broadcast(raw)
@@ -512,6 +675,11 @@ func (i *Instance) answerInitializeWaiters(response []byte, waiters []initialize
 
 func (i *Instance) observeNotification(method string, params json.RawMessage) {
 	lower := strings.ToLower(method)
+	if strings.Contains(lower, "thread/settings/updated") {
+		i.observeThreadSettingsNotification(params)
+	}
+	var settingsToPersist *threadCollaborationSettings
+	var settingsThreadID string
 	i.mu.Lock()
 	switch {
 	case strings.Contains(lower, "serverrequest/resolved"):
@@ -521,13 +689,8 @@ func (i *Instance) observeNotification(method string, params json.RawMessage) {
 		_ = json.Unmarshal(params, &resolved)
 		delete(i.actions, string(resolved.RequestID))
 		_ = i.manager.store.ResolvePendingAction(i.descriptor.ID, string(resolved.RequestID))
-		if i.active {
-			i.state = "active"
-		} else {
-			i.state = "ready"
-		}
+		i.updateActivityStateLocked()
 	case strings.Contains(lower, "turn/started") || strings.HasSuffix(lower, "turn.started"):
-		i.active, i.state = true, "active"
 		var identifiers struct {
 			ThreadID string `json:"threadId"`
 			TurnID   string `json:"turnId"`
@@ -539,50 +702,95 @@ func (i *Instance) observeNotification(method string, params json.RawMessage) {
 			} `json:"thread"`
 		}
 		_ = json.Unmarshal(params, &identifiers)
-		i.activeThreadID = firstNonempty(identifiers.ThreadID, identifiers.Thread.ID)
-		i.activeTurnID = firstNonempty(identifiers.TurnID, identifiers.Turn.ID)
-	case strings.Contains(lower, "turn/completed") || strings.Contains(lower, "turn/failed") || strings.Contains(lower, "turn/interrupted"):
-		i.active = false
-		i.activeThreadID, i.activeTurnID = "", ""
-		actionIDs := make([]string, 0, len(i.actions))
-		for id := range i.actions {
-			actionIDs = append(actionIDs, id)
+		threadID := firstNonempty(identifiers.ThreadID, identifiers.Thread.ID)
+		turnID := firstNonempty(identifiers.TurnID, identifiers.Turn.ID)
+		if threadID != "" {
+			i.activeTurns[threadID] = turnID
+			if settings, ok := i.pendingTurnSettings[threadID]; ok {
+				settings.TurnID = turnID
+				settings.Succeeded = false
+				i.threadSettings[threadID] = settings
+				delete(i.pendingTurnSettings, threadID)
+				copy := settings
+				settingsToPersist = &copy
+				settingsThreadID = threadID
+			}
 		}
-		i.actions = make(map[string]*pendingAction)
-		i.state = "ready"
+		i.updateActivityStateLocked()
+	case strings.Contains(lower, "turn/completed") || strings.Contains(lower, "turn/failed") || strings.Contains(lower, "turn/interrupted"):
+		threadID := conversationIDFromPayload(json.RawMessage(params))
+		turnID := identifierFromPayload(json.RawMessage(params), "turnId")
+		if threadID != "" {
+			delete(i.activeTurns, threadID)
+		} else if turnID != "" {
+			for activeThreadID, activeTurnID := range i.activeTurns {
+				if activeTurnID == turnID {
+					delete(i.activeTurns, activeThreadID)
+					threadID = activeThreadID
+					break
+				}
+			}
+		}
+		if settings, ok := i.threadSettings[threadID]; ok && settings.TurnID == turnID {
+			settings.Succeeded = strings.Contains(lower, "turn/completed")
+			i.threadSettings[threadID] = settings
+			copy := settings
+			settingsToPersist = &copy
+			settingsThreadID = threadID
+		}
+		actionIDs := make([]string, 0)
+		for id, action := range i.actions {
+			if (threadID != "" && action.ConversationID == threadID) || (turnID != "" && action.TurnID == turnID) {
+				actionIDs = append(actionIDs, id)
+				delete(i.actions, id)
+			}
+		}
 		pending := i.pendingRuntime
 		pendingInitialize := append([]byte(nil), i.pendingInitialize...)
-		if pending != nil {
+		activityDrained := len(i.activeTurns) == 0 && len(i.actions) == 0
+		if activityDrained && pending != nil {
 			i.runtime = *pending
 			i.pendingRuntime = nil
 		}
-		if len(pendingInitialize) > 0 {
+		if activityDrained && len(pendingInitialize) > 0 {
 			i.cachedInitializeRequest = pendingInitialize
 			i.cachedInitializeResponse = nil
 			i.pendingInitialize = nil
 		}
+		i.updateActivityStateLocked()
 		i.mu.Unlock()
+		if settingsToPersist != nil {
+			i.persistThreadSettings(settingsThreadID, *settingsToPersist)
+		}
 		for _, id := range actionIDs {
 			_ = i.manager.store.ResolvePendingAction(i.descriptor.ID, id)
 		}
-		if pending != nil || len(pendingInitialize) > 0 {
+		if activityDrained && (pending != nil || len(pendingInitialize) > 0) {
 			go i.Restart()
 		}
 		return
 	}
 	i.mu.Unlock()
+	if settingsToPersist != nil {
+		i.persistThreadSettings(settingsThreadID, *settingsToPersist)
+	}
 }
 
 func (i *Instance) InterruptActive() error {
 	i.mu.Lock()
-	threadID, turnID, active := i.activeThreadID, i.activeTurnID, i.active
-	i.mu.Unlock()
-	if !active {
-		return nil
+	turns := make(map[string]string, len(i.activeTurns))
+	for threadID, turnID := range i.activeTurns {
+		turns[threadID] = turnID
 	}
-	params, _ := json.Marshal(map[string]string{"threadId": threadID, "turnId": turnID})
-	_, err := i.Call(context.Background(), "turn/interrupt", params)
-	return err
+	i.mu.Unlock()
+	var firstErr error
+	for threadID, turnID := range turns {
+		params, _ := json.Marshal(map[string]string{"threadId": threadID, "turnId": turnID})
+		if _, err := i.Call(context.Background(), "turn/interrupt", params); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 func (i *Instance) sendInternalInitialize(cached []byte) error {
@@ -614,7 +822,7 @@ func (i *Instance) waitServer(generation uint64, cmd *exec.Cmd) {
 		return
 	}
 	i.cmd, i.stdin = nil, nil
-	i.active = false
+	i.activeTurns = make(map[string]string)
 	i.actions = make(map[string]*pendingAction)
 	i.state = "error"
 	if err != nil {
@@ -800,7 +1008,7 @@ func (i *Instance) Snapshot() InstanceSnapshot {
 	return InstanceSnapshot{
 		ID: i.descriptor.ID, Name: i.descriptor.Name, CodexHome: i.descriptor.CodexHome,
 		UserDataDir: i.descriptor.UserDataDir, State: i.state, Runtime: i.runtime,
-		PendingRuntime: i.pendingRuntime, DesktopConnections: len(i.desktops), ActiveTurn: i.active,
+		PendingRuntime: i.pendingRuntime, DesktopConnections: len(i.desktops), ActiveTurn: len(i.activeTurns) > 0,
 		PendingActions: len(i.actions), LastError: i.lastError,
 	}
 }
@@ -816,6 +1024,7 @@ func (i *Instance) Call(ctx context.Context, method string, params json.RawMessa
 	response := make(chan []byte, 1)
 	i.requests[string(mustJSON(id))] = requestOrigin{method: method, internal: true, response: response}
 	i.mu.Unlock()
+	i.observeOutgoingThreadSettings(method, params)
 	request := map[string]any{"jsonrpc": "2.0", "id": id, "method": method}
 	if len(bytes.TrimSpace(params)) > 0 && !bytes.Equal(bytes.TrimSpace(params), []byte("null")) {
 		request["params"] = json.RawMessage(params)
@@ -826,6 +1035,7 @@ func (i *Instance) Call(ctx context.Context, method string, params json.RawMessa
 	}
 	i.manager.traffic.Record(i.descriptor.ID, "control_to_server", raw)
 	if err := i.writeServer(append(raw, '\n')); err != nil {
+		i.clearPendingTurnSettings(method, params)
 		return nil, err
 	}
 	select {
@@ -835,12 +1045,15 @@ func (i *Instance) Call(ctx context.Context, method string, params json.RawMessa
 			return nil, err
 		}
 		if len(message.Error) > 0 && !bytes.Equal(bytes.TrimSpace(message.Error), []byte("null")) {
+			i.clearPendingTurnSettings(method, params)
 			return nil, fmt.Errorf("App Server: %s", message.Error)
 		}
 		return append(json.RawMessage(nil), message.Result...), nil
 	case <-ctx.Done():
+		i.clearPendingTurnSettings(method, params)
 		return nil, ctx.Err()
 	case <-time.After(60 * time.Second):
+		i.clearPendingTurnSettings(method, params)
 		return nil, errors.New("App Server request timed out")
 	}
 }
@@ -855,10 +1068,39 @@ func (i *Instance) Actions() []pendingAction {
 	return result
 }
 
-func (i *Instance) CanStartTurn() bool {
+func (i *Instance) CanStartTurn(threadID string) bool {
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	return i.stdin != nil && !i.active && len(i.actions) == 0 && i.state == "ready"
+	if i.stdin == nil || threadID == "" || i.state == "starting" || i.state == "waiting_initialize" || i.state == "stopped" || i.state == "error" || i.state == "upgrade_pending" {
+		return false
+	}
+	if _, active := i.activeTurns[threadID]; active {
+		return false
+	}
+	if _, pending := i.pendingTurnSettings[threadID]; pending {
+		return false
+	}
+	for _, action := range i.actions {
+		// Unknown action ownership is blocked conservatively; a request that is
+		// tied to another thread must not prevent this thread from progressing.
+		if action.ConversationID == "" || action.ConversationID == threadID {
+			return false
+		}
+	}
+	return true
+}
+
+func (i *Instance) updateActivityStateLocked() {
+	if i.state == "starting" || i.state == "waiting_initialize" || i.state == "stopped" || i.state == "error" || i.state == "upgrade_pending" {
+		return
+	}
+	if len(i.actions) > 0 {
+		i.state = "waiting_action"
+	} else if len(i.activeTurns) > 0 {
+		i.state = "active"
+	} else {
+		i.state = "ready"
+	}
 }
 
 func (i *Instance) ResolveAction(id, result json.RawMessage) error {
@@ -871,6 +1113,7 @@ func (i *Instance) ResolveAction(id, result json.RawMessage) error {
 	}
 	action.Resolved = true
 	delete(i.actions, key)
+	i.updateActivityStateLocked()
 	i.mu.Unlock()
 	_ = i.manager.store.ResolvePendingAction(i.descriptor.ID, key)
 	response := map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "result": json.RawMessage(result)}

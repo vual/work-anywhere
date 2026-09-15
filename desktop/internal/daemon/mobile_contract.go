@@ -284,11 +284,18 @@ type mobileTimelinePage struct {
 	NextCursor string               `json:"nextCursor,omitempty"`
 }
 
+type mobilePlanConfirmation struct {
+	PlanItemID string `json:"planItemId"`
+	TurnID     string `json:"turnId"`
+	Revision   int64  `json:"revision"`
+}
+
 type mobileConversationSnapshot struct {
-	Conversation mobileConversationMetadata `json:"conversation"`
-	Revision     int64                      `json:"revision"`
-	Sequence     int64                      `json:"sequence"`
-	Timeline     mobileTimelinePage         `json:"timeline"`
+	Conversation     mobileConversationMetadata `json:"conversation"`
+	Revision         int64                      `json:"revision"`
+	Sequence         int64                      `json:"sequence"`
+	Timeline         mobileTimelinePage         `json:"timeline"`
+	PlanConfirmation *mobilePlanConfirmation    `json:"planConfirmation,omitempty"`
 }
 
 type mobileContentRef struct {
@@ -808,7 +815,109 @@ func (m *Manager) conversationSnapshot(instance *Instance, agentID string, param
 		return mobileConversationSnapshot{}, err
 	}
 	revision, sequence := instance.ConversationVersion(request.ThreadID)
-	return mobileConversationSnapshot{Conversation: metadata, Revision: revision, Sequence: sequence, Timeline: page}, nil
+	snapshot := mobileConversationSnapshot{Conversation: metadata, Revision: revision, Sequence: sequence, Timeline: page}
+	snapshot.PlanConfirmation = planConfirmationFor(instance, request.ThreadID, metadata, page, revision)
+	return snapshot, nil
+}
+
+func planConfirmationFor(instance *Instance, threadID string, metadata mobileConversationMetadata, page mobileTimelinePage, revision int64) *mobilePlanConfirmation {
+	if metadata.Running || !instance.CanStartTurn(threadID) {
+		return nil
+	}
+	latestTurnID := ""
+	for _, item := range page.Items {
+		if item.TurnID != "" {
+			latestTurnID = item.TurnID
+			break
+		}
+	}
+	if latestTurnID == "" {
+		return nil
+	}
+	planItemID := ""
+	for _, item := range page.Items {
+		if item.TurnID == latestTurnID && strings.EqualFold(item.Kind, "plan") {
+			planItemID = item.ID
+			break
+		}
+	}
+	if planItemID == "" {
+		return nil
+	}
+	settings, ok := instance.collaborationSettings(threadID)
+	if !ok || settings.Mode != "plan" || settings.TurnID != latestTurnID || !settings.Succeeded {
+		return nil
+	}
+	return &mobilePlanConfirmation{PlanItemID: planItemID, TurnID: latestTurnID, Revision: revision}
+}
+
+func (m *Manager) mobilePlanRespond(instance *Instance, agentID string, params json.RawMessage) (map[string]any, error) {
+	var request struct {
+		ThreadID         string `json:"threadId"`
+		PlanItemID       string `json:"planItemId"`
+		ExpectedRevision *int64 `json:"expectedRevision"`
+		Decision         string `json:"decision"`
+		Text             string `json:"text"`
+	}
+	if json.Unmarshal(params, &request) != nil || request.ThreadID == "" || request.PlanItemID == "" || request.ExpectedRevision == nil {
+		return nil, &mobileContractError{code: "invalid_params", message: "threadId, planItemId, and expectedRevision are required"}
+	}
+	request.Text = strings.TrimSpace(request.Text)
+	if (request.Decision != "implement" && request.Decision != "revise") || request.Text == "" {
+		return nil, &mobileContractError{code: "invalid_params", message: "decision must be implement or revise and text is required"}
+	}
+	if !instance.CanStartTurn(request.ThreadID) {
+		return nil, &mobileContractError{code: "conversation_busy", message: "the conversation is active or waiting for an action"}
+	}
+	if err := instance.CheckExpectedRevision(params); err != nil {
+		return nil, &mobileContractError{code: "revision_conflict", message: err.Error()}
+	}
+	settings, ok := instance.collaborationSettings(request.ThreadID)
+	if !ok || settings.Model == "" {
+		return nil, &mobileContractError{code: "plan_mode_unavailable", message: "the plan collaboration settings are unavailable"}
+	}
+	snapshot, err := m.conversationSnapshot(instance, agentID, params)
+	if err != nil {
+		return nil, err
+	}
+	confirmation := snapshot.PlanConfirmation
+	if confirmation == nil || confirmation.PlanItemID != request.PlanItemID || confirmation.Revision != *request.ExpectedRevision {
+		return nil, &mobileContractError{code: "stale_plan", message: "the plan is no longer the latest completed plan"}
+	}
+	if !ok || settings.Mode != "plan" || settings.TurnID != confirmation.TurnID || settings.Model == "" {
+		return nil, &mobileContractError{code: "plan_mode_unavailable", message: "the plan collaboration settings are unavailable"}
+	}
+	providerParams, _ := json.Marshal(planTurnStartParams(request.ThreadID, request.Decision, request.Text, settings))
+	result, callErr := instance.Call(m.ctx, "turn/start", providerParams)
+	if callErr != nil {
+		return nil, &mobileContractError{code: "provider_error", message: callErr.Error()}
+	}
+	response := map[string]any{"started": true}
+	var started struct {
+		Turn struct {
+			ID string `json:"id"`
+		} `json:"turn"`
+	}
+	if json.Unmarshal(result, &started) == nil && started.Turn.ID != "" {
+		response["turnId"] = started.Turn.ID
+	}
+	return response, nil
+}
+
+func planTurnStartParams(threadID, decision, text string, settings threadCollaborationSettings) map[string]any {
+	mode := "plan"
+	if decision == "implement" {
+		mode = "default"
+	}
+	modeSettings := map[string]any{"model": settings.Model, "developer_instructions": nil}
+	if settings.ReasoningEffort != "" {
+		modeSettings["reasoning_effort"] = settings.ReasoningEffort
+	}
+	return map[string]any{
+		"threadId":          threadID,
+		"input":             []map[string]any{{"type": "text", "text": text}},
+		"collaborationMode": map[string]any{"mode": mode, "settings": modeSettings},
+	}
 }
 
 func (m *Manager) mobileConversationRead(instance *Instance, params json.RawMessage) (mobileConversationSnapshot, error) {

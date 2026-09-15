@@ -128,6 +128,7 @@ func TestQRRoundTripAndScopeAllowlist(t *testing.T) {
 		t.Fatalf("QR roundtrip failed: restored=%+v err=%v", restored, err)
 	}
 	if !scopeAllows([]string{"turn.start"}, "turn.start") ||
+		!scopeAllows([]string{"turn.start"}, "plan.respond") ||
 		!scopeAllows([]string{"turn.start"}, "conversation.create") ||
 		!scopeAllows([]string{"conversation.create"}, "conversation.create") ||
 		scopeAllows([]string{"turn.start"}, "system.shutdown") {
@@ -180,6 +181,61 @@ func TestRejectedPairingRouteAckAllowsRetry(t *testing.T) {
 	}
 	if attempt.decisionSubmitted || attempt.decisionMessageID != nil || attempt.grantedScopes != nil || attempt.grantExpiresAtMS != 0 || attempt.grantSignature != nil {
 		t.Fatalf("rejected route ack did not reset attempt: %+v", attempt)
+	}
+}
+
+func TestPeerOfflineRouteAckDropsOnlyTheStaleSession(t *testing.T) {
+	staleSessionID := string(newMessageID())
+	currentSessionID := string(newMessageID())
+	staleMessageID := newMessageID()
+	queuedStaleMessageID := newMessageID()
+	currentMessageID := newMessageID()
+	service := &Service{
+		log: discardLog{},
+		sessions: map[string]*sessionState{
+			staleSessionID:   {},
+			currentSessionID: {},
+		},
+		sentControl: map[string]sentControlDelivery{
+			string(staleMessageID):       {kind: "event", sessionID: staleSessionID},
+			string(queuedStaleMessageID): {kind: "event", sessionID: staleSessionID},
+			string(currentMessageID):     {kind: "response", sessionID: currentSessionID},
+		},
+	}
+
+	if err := service.handleRouteAck(&relayv1.RouteAck{RoutedMessageId: staleMessageID, ErrorCode: "peer_offline"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := service.sessions[staleSessionID]; exists {
+		t.Fatal("peer_offline ACK retained the stale Noise session")
+	}
+	if _, exists := service.sentControl[string(queuedStaleMessageID)]; exists {
+		t.Fatal("peer_offline ACK retained queued deliveries for the stale session")
+	}
+	if service.sessions[currentSessionID] == nil || service.sentControl[string(currentMessageID)].sessionID != currentSessionID {
+		t.Fatal("peer_offline ACK removed an unrelated current session")
+	}
+}
+
+func TestRemoteEventKeyCoalescesStreamingButPreservesTerminalAndActionHints(t *testing.T) {
+	base := protocol.Event{InstanceID: "agent-1", ConversationID: "thread-1"}
+	streaming := base
+	streaming.Event = "provider.item/agentMessage/delta"
+	updated := base
+	updated.Event = "provider.turn/diff/updated"
+	completed := base
+	completed.Event = "provider.turn/completed"
+	action := base
+	action.Event = "action.created"
+
+	if remoteEventKey(streaming) != remoteEventKey(updated) {
+		t.Fatal("ordinary invalidation events for one conversation were not coalesced")
+	}
+	if remoteEventKey(completed) == remoteEventKey(streaming) {
+		t.Fatal("terminal notification was coalesced away with streaming updates")
+	}
+	if remoteEventKey(action) == remoteEventKey(streaming) || remoteEventKey(action) == remoteEventKey(completed) {
+		t.Fatal("action notification was not preserved as a separate invalidation")
 	}
 }
 

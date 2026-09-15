@@ -423,6 +423,9 @@ func (c *Client) Call(ctx context.Context, method string, params json.RawMessage
 			c.mu.Lock()
 			delete(c.pending, id)
 			c.mu.Unlock()
+			if code == "peer_offline" {
+				c.disconnectConnection(connection, code, "Desktop peer is offline")
+			}
 			return nil, &CallError{Code: code, Message: "Relay rejected the request: " + code}
 		}
 		routeAccepted = true
@@ -647,27 +650,48 @@ func (c *Client) Status() Status {
 	return status
 }
 
+// disconnectConnection invalidates both the Relay transport and the Noise
+// session. A peer_offline route ACK means the daemon no longer has the matching
+// in-memory session, so retaining a green/connected state would make every
+// subsequent call reuse a channel that cannot ever receive a response.
+func (c *Client) disconnectConnection(connection *websocket.Conn, errorCode, message string) bool {
+	c.mu.Lock()
+	if c.conn != connection {
+		c.mu.Unlock()
+		return false
+	}
+	if c.cancel != nil {
+		c.cancel()
+		c.cancel = nil
+	}
+	c.conn = nil
+	if c.secure != nil {
+		c.secure.Close()
+		c.secure = nil
+	}
+	c.connected = false
+	c.lastError = message
+	for id, waiter := range c.pending {
+		delete(c.pending, id)
+		close(waiter)
+	}
+	for id, waiter := range c.pendingRoutes {
+		delete(c.pendingRoutes, id)
+		close(waiter)
+	}
+	c.mu.Unlock()
+	if connection != nil {
+		connection.CloseNow()
+	}
+	c.emitTransport("disconnected", errorCode)
+	return true
+}
+
 func (c *Client) readLoop(ctx context.Context, connection *websocket.Conn) {
 	for {
 		frame, err := readFrame(ctx, connection)
 		if err != nil {
-			c.mu.Lock()
-			activeConnection := c.conn == connection
-			if c.conn == connection {
-				c.connected, c.lastError = false, err.Error()
-				for id, waiter := range c.pending {
-					delete(c.pending, id)
-					close(waiter)
-				}
-				for id, waiter := range c.pendingRoutes {
-					delete(c.pendingRoutes, id)
-					close(waiter)
-				}
-			}
-			c.mu.Unlock()
-			if activeConnection {
-				c.emitTransport("disconnected", "peer_offline")
-			}
+			c.disconnectConnection(connection, "peer_offline", err.Error())
 			return
 		}
 		c.mu.Lock()

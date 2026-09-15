@@ -341,6 +341,62 @@ class AppLocalizationsEn extends AppLocalizations {
   String weeksAgo(int count) {
     return '$count wk';
   }
+
+  @override
+  String get computer => 'Computer';
+
+  @override
+  String get connected => 'Connected';
+
+  @override
+  String get refresh => 'Refresh';
+
+  @override
+  String get moreActions => 'More actions';
+
+  @override
+  String get scrollToBottom => 'Scroll to bottom';
+
+  @override
+  String get commandExecution => 'Command execution';
+
+  @override
+  String get toolActivity => 'Tool activity';
+
+  @override
+  String get reasoningActivity => 'Thinking';
+
+  @override
+  String get fileChange => 'File changes';
+
+  @override
+  String get showDetails => 'Show details';
+
+  @override
+  String get hideDetails => 'Hide details';
+
+  @override
+  String get planConfirmationTitle => 'Implement this plan?';
+
+  @override
+  String get executePlan => 'Yes, implement this plan';
+
+  @override
+  String get executePlanTurnPrompt => 'Implement this plan.';
+
+  @override
+  String get revisePlanHint => 'No, describe what to change';
+
+  @override
+  String get skip => 'Skip';
+
+  @override
+  String get submit => 'Submit';
+
+  @override
+  String planResponseFailed(String error) {
+    return 'Could not respond to the plan: $error';
+  }
 }
 
 /// The translations for English, as used in the United States (`en_US`).

@@ -5,7 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../app/localization.dart';
-import '../../app/theme.dart';
+import '../../app/chrome.dart';
 import '../workspace/workspace_controller.dart';
 
 class PairingScreen extends ConsumerStatefulWidget {
@@ -56,7 +56,19 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
   Widget build(BuildContext context) {
     if (_scanning) {
       return Scaffold(
-        appBar: AppBar(title: Text(context.l10n.scanComputerQr)),
+        appBar: AppBar(
+          automaticallyImplyLeading: false,
+          leadingWidth: 80,
+          leading: Padding(
+            padding: const EdgeInsets.only(left: 20, top: 8, bottom: 8),
+            child: WawCircleButton(
+              icon: Icons.arrow_back_rounded,
+              onPressed: () => setState(() => _scanning = false),
+            ),
+          ),
+          titleSpacing: 12,
+          title: WawTitleBlock(title: context.l10n.scanComputerQr, pill: true),
+        ),
         body: Stack(
           fit: StackFit.expand,
           children: [
@@ -117,23 +129,31 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
                 icon: const Icon(Icons.qr_code_scanner_rounded),
                 label: Text(context.l10n.scanQr),
                 style: FilledButton.styleFrom(
-                  backgroundColor: wawBlue,
+                  backgroundColor: Theme.of(context).colorScheme.onSurface,
+                  foregroundColor: Theme.of(context).colorScheme.surface,
                   minimumSize: const Size.fromHeight(56),
+                  shape: const StadiumBorder(),
                 ),
               ),
               const SizedBox(height: 14),
-              TextField(
-                controller: _link,
-                enabled: !_submitted,
-                autocorrect: false,
-                decoration: InputDecoration(
-                  hintText: context.l10n.pastePairLink,
-                  suffixIcon: IconButton(
-                    onPressed: () => _pair(_link.text),
-                    icon: const Icon(Icons.arrow_forward_rounded),
+              WawFloatingSurface(
+                child: TextField(
+                  controller: _link,
+                  enabled: !_submitted,
+                  autocorrect: false,
+                  decoration: InputDecoration(
+                    filled: false,
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    hintText: context.l10n.pastePairLink,
+                    suffixIcon: IconButton(
+                      onPressed: () => _pair(_link.text),
+                      icon: const Icon(Icons.arrow_forward_rounded),
+                    ),
                   ),
+                  onSubmitted: _pair,
                 ),
-                onSubmitted: _pair,
               ),
               if (_submitted) ...[
                 const SizedBox(height: 20),

@@ -657,6 +657,114 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'{count} 周'**
   String weeksAgo(int count);
+
+  /// No description provided for @computer.
+  ///
+  /// In zh, this message translates to:
+  /// **'电脑'**
+  String get computer;
+
+  /// No description provided for @connected.
+  ///
+  /// In zh, this message translates to:
+  /// **'已连接'**
+  String get connected;
+
+  /// No description provided for @refresh.
+  ///
+  /// In zh, this message translates to:
+  /// **'刷新'**
+  String get refresh;
+
+  /// No description provided for @moreActions.
+  ///
+  /// In zh, this message translates to:
+  /// **'更多操作'**
+  String get moreActions;
+
+  /// No description provided for @scrollToBottom.
+  ///
+  /// In zh, this message translates to:
+  /// **'回到底部'**
+  String get scrollToBottom;
+
+  /// No description provided for @commandExecution.
+  ///
+  /// In zh, this message translates to:
+  /// **'命令执行'**
+  String get commandExecution;
+
+  /// No description provided for @toolActivity.
+  ///
+  /// In zh, this message translates to:
+  /// **'工具调用'**
+  String get toolActivity;
+
+  /// No description provided for @reasoningActivity.
+  ///
+  /// In zh, this message translates to:
+  /// **'思考中'**
+  String get reasoningActivity;
+
+  /// No description provided for @fileChange.
+  ///
+  /// In zh, this message translates to:
+  /// **'文件更改'**
+  String get fileChange;
+
+  /// No description provided for @showDetails.
+  ///
+  /// In zh, this message translates to:
+  /// **'展开详情'**
+  String get showDetails;
+
+  /// No description provided for @hideDetails.
+  ///
+  /// In zh, this message translates to:
+  /// **'收起详情'**
+  String get hideDetails;
+
+  /// No description provided for @planConfirmationTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'是否执行此计划？'**
+  String get planConfirmationTitle;
+
+  /// No description provided for @executePlan.
+  ///
+  /// In zh, this message translates to:
+  /// **'是，执行此计划'**
+  String get executePlan;
+
+  /// No description provided for @executePlanTurnPrompt.
+  ///
+  /// In zh, this message translates to:
+  /// **'执行此计划。'**
+  String get executePlanTurnPrompt;
+
+  /// No description provided for @revisePlanHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'否，请说明修改内容'**
+  String get revisePlanHint;
+
+  /// No description provided for @skip.
+  ///
+  /// In zh, this message translates to:
+  /// **'跳过'**
+  String get skip;
+
+  /// No description provided for @submit.
+  ///
+  /// In zh, this message translates to:
+  /// **'提交'**
+  String get submit;
+
+  /// No description provided for @planResponseFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'计划响应失败：{error}'**
+  String planResponseFailed(String error);
 }
 
 class _AppLocalizationsDelegate

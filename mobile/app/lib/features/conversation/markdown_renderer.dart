@@ -25,6 +25,14 @@ class SafeMarkdownMessage extends StatelessWidget {
     );
     final styleSheet = MarkdownStyleSheet.fromTheme(theme).copyWith(
       p: body,
+      h1: body.copyWith(fontSize: 22, fontWeight: FontWeight.w700, height: 1.3),
+      h2: body.copyWith(fontSize: 20, fontWeight: FontWeight.w700, height: 1.3),
+      h3: body.copyWith(
+        fontSize: 18,
+        fontWeight: FontWeight.w700,
+        height: 1.35,
+      ),
+      blockSpacing: 10,
       code: body.copyWith(
         fontFamily: 'monospace',
         backgroundColor: theme.colorScheme.surfaceContainerHighest,

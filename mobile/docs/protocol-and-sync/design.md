@@ -23,7 +23,7 @@
 | `status.read` | Daemon/Agent 状态 | `system.status`, `instance.list/get`, `agent.list` |
 | `conversation.read` | 项目/对话列表、搜索、snapshot、增量与大内容读取 | `project.list`, `conversation.list/read/subscribe`, `conversation.timeline.list`, `conversation.content.read/resolve` |
 | `conversation.create` | 首次发送时在当前项目创建 Codex thread | `conversation.create` |
-| `turn.start` | 继续已有 thread | `turn.start` |
+| `turn.start` | 继续已有 thread或响应已完成计划 | `turn.start`, `plan.respond` |
 | `turn.interrupt` | 中断活跃 Turn | `turn.interrupt` |
 | `action.read` | 查看待处理 action | `action.list` |
 | `action.resolve` | 回答 approval/question | `action.resolve` |
@@ -45,6 +45,7 @@ conversation.timeline.list(agentId, threadId, cursor, limit=20)
 conversation.content.read(agentId, threadId, contentRef, offset)
 conversation.content.resolve(agentId, threadId, turnId, itemId, blockIndex)
 conversation.subscribe(agentId, threadId, cursor)
+plan.respond(agentId, threadId, planItemId, expectedRevision, decision, text)
 ```
 
 `agent.list` 的 Codex adapter 可由现有 `instance.list` 投影；`project.list` 必须由 Desktop 根据权威 thread/workspace metadata 聚合稳定 project ID，不能由 Mobile 对最近 20 条记录按路径字符串猜测。`conversation.list` 的 `projectId`、`query`、`limit` 和 cursor 由 Desktop 执行，排序固定为 `updatedAt desc, id desc`，同一 cursor 下不能因并列时间重复或漏项。
@@ -89,7 +90,7 @@ online
   └─ pair_revoked → revoked
 ```
 
-当前 Go endpoint 在已有 pairing credential 且请求发现 socket 已断开时，会在该请求边界同步重建 authenticated WSS/Noise session；同一 runtime 的并发请求由单一重连门闩串行化，失败后共享 500 ms 起、最大 30 s 的指数冷却。Relay `/v1/connect` 的 429 映射为 `rate_limited`，不会被伪装成新的拨号错误；冷却只抑制重复连接，不重放已路由的写请求。endpoint 为 `SessionOpen` 关联 route ACK，明确拒绝时立即返回对应错误，整个建链最多等待 30 秒；只接受 pairing、session、sender 和 recipient 全部匹配当前建链尝试的 `SessionHandshake`，迟到的旧握手直接丢弃。建链成功后，socket 生命周期转交给 runtime 自有 context，不继承触发重连的单次业务请求 deadline。Mobile 收到不属于当前 session 的迟到 data frame 时同样直接丢弃，Desktop daemon 在新握手完成时清理同一 pairing 的旧 session，避免旧密文触发新连接的解密失败。已验证 credential 在建链前进入 runtime，启动恢复失败后仍可由后续请求重连；配对批准后的 credential 即使首次建链失败也必须持久化。旧连接的迟到 callback 不得修改新 session。Flutter 前台仍在 disconnected 状态每 2 秒进行 best-effort 同步，鉴权失败、grant/key 不匹配和 revoke 不进入无限重试。
+当前 Go endpoint 在已有 pairing credential 且请求发现 socket 已断开时，会在该请求边界同步重建 authenticated WSS/Noise session；同一 runtime 的并发请求由单一重连门闩串行化，失败后共享 500 ms 起、最大 30 s 的指数冷却。Relay `/v1/connect` 的 429 映射为 `rate_limited`，不会被伪装成新的拨号错误；冷却只抑制重复连接，不重放已路由的写请求。endpoint 为 `SessionOpen` 关联 route ACK，明确拒绝时立即返回对应错误，整个建链最多等待 30 秒；已建立 session 的请求若收到 `peer_offline` route ACK，endpoint 立即销毁当前 WSS/Noise transport、通知 Flutter `disconnected`，下一次恢复读再创建全新 session，不能继续显示或复用假在线连接。endpoint 只接受 pairing、session、sender 和 recipient 全部匹配当前建链尝试的 `SessionHandshake`，迟到的旧握手直接丢弃。建链成功后，socket 生命周期转交给 runtime 自有 context，不继承触发重连的单次业务请求 deadline。Mobile 收到不属于当前 session 的迟到 data frame 时同样直接丢弃，Desktop daemon 在新握手完成时清理同一 pairing 的旧 session，避免旧密文触发新连接的解密失败。已验证 credential 在建链前进入 runtime，启动恢复失败后仍可由后续请求重连；配对批准后的 credential 即使首次建链失败也必须持久化。旧连接的迟到 callback 不得修改新 session。Flutter 前台仍在 disconnected 状态每 2 秒进行 best-effort 同步，鉴权失败、grant/key 不匹配和 revoke 不进入无限重试。
 
 ## 初始同步与增量
 
@@ -102,6 +103,7 @@ online
 5. 打开会话时调用 `conversation.read(limit=20)` 获取 metadata、revision/sequence 和最近 timeline 页；页面按 ID 去重并倒转为正序展示。滚动到顶部用 opaque `nextCursor` 调用 `conversation.timeline.list`，不使用 offset。
 6. EventSink 中的 event 只作为失效提示：约 150 ms 内合并 burst，同一时刻只允许一个 conversation refresh，期间到达新事件则再刷新一次；sequence 低于当前 snapshot 的迟到 response 不得覆盖 UI。gap、过期 cursor 或 `snapshot=true` 触发重新 `conversation.read/subscribe`。
 7. `revision` 随 snapshot/event 更新；`turn.start` 必须提交最后已确认的 `expectedRevision`。
+8. `conversation.read` 可返回可选 `planConfirmation={planItemId,turnId,revision}`。仅把该权威字段作为计划确认入口，不能从 Markdown 或历史 Plan item 推断；提交 `plan.respond` 后继续通过 snapshot/event 确认最终状态，不因超时自动重复写入。
 
 App 前台对未选中 Daemon 以有界短连接依次执行 status probe，更新下拉列表的 `connecting/online/offline + checkedAt` 后关闭；只有选中 Daemon 保持前台 session。切换 Daemon/Agent/project/thread 或 search query 时取消旧 read request，并用 selection generation 丢弃迟到 response。实时 event 可以更新项目/对话摘要，但只有属于当前 Agent/thread 且 sequence 连续的 event 才能写入详情 reducer。
 
@@ -113,7 +115,7 @@ App 前台对未选中 Daemon 以有界短连接依次执行 status probe，更�
 
 `hookPrompt` 不进入 DTO；function/tool、协作、搜索、图片、sleep、review 和 compaction item 只返回单个 `kind=summary` block。该 block 的 `summaryKind` 是原始类型，`summaryValue` 是脱敏、单行且不超过 512 UTF-8 字节的值，`text` 是语言无关 fallback；完整句子和 status 由 Flutter ARB 本地化。summary 不包含 arguments/output/result/error/path/prompt，不生成 `contentRef`；commandExecution 只返回 command block。过滤后可见 item 不足请求数量时 daemon 沿 provider cursor 补读后续页面，最多 8 页。其他单 block 超过 64 KiB 时内联 UTF-8 前 16 KiB，并用 15 分钟滑动过期的 `contentRef` 分块读取。项目下对话列表优先按 `projectId` 查询；Desktop 若发现历史线程项目关联未迁移，会按项目根目录 `cwd` 回退查询。Desktop control response 不超过 512 KiB；页面超预算时以相同 cursor 将 limit 逐次减半。
 
-`conversation.subscribe` 保留为恢复用的 cursor/snapshot 接口；Android 正常路径由 Relay unsolicited event 主动推送 metadata-only event，Go Core 通过 EventSink/EventChannel 转交 Flutter。endpoint 只转发 `type=event`，无 sink 时按到达顺序保留最近 1000 条，迟到/未知 response 不进入事件流；连接生命周期另发 `type=transport` 的 `online/disconnected/revoked/closed`。Flutter 在 disconnected、stream error/done 时立即 catch-up 并每 2 秒轮询；online 时停止轮询并再 catch-up 一次，revoked/closed 停止恢复。事件 burst 合并刷新，旧 snapshot 不覆盖新 sequence，刷新最新页时保留用户已加载的旧页。当前尚未完成 iOS Go Core/事件宿主接入的平台直接使用恢复路径。事件和轮询都不携带 provider 正文；当客户端游标过旧或待追赶事件超过 Desktop 的有界窗口时，服务端返回 `snapshot=true`。
+`conversation.subscribe` 保留为恢复用的 cursor/snapshot 接口；Android 正常路径由 Relay unsolicited event 主动推送 metadata-only event，Go Core 通过 EventSink/EventChannel 转交 Flutter。Desktop 先在 100 ms 内按 instance/thread 合并普通流式失效提示，并分别保留 action 与 terminal 类别；endpoint 只转发 `type=event`，无 sink 时按到达顺序保留最近 1000 条，迟到/未知 response 不进入事件流。连接生命周期另发 `type=transport` 的 `online/disconnected/revoked/closed`。Flutter 在 disconnected、stream error/done 时立即把会话页连接点改为离线、禁用发送并启动 catch-up，每 2 秒轮询；online 或成功恢复读时恢复安全连接状态，停止轮询并再 catch-up 一次，revoked/closed 停止恢复。Flutter 对收到的 event burst 再做约 150 ms 合并刷新，旧 snapshot 不覆盖新 sequence，刷新最新页时保留用户已加载的旧页。当前尚未完成 iOS Go Core/事件宿主接入的平台直接使用恢复路径。事件和轮询都不携带 provider 正文；当客户端游标过旧或待追赶事件超过 Desktop 的有界窗口时，服务端返回 `snapshot=true`。
 
 - `DaemonSummary`：由本地 pairing + live probe 组合的 id、display name、connection state、checked time；
 - `AgentSummary`：agent id、provider (`codex` 等)、display name、state、supported、navigation kind、capabilities、active turn/pending action count、last error；

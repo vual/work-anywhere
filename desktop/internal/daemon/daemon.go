@@ -431,6 +431,22 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 		if callErr != nil {
 			response.Error = &protocol.ControlError{Code: "invalid_provider_response", Message: callErr.Error()}
 		}
+	case "plan.respond":
+		if request.Contract != protocol.MobileControlContract {
+			response.Error = &protocol.ControlError{Code: "contract_required", Message: "plan.respond requires mobile-control-v1"}
+			break
+		}
+		instance, params, err := m.mobileControlTarget(request.Params)
+		if err != nil {
+			response.Error = &protocol.ControlError{Code: "invalid_target", Message: err.Error()}
+			break
+		}
+		result, respondErr := m.mobilePlanRespond(instance, instance.descriptor.ID, params)
+		if respondErr != nil {
+			response.Error = mobileControlError(respondErr)
+		} else {
+			response.Result = result
+		}
 	case "conversation.list", "turn.start", "turn.interrupt", "catalog.models":
 		var instance *Instance
 		var params json.RawMessage
@@ -449,7 +465,11 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 			"turn.start": "turn/start", "turn.interrupt": "turn/interrupt", "catalog.models": "model/list",
 		}[request.Method]
 		if request.Method == "turn.start" {
-			if !instance.CanStartTurn() {
+			var turnTarget struct {
+				ThreadID string `json:"threadId"`
+			}
+			_ = json.Unmarshal(params, &turnTarget)
+			if !instance.CanStartTurn(turnTarget.ThreadID) {
 				response.Error = &protocol.ControlError{Code: "conversation_busy", Message: "a turn is already active or waiting for an action"}
 				break
 			}
@@ -836,7 +856,7 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 }
 
 func isMutatingControlMethod(method string) bool {
-	return method == "conversation.create" || strings.HasPrefix(method, "turn.") || method == "action.resolve" || method == "instance.restart" || strings.HasPrefix(method, "attachment.") || strings.HasPrefix(method, "traffic.") || (strings.HasPrefix(method, "remote.") && method != "remote.status" && method != "remote.pair.list")
+	return method == "conversation.create" || method == "plan.respond" || strings.HasPrefix(method, "turn.") || method == "action.resolve" || method == "instance.restart" || strings.HasPrefix(method, "attachment.") || strings.HasPrefix(method, "traffic.") || (strings.HasPrefix(method, "remote.") && method != "remote.status" && method != "remote.pair.list")
 }
 
 func (m *Manager) restartErroredInstances() int {

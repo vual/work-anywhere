@@ -56,7 +56,7 @@ App 不使用底部导航栏。无 pairing 时根页面是添加配对；至少�
 
 底部没有导航栏；搜索框固定在工作台内容底部，但不承担页面切换或一级导航职责。
 
-顶栏需要适配窄屏和动态字体：品牌名允许单行省略，Daemon selector 使用可收缩的有限宽度，名称和连接状态允许省略但必须保留完整无障碍朗读。窄屏且存在运行中对话时，顶部只保留 loading 图标作为视觉提示，运行数量通过无障碍标签和详情页提供，不能让任务提示把 Daemon selector 挤出屏幕。
+顶栏需要适配窄屏和动态字体：品牌名允许单行省略，Daemon selector 使用可收缩的有限宽度，名称和连接状态允许省略但必须保留完整无障碍朗读。顶栏采用左侧固定 App icon、中间独立活跃任务区、右侧固定 Daemon selector 的三段布局；Daemon selector 的右边缘始终与页面内容右边缘对齐，任务提示不得覆盖 selector 或被 selector 遮挡。窄屏且存在运行中对话时，提示优先保留 loading icon，并在可用宽度内显示可省略的运行数量；完整语义由无障碍标签和详情页提供。
 
 ### Daemon selector
 
@@ -72,7 +72,7 @@ App 不使用底部导航栏。无 pairing 时根页面是添加配对；至少�
 | `online` | 绿色实心点 | 当前探测在线且安全会话可用 |
 | `offline/disconnected` | 灰色实心点 | 当前不可达或尚未连接 |
 
-图形旁同时显示“连接中 / 在线 / 离线”，屏幕阅读器读取同一状态，不能只依赖颜色。选中的 Daemon 有 check mark。切换后立即递增 selection generation，清空旧 Daemon 的可见内容并显示 skeleton；新 Daemon 完成同步前所有写操作关闭。未选中的 Daemon 在 App 前台以有界短连接依次探测，列表状态带最后检查时间，不把历史在线状态冒充实时状态。
+图形旁同时显示“连接中 / 在线 / 离线”，屏幕阅读器读取同一状态，不能只依赖颜色。会话页标题下方复用实时 transport 状态；收到 disconnected/closed/revoked、`peer_offline` 或同步读确认离线时立即由绿色“安全连接”切换为灰色“离线”并禁用写操作，成功恢复读或 online event 后再恢复绿色。选中的 Daemon 有 check mark。切换后立即递增 selection generation，清空旧 Daemon 的可见内容并显示 skeleton；新 Daemon 完成同步前所有写操作关闭。未选中的 Daemon 在 App 前台以有界短连接依次探测，列表状态带最后检查时间，不把历史在线状态冒充实时状态。
 
 ### Agent selector
 
@@ -110,11 +110,11 @@ Agent selector 每项至少显示 display name 和 provider icon/label；当前�
 
 ### Codex 项目
 
-Codex Agent 下默认展示最近活跃的 10 个项目，按最近一条对话更新时间倒序。项目卡片显示项目名、对话数、运行中数量和最后活动时间；Mobile DTO 不携带本机根路径。项目超过 10 个时列表底部显示“展开更多项目”，每次追加一页且保持已加载顺序；没有更多数据时移除入口，不显示无效按钮。
+Codex Agent 下默认展示最近活跃的 10 个项目，按最近一条对话更新时间倒序。项目使用约 26dp 线框文件夹图标、正常字重名称和 64–68dp 的纯文本行，不使用卡片或分割线；Mobile DTO 不携带本机根路径。项目超过 10 个时列表底部显示“展开更多项目”，每次追加一页且保持已加载顺序；没有更多数据时移除入口，不显示无效按钮。
 
 点击项目进入项目详情，默认加载该项目最近 15 条对话，按最后更新时间倒序；底部使用“显示更多”继续分页。项目页标题下显示 Agent，不展示 Desktop 本机路径；返回后恢复工作台滚动位置、已展开项目数量和搜索前状态。
 
-项目详情页右下角固定显示纯 icon 的圆形“新建对话”按钮。点击只打开当前项目的空白会话详情页，不立即访问 Desktop；页面中央显示 WAW logo 和项目名，底部显示 Composer。用户第一次发送文字或图片时，客户端才通过 `conversation.create` 创建当前项目的 Codex thread，并随后发送第一条 Turn。创建/发送期间输入区显示 loading 且不可重复提交；失败时保留空白页和输入内容，不创建本地 outbox。
+项目详情页采用圆形返回按钮、项目名称和当前电脑/连接状态标题，右下角显示蓝色扩展胶囊“新建对话”按钮。点击只打开当前项目的空白会话详情页，不立即访问 Desktop；页面中央显示 WAW logo 和项目名，底部显示 Composer。用户第一次发送文字或图片时，客户端才通过 `conversation.create` 创建当前项目的 Codex thread，并随后发送第一条 Turn。创建/发送期间输入区显示 loading 且不可重复提交；失败时保留空白页和输入内容，不创建本地 outbox。
 
 ### Hermes Bot
 
@@ -122,7 +122,7 @@ Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项�
 
 ### 最近对话
 
-项目/Bot 区域下方展示当前 Agent 最近 20 条对话，跨项目合并且不按项目分组，按最后更新时间倒序。对话卡片显示标题、项目短标签和最后更新时间；列表 DTO 不携带 preview，状态优先级为 `等待处理 > 运行中 > 正在停止 > 失败 > 空闲`。
+项目/Bot 区域下方展示当前 Agent 最近 20 条对话，跨项目合并且不按项目分组，按最后更新时间倒序。对话使用扁平文本行，左侧单行标题、右侧相对时间；列表 DTO 不携带 preview，状态优先级为 `等待处理 > 运行中 > 正在停止 > 失败 > 空闲`。
 
 运行中的对话在卡片最右侧显示蓝色旋转 loading icon，并提供“运行中”的无障碍文本；它与 Daemon selector 的连接 loading 分属不同语义。点击任意对话进入会话详情。超过 20 条时工作台不继续分页，用户通过底部搜索访问更早对话；项目详情仍可独立分页。
 
@@ -146,18 +146,24 @@ Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项�
 - user/assistant：常规气泡/正文；由 `app/lib/features/conversation/markdown_renderer.dart` 使用 GFM 安全 renderer，支持标题、强调、列表、引用、表格、任务列表、代码块和选择/复制；不解析任意 HTML，不自动加载图片；`http/https` 链接显示目标 host 并在打开前二次确认。
 - summary item：daemon 仅返回 `summaryKind + summaryValue` 和语言无关 fallback；Flutter 用 ARB 生成完整本地化句子，不使用气泡、Markdown 或全文展开，status 同样以本地化弱化文字/图标展示。`hookPrompt` 不渲染；`commandExecution` 只展示命令。
 - plan：独立 Timeline 卡片，直接使用 daemon 返回的原始 Markdown。默认在卡片内渲染前 5 个源文件行；超过 5 行显示“查看完整计划”，点击后打开底部弹窗，以同一 Markdown renderer 渲染完整计划。大内容通过 `contentRef` 按 offset/nextOffset/hasMore 拼接；引用过期或读取失败时在弹窗内显示错误和重试入口。
-- reasoning：完整展示 daemon 返回的 reasoning 内容及 summary，不只展示 summary，也不折叠隐藏正文；
-- tool：统一使用一行摘要和弱化状态，不展示参数、结果、错误详情或输出；
+- reasoning：默认显示本地化低对比活动行，有正文时可展开查看；
+- tool/command：默认显示本地化低对比活动行，命令存在详情时可展开并使用等宽字体；无详情 summary 不显示无效展开入口，不展示 provider 内部类型名；
 - diff：文件名与增删摘要，点击进入只读 diff viewer；
 - system/error：非气泡 banner，提供可恢复动作。
 
-打开页面在首屏 snapshot 加载并完成布局后自动定位到时间线底部，展示最新内容。运行时在时间线刷新前距离底部不超过 24 logical pixels，且新增 item 或末项 streaming 内容发生变化时，布局完成后自动滚动到新的底部；如果用户已经向上阅读、刷新前不在这个范围内，则保持原滚动位置不变。streaming block 原位更新，完成后固定；event gap 时顶部显示“正在重新同步”，不重复渲染已存在 block。“有新进展”悬浮入口尚未实现。
+打开页面在首屏 snapshot 加载并完成布局后自动定位到时间线底部，展示最新内容。运行时在时间线刷新前距离底部不超过 24 logical pixels，且新增 item 或末项 streaming 内容发生变化时，布局完成后自动滚动到新的底部；如果用户已经向上阅读、刷新前不在这个范围内，则保持原滚动位置不变。距离底部超过约 96dp 时显示圆形回到底部按钮，点击后平滑滚动并在接近底部时隐藏。streaming block 原位更新，完成后固定；event gap 时顶部显示“正在重新同步”，不重复渲染已存在 block。
 
 首屏只读取最近 20 项并正序显示；滚动到顶部使用 opaque cursor 加载更早页，按 item ID 去重，并以新增内容高度补偿滚动位置。刷新最新页时替换同 ID item、追加新 item 并保留已加载旧页；迟到 snapshot 不得降低 sequence。Android 正常路径由 EventSink 接收 daemon 主动事件，约 150 ms 合并事件 burst 后刷新当前会话；EventSink 断开或平台尚未接入事件宿主时才使用 2 秒 `conversation.subscribe` 轮询恢复。`action.list` 失败只显示独立 banner，不阻断正文。Plan 卡片按原始 Markdown 行边界显示前 5 行，完整内容在底部弹窗中滚动查看；普通大 block 显示 16 KiB 摘要和“查看完整内容”，查看器按 128 KiB 连续加载。引用过期时用 item 的稳定定位重新签发并从 offset 0 读取，失败则保留当前页面和弹窗重试入口。
 
 ### Composer
 
-仅当 `online + idle + turn.start scope + no blocking action` 时可发送。输入框左侧内嵌附件添加 icon，右侧提供发送按钮；输入区同时支持图片、文本和一个设置入口。相册一次或分次最多选择 10 张图片，按选择顺序去重并追加；已选图片在输入框内部以单行缩略图展示，每张可单独移除，超出屏幕宽度后横向滑动。没有文字且没有附件时发送按钮禁用，输入文字或选中附件后启用。设置 bottom sheet 展示 Desktop catalog 提供的模型、思考等级、approval/sandbox profile，并记住“本 thread 本次 UI 选择”，不把未确认值持久化为全局事实。
+仅当 `online + idle + turn.start scope + no blocking action` 时可发送；Desktop 的 idle 判定只针对当前 thread，同一 Agent 的其他 thread 运行中不应禁用当前会话。Composer 是 SafeArea 内单个悬浮圆角容器，整合附件、输入框和发送/停止按钮。相册一次或分次最多选择 10 张图片，按选择顺序去重并追加；已选图片在输入框内部以单行缩略图展示，每张可单独移除，超出屏幕宽度后横向滑动。没有文字且没有附件时发送按钮禁用，输入文字或选中附件后启用。
+
+### 计划确认
+
+当且仅当 snapshot 提供 `planConfirmation` 且没有 pending Action 时，底部用非模态悬浮面板暂时代替 Composer。面板显示“是否执行此计划？”、“是，执行此计划”、分隔线，以及始终可见的“否，请说明修改内容”输入行。输入为空时尾部为“跳过”，只在本地关闭面板并恢复 Composer；输入非空时立即变为“提交”，调用 `plan.respond(decision=revise)`。确认执行调用 `decision=implement`。提交期间禁用入口并显示 loading，明确失败保留文字与面板；结果未知时先刷新 snapshot，只有权威 revision/Turn 已变化才视为受理。
+
+跳过标识以 `daemonId + threadId + planItemId` 写入本地偏好，只保存标识符，不保存计划正文或修改意见。同一 Plan item 在刷新、重连和重新进入时不再弹出，新 Plan item 仍会触发。Action 始终优先；Action 解决后重新同步决定是否显示。Android 返回键先由系统关闭键盘，不把返回解释成跳过。
 
 - running：保留文本输入框和附件添加入口，仅将右侧发送圆按钮切换为圆形“停止”按钮；若 Provider 支持 steer 且 Desktop 将来开放，再另行设计，不把输入内容默认为排队。
 - awaiting action：composer 收起，突出“先处理待办”。
@@ -224,7 +230,7 @@ Daemon selector 底部提供“添加电脑”和“管理电脑”。管理页�
 
 - 所有状态不仅靠颜色表达；运行、等待、失败同时有图标和文本。
 - 支持系统动态字体到至少 200%、屏幕阅读器 label、逻辑焦点顺序、44/48dp 最小触控目标和 reduced motion。
-- 工作台、项目列表和会话详情采用紧凑信息密度：常规正文 14–15sp、列表标题 16sp、section 标题 18sp、列表基础高度 52dp；动态字体放大时高度随内容增长，不以固定高度裁切文字。
+- 工作台、项目列表和会话详情采用留白充足的扁平层级：常规正文约 16sp、列表标题约 17sp、section 标题 18sp、列表基础高度 66dp；动态字体放大时高度随内容增长，不以固定高度裁切文字。
 - Daemon 与 Agent selector 在大字体下保持独立可访问性 label；Daemon 下拉菜单和横向 Agent 项允许名称省略并提供完整朗读。横屏/平板使用列表—详情双栏，但保持相同返回栈语义，手机窄屏使用单列。
 - Markdown、diff 和 code block 支持选择/复制，但复制前对疑似 secret 不做不可靠自动脱敏承诺，使用明确隐私提示。
 

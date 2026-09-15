@@ -110,10 +110,11 @@ void main() {
       final events = StreamController<Map<String, dynamic>>();
       addTearDown(events.close);
       var subscriptions = 0;
+      final subscribeResult = Completer<Map<String, dynamic>>();
       final gateway = _FakeGateway((method, params) async {
         expect(method, 'conversation.subscribe');
         subscriptions++;
-        return {'result': const {}};
+        return subscribeResult.future;
       }, events: events.stream);
       final controller = ConversationController(
         gateway: gateway,
@@ -125,6 +126,11 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       expect(subscriptions, 1);
+      expect(controller.state.online, isFalse);
+      events.add({'type': 'transport', 'state': 'online'});
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.state.online, isTrue);
+      subscribeResult.complete({'result': const {}});
       controller.dispose();
     },
   );

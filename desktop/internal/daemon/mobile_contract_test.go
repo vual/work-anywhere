@@ -167,6 +167,107 @@ func TestPlanWithExactlyFiveLinesAndTrailingNewlineStaysInline(t *testing.T) {
 	}
 }
 
+func TestPlanConfirmationRequiresLatestSuccessfulPlanTurn(t *testing.T) {
+	instance := &Instance{
+		stdin:          &bufferWriteCloser{},
+		state:          "ready",
+		actions:        make(map[string]*pendingAction),
+		activeTurns:    make(map[string]string),
+		threadSettings: map[string]threadCollaborationSettings{"thread-1": {TurnID: "turn-2", Mode: "plan", Model: "gpt-test", ReasoningEffort: "high", Succeeded: true}},
+	}
+	page := mobileTimelinePage{Items: []mobileTimelineItem{
+		{ID: "plan-2", TurnID: "turn-2", Kind: "plan"},
+		{ID: "message-1", TurnID: "turn-1", Kind: "agentMessage"},
+	}}
+	confirmation := planConfirmationFor(instance, "thread-1", mobileConversationMetadata{}, page, 9)
+	if confirmation == nil || confirmation.PlanItemID != "plan-2" || confirmation.TurnID != "turn-2" || confirmation.Revision != 9 {
+		t.Fatalf("unexpected plan confirmation: %#v", confirmation)
+	}
+
+	newerTurn := page
+	newerTurn.Items = append([]mobileTimelineItem{{ID: "message-3", TurnID: "turn-3", Kind: "agentMessage"}}, page.Items...)
+	if got := planConfirmationFor(instance, "thread-1", mobileConversationMetadata{}, newerTurn, 10); got != nil {
+		t.Fatalf("historical plan must not be inferred after a newer turn: %#v", got)
+	}
+
+	settings := instance.threadSettings["thread-1"]
+	settings.Succeeded = false
+	instance.threadSettings["thread-1"] = settings
+	if got := planConfirmationFor(instance, "thread-1", mobileConversationMetadata{}, page, 9); got != nil {
+		t.Fatalf("failed or interrupted plan turn must not be confirmed: %#v", got)
+	}
+	settings.Succeeded = true
+	instance.threadSettings["thread-1"] = settings
+	instance.activeTurns["thread-1"] = "turn-3"
+	if got := planConfirmationFor(instance, "thread-1", mobileConversationMetadata{}, page, 9); got != nil {
+		t.Fatalf("active conversation must not expose a plan confirmation: %#v", got)
+	}
+	delete(instance.activeTurns, "thread-1")
+	instance.actions["1"] = &pendingAction{ConversationID: "thread-1"}
+	if got := planConfirmationFor(instance, "thread-1", mobileConversationMetadata{}, page, 9); got != nil {
+		t.Fatalf("pending action must take precedence over plan confirmation: %#v", got)
+	}
+}
+
+func TestPlanTurnStartParamsSwitchModeAndDiscardDeveloperInstructions(t *testing.T) {
+	settings := threadCollaborationSettings{Model: "gpt-test", ReasoningEffort: "high"}
+	for _, test := range []struct {
+		decision string
+		wantMode string
+	}{
+		{decision: "implement", wantMode: "default"},
+		{decision: "revise", wantMode: "plan"},
+	} {
+		params := planTurnStartParams("thread-1", test.decision, "next", settings)
+		mode := params["collaborationMode"].(map[string]any)
+		if mode["mode"] != test.wantMode {
+			t.Fatalf("%s mode = %v, want %s", test.decision, mode["mode"], test.wantMode)
+		}
+		modeSettings := mode["settings"].(map[string]any)
+		if modeSettings["model"] != "gpt-test" || modeSettings["reasoning_effort"] != "high" {
+			t.Fatalf("settings were not carried forward: %#v", modeSettings)
+		}
+		if value, exists := modeSettings["developer_instructions"]; !exists || value != nil {
+			t.Fatalf("developer instructions must be explicitly cleared: %#v", modeSettings)
+		}
+	}
+}
+
+func TestPlanRespondReturnsStablePreflightErrors(t *testing.T) {
+	instance, _, cleanup := testInstance(t)
+	defer cleanup()
+	instance.state = "ready"
+	manager := instance.manager
+
+	_, err := manager.mobilePlanRespond(instance, "test-instance", json.RawMessage(`{}`))
+	if contractErr, ok := err.(*mobileContractError); !ok || contractErr.code != "invalid_params" {
+		t.Fatalf("invalid request error = %#v", err)
+	}
+
+	request := json.RawMessage(`{"threadId":"thread-1","planItemId":"plan-1","expectedRevision":0,"decision":"implement","text":"implement"}`)
+	_, err = manager.mobilePlanRespond(instance, "test-instance", request)
+	if contractErr, ok := err.(*mobileContractError); !ok || contractErr.code != "plan_mode_unavailable" {
+		t.Fatalf("missing settings error = %#v", err)
+	}
+
+	instance.mu.Lock()
+	instance.conversations["thread-1"] = &conversationProjection{Revision: 2}
+	instance.mu.Unlock()
+	_, err = manager.mobilePlanRespond(instance, "test-instance", request)
+	if contractErr, ok := err.(*mobileContractError); !ok || contractErr.code != "revision_conflict" {
+		t.Fatalf("revision conflict error = %#v", err)
+	}
+
+	instance.mu.Lock()
+	instance.conversations["thread-1"].Revision = 0
+	instance.activeTurns["thread-1"] = "turn-2"
+	instance.mu.Unlock()
+	_, err = manager.mobilePlanRespond(instance, "test-instance", request)
+	if contractErr, ok := err.(*mobileContractError); !ok || contractErr.code != "conversation_busy" {
+		t.Fatalf("busy conversation error = %#v", err)
+	}
+}
+
 func TestNormalizeTimelineSummariesAndHiddenItems(t *testing.T) {
 	rawItems := []map[string]any{
 		{"id": "hook", "type": "hookPrompt", "fragments": []any{"secret"}},

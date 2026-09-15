@@ -73,6 +73,58 @@ void main() {
     expect(find.text('Work Any Where'), findsNothing);
   });
 
+  testWidgets('workspace keeps the running hint visible and daemon at right', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    const data = WorkspaceState(
+      needsPairing: false,
+      daemons: [
+        DaemonSummary(
+          id: 'daemon-1',
+          name: 'My PC',
+          phase: ConnectionPhase.online,
+        ),
+      ],
+      conversations: [
+        ConversationSummary(
+          id: 'thread-1',
+          agentId: 'agent-1',
+          projectId: 'project-1',
+          title: 'Running task',
+          status: 'running',
+          running: true,
+          updatedAt: 0,
+        ),
+      ],
+      selectedDaemonId: 'daemon-1',
+    );
+
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MaterialApp(
+          locale: Locale('zh', 'CN'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: WorkspaceScreen(data: data),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('1 个运行中'), findsOneWidget);
+
+    final daemonRect = tester.getRect(
+      find.byKey(const Key('workspace-daemon-selector')),
+    );
+    final runningTextRect = tester.getRect(find.text('1 个运行中'));
+    expect(daemonRect.right, closeTo(336, .01));
+    expect(runningTextRect.right, lessThanOrEqualTo(daemonRect.left));
+  });
+
   testWidgets('workspace uses compact rows and supports 200 percent text', (
     tester,
   ) async {
@@ -137,9 +189,9 @@ void main() {
     expect(tester.takeException(), isNull);
     final compactRows = tester
         .widgetList<ListTile>(find.byType(ListTile))
-        .where((tile) => tile.minTileHeight == 52);
+        .where((tile) => tile.minTileHeight == 66);
     expect(compactRows, hasLength(2));
-    expect(tester.widget<Text>(find.text('Project A')).style?.fontSize, 16);
+    expect(tester.widget<Text>(find.text('Project A')).style?.fontSize, 17);
     expect(tester.widget<Text>(find.text('项目')).style?.fontSize, 18);
     expect(find.text('最近 10 个'), findsNothing);
     expect(find.text('最近 20 个'), findsNothing);

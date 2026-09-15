@@ -3,13 +3,39 @@ import 'package:flutter/material.dart';
 const wawBlue = Color(0xFF2F80ED);
 const wawGreen = Color(0xFF34C759);
 
+extension WawThemeColors on ThemeData {
+  Color get floatingSurface =>
+      brightness == Brightness.dark ? const Color(0xFF202124) : Colors.white;
+  Color get softSurface => brightness == Brightness.dark
+      ? const Color(0xFF292A2D)
+      : const Color(0xFFF1F1F3);
+  Color get mutedInk => brightness == Brightness.dark
+      ? const Color(0xFFA7A7AA)
+      : const Color(0xFF8D8D92);
+  Color get userBubble => brightness == Brightness.dark
+      ? const Color(0xFF17365C)
+      : const Color(0xFFE4F0FF);
+  Color get activityRail => brightness == Brightness.dark
+      ? const Color(0xFF55565A)
+      : const Color(0xFFD1D1D4);
+  List<BoxShadow> get floatingShadow => [
+    BoxShadow(
+      color: Colors.black.withValues(
+        alpha: brightness == Brightness.dark ? .28 : .08,
+      ),
+      blurRadius: 24,
+      offset: const Offset(0, 8),
+    ),
+  ];
+}
+
 /// Typography and spacing shared by the information-dense workspace screens.
 /// Pairing/onboarding deliberately keeps the default Material sizing.
 abstract final class WawCompact {
-  static const horizontalPadding = 20.0;
-  static const listTileHeight = 52.0;
-  static const body = TextStyle(fontSize: 15, height: 1.45);
-  static const listTitle = TextStyle(fontSize: 16, height: 1.25);
+  static const horizontalPadding = 24.0;
+  static const listTileHeight = 66.0;
+  static const body = TextStyle(fontSize: 16, height: 1.52);
+  static const listTitle = TextStyle(fontSize: 17, height: 1.28);
   static const sectionTitle = TextStyle(
     fontSize: 18,
     height: 1.25,
@@ -51,6 +77,14 @@ ThemeData _theme(Brightness brightness, Color surface, Color ink, Color soft) {
     textTheme: ThemeData(brightness: brightness).textTheme
         .apply(bodyColor: ink, displayColor: ink),
     dividerColor: Colors.transparent,
+    appBarTheme: AppBarTheme(
+      backgroundColor: Colors.transparent,
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+      toolbarHeight: 72,
+      foregroundColor: ink,
+    ),
     cardColor: soft,
     splashFactory: InkSparkle.splashFactory,
     inputDecorationTheme: InputDecorationTheme(
@@ -61,6 +95,10 @@ ThemeData _theme(Brightness brightness, Color surface, Color ink, Color soft) {
         borderRadius: BorderRadius.circular(28),
       ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+    ),
+    bottomSheetTheme: BottomSheetThemeData(
+      backgroundColor: Colors.transparent,
+      surfaceTintColor: Colors.transparent,
     ),
   );
 }

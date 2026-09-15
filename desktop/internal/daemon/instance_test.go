@@ -7,6 +7,7 @@ import (
 	"net"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/hurf/work-anywhere/desktop/internal/ipc"
 	"github.com/hurf/work-anywhere/desktop/internal/protocol"
@@ -31,6 +32,36 @@ func testInstance(t *testing.T) (*Instance, *bufferWriteCloser, func()) {
 	instance.stdin = writer
 	instance.state = "waiting_initialize"
 	return instance, writer, func() { state.Close() }
+}
+
+func TestCollaborationSettingsPersistWithoutDeveloperInstructions(t *testing.T) {
+	instance, _, cleanup := testInstance(t)
+	defer cleanup()
+	params := json.RawMessage(`{"threadId":"thread-1","collaborationMode":{"mode":"plan","settings":{"model":"gpt-test","reasoning_effort":"high","developer_instructions":"do not persist this secret"}}}`)
+	instance.observeOutgoingThreadSettings("turn/start", params)
+	instance.observeNotification("turn/started", json.RawMessage(`{"thread":{"id":"thread-1"},"turn":{"id":"turn-1"}}`))
+	instance.observeNotification("turn/completed", json.RawMessage(`{"threadId":"thread-1","turn":{"id":"turn-1"}}`))
+
+	instance.mu.Lock()
+	instance.threadSettings = make(map[string]threadCollaborationSettings)
+	instance.mu.Unlock()
+	settings, ok := instance.collaborationSettings("thread-1")
+	if !ok || settings.Mode != "plan" || settings.Model != "gpt-test" || settings.ReasoningEffort != "high" || settings.TurnID != "turn-1" || !settings.Succeeded {
+		t.Fatalf("unexpected restored collaboration settings: %#v, ok=%v", settings, ok)
+	}
+	encoded, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encoded, []byte("developer")) || bytes.Contains(encoded, []byte("secret")) {
+		t.Fatalf("developer instructions leaked into the persisted projection: %s", encoded)
+	}
+
+	instance.observeThreadSettingsNotification(json.RawMessage(`{"threadId":"thread-1","threadSettings":{"collaborationMode":{"mode":"default","settings":{"model":"gpt-next","reasoning_effort":"medium","developer_instructions":"new secret"}}}}`))
+	updated, ok := instance.collaborationSettings("thread-1")
+	if !ok || updated.Mode != "default" || updated.Model != "gpt-next" || updated.TurnID != "turn-1" || !updated.Succeeded {
+		t.Fatalf("settings notification did not preserve authoritative turn status: %#v", updated)
+	}
 }
 
 func TestDesktopRequestIDIsRestoredAndInitializeIsVirtualized(t *testing.T) {
@@ -133,3 +164,57 @@ func TestApprovalFirstResponseWins(t *testing.T) {
 }
 
 var _ io.WriteCloser = (*bufferWriteCloser)(nil)
+
+func TestCanStartTurnOnlyBlocksTheAffectedConversation(t *testing.T) {
+	instance, _, cleanup := testInstance(t)
+	defer cleanup()
+	instance.state = "ready"
+	instance.activeTurns["thread-busy"] = "turn-1"
+	instance.actions["action-other"] = &pendingAction{
+		ID:             json.RawMessage(`"action-other"`),
+		ConversationID: "thread-action",
+	}
+	instance.pendingTurnSettings["thread-pending"] = threadCollaborationSettings{
+		Mode: "default", Model: "gpt-test",
+	}
+
+	if instance.CanStartTurn("thread-busy") {
+		t.Fatal("active conversation was allowed to start another turn")
+	}
+	if instance.CanStartTurn("thread-action") {
+		t.Fatal("conversation waiting for an action was allowed to start")
+	}
+	if instance.CanStartTurn("thread-pending") {
+		t.Fatal("conversation with a pending turn submission was allowed to start")
+	}
+	if !instance.CanStartTurn("thread-idle") {
+		t.Fatal("unrelated active conversation blocked an idle conversation")
+	}
+}
+
+func TestCompletingOneTurnPreservesOtherConversationActivity(t *testing.T) {
+	instance, _, cleanup := testInstance(t)
+	defer cleanup()
+	instance.state = "ready"
+	instance.observeNotification("turn/started", json.RawMessage(`{"threadId":"thread-a","turn":{"id":"turn-a"}}`))
+	instance.observeNotification("turn/started", json.RawMessage(`{"threadId":"thread-b","turn":{"id":"turn-b"}}`))
+	instance.actions[`"action-b"`] = &pendingAction{
+		ID:             json.RawMessage(`"action-b"`),
+		ConversationID: "thread-b",
+		TurnID:         "turn-b",
+		CreatedAt:      time.Now(),
+	}
+
+	instance.observeNotification("turn/completed", json.RawMessage(`{"threadId":"thread-a","turn":{"id":"turn-a","status":"completed"}}`))
+
+	snapshot := instance.Snapshot()
+	if !snapshot.ActiveTurn || snapshot.PendingActions != 1 {
+		t.Fatalf("other conversation activity was lost: %+v", snapshot)
+	}
+	if instance.CanStartTurn("thread-b") {
+		t.Fatal("still-active conversation was allowed to start")
+	}
+	if !instance.CanStartTurn("thread-a") {
+		t.Fatal("completed conversation did not become idle")
+	}
+}

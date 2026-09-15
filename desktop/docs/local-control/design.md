@@ -26,14 +26,18 @@ daemon 将控制方法路由到实例 supervisor；Codex driver/能力描述用�
 - 实例：`instance.list`, `instance.get`, `instance.restart`
 - Mobile navigation：`agent.list`, `project.list`（要求 `mobile-control-v1`）
 - 会话：`conversation.list`, `conversation.read`, `conversation.timeline.list`, `conversation.content.read`, `conversation.content.resolve`, `conversation.subscribe`, `conversation.create`
-- Turn：`turn.start`, `turn.interrupt`
+- Turn：`turn.start`, `turn.interrupt`, `plan.respond`（后者要求 `mobile-control-v1`）
 - action：`action.list`, `action.resolve`
 - catalog：`catalog.models`, `catalog.permissionProfiles`
 - 附件：`attachment.begin`, `attachment.chunk`, `attachment.commit`, `attachment.abort`
 - 流量：`traffic.enable`, `traffic.disable`
 - Remote：`remote.status`, `remote.configure`, `remote.enroll`, `remote.reconnect`, `remote.pair.start/list/resolve/cancel/revoke`
 
-`turn.start` 当前接受 `instanceId`、`threadId`、文字、attachment IDs、model、reasoning effort、approval policy、sandbox policy、client message ID 和 expected revision。附件中的图片被转换为官方 App Server 支持的输入项；调用必须指向已有 thread。
+`turn.start` 当前接受 `instanceId`、`threadId`、文字、attachment IDs、model、reasoning effort、approval policy、sandbox policy、client message ID 和 expected revision。附件中的图片被转换为官方 App Server 支持的输入项；调用必须指向已有 thread。忙碌门禁按目标 thread 判断：同一 thread 已有活跃 Turn、等待该 thread 的 action，或 action 无法归属 thread 时拒绝；同一 Agent 的其他 thread 正在运行或等待自身 action 时不阻塞本 thread。实例仍汇总保存全部活跃 Turn，用于状态、升级和强制退出。
+
+Desktop 从 `turn/start` 和 `thread/settings/updated` 投影各 thread 最近确认的 collaboration mode、model 与 reasoning effort，并使用现有加密 settings 存储按 instance/thread 持久化。投影不保存 developer instructions 或计划正文；Turn 的 started/completed/failed/interrupted 通知用于把配置绑定到权威 Turn 并记录其是否成功完成。`ConversationSnapshot.planConfirmation` 仅在最新 Turn 成功完成、以 plan mode 启动、包含完成的 Plan item、当前 thread 空闲且无阻塞 action，并且 model/effort 足以安全启动下一 Turn 时返回 `{planItemId, turnId, revision}`。
+
+`plan.respond` 接受 `agentId`、`threadId`、`planItemId`、`expectedRevision`、`decision=implement|revise` 和非空 `text`。它重新读取权威 snapshot 并校验计划身份、revision、空闲/action 状态和配置：`implement` 以相同 model/effort 和 `collaborationMode.mode=default` 启动 Turn，`revise` 以 `mode=plan` 启动 Turn，两者都显式清空 `developer_instructions`。响应为 `{started:true, turnId?}`；`invalid_params`、`conversation_busy`、`revision_conflict`、`stale_plan`、`plan_mode_unavailable` 和 `provider_error` 保持稳定。该方法复用 `turn.start` pairing scope。
 
 `attachment.begin` 在 Mobile contract 下接受 `agentId`、`projectId`、`conversationId`、`clientMessageId`、`mimeType`、文件名和大小。一次发送生成的 `clientMessageId` 同时用于 begin 和 `turn.start`。Desktop 先用 `agentId` 解析并绑定上传所属实例，再将 provider 路由字段从下游参数中移除；这样上传完成后只能由同一实例的 `turn.start` 使用。附件内容直接写入项目目录的 `.work-anywhere-remote-attachments/<conversationId>/<clientMessageId>/`，文件名为清理后的原名加唯一 attachment ID 后缀。
 
@@ -51,14 +55,14 @@ Provider capabilities 当前包含 history、live stream、text/image input、ap
 
 ## State and persistence
 
-控制连接和 subscriber 队列在内存中。客户端通过 conversation sequence/cursor 恢复事件；附件分块直接追加到项目目录下的 `.part` 临时文件，commit 校验大小后原子重命名，再仅把 attachment 元数据和文件路径写入 SQLite。上传失败由 `attachment.abort` 清理临时文件；已 commit 的文件不会因后续 Turn 失败自动删除。`turn.start` 根据 attachment ID 读取文件，仅将 `image/*` 转为官方 App Server 的 data URI，其他 MIME 类型返回 `unsupported_attachment_type`。控制暂停只阻止本机控制操作，不改变 Desktop 原始连接。
+控制连接和 subscriber 队列在内存中。客户端通过 conversation sequence/cursor 恢复事件；每个 thread 的 collaboration mode/model/effort、关联 Turn ID 与成功状态写入加密 settings，daemon 重启后仍可判定是否能安全响应计划。附件分块直接追加到项目目录下的 `.part` 临时文件，commit 校验大小后原子重命名，再仅把 attachment 元数据和文件路径写入 SQLite。上传失败由 `attachment.abort` 清理临时文件；已 commit 的文件不会因后续 Turn 失败自动删除。`turn.start` 根据 attachment ID 读取文件，仅将 `image/*` 转为官方 App Server 的 data URI，其他 MIME 类型返回 `unsupported_attachment_type`。控制暂停只阻止本机控制操作，不改变 Desktop 原始连接。
 
 ## Security and failure handling
 
 - 控制服务仅绑定随机 `127.0.0.1` 端口；管理 Pipe 受当前 SID ACL 保护。
 - Web 管理入口使用一次性 fragment token 换取 SameSite/HttpOnly session，并校验 Origin 和 CSRF。
 - `expectedRevision` 防止基于陈旧状态开始 Turn。
-- 控制面暂停、实例未 ready、会话正在运行或等待 action 时拒绝不安全操作。
+- 控制面暂停、实例未完成初始化、目标会话正在运行或等待 action 时拒绝不安全操作；其他会话的活动不造成误拒绝。
 
 ## Invariants and non-goals
 
@@ -82,6 +86,7 @@ Provider capabilities 当前包含 history、live stream、text/image input、ap
 - 附件 begin/chunk/commit 后可用于图片输入；abort、size mismatch、路径穿越、项目目录回退和重启清理测试覆盖文件存储边界。
 - cursor 重连补发和 snapshot fallback 测试。
 - metadata/timeline DTO、结构化 summary、本地化边界、opaque cursor、自适应页大小、UTF-8 内容分块和引用越权/过期/重新签发测试。
+- plan/default 配置投影、重启恢复、成功 Plan 门禁、计划身份/revision/action 冲突、模式切换和 `turn.start` scope 复用测试。
 - Origin、CSRF、一次性 token、控制暂停和慢订阅者测试。
 
 ## Documentation update triggers

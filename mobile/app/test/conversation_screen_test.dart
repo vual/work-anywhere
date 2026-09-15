@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -5,18 +6,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:work_anywhere/core/core_gateway.dart';
 import 'package:work_anywhere/features/conversation/conversation_screen.dart';
 import 'package:work_anywhere/features/workspace/workspace_controller.dart';
 import 'package:work_anywhere/l10n/generated/app_localizations.dart';
 
 class _FakeGateway extends CoreGateway {
-  _FakeGateway(this.handler);
+  _FakeGateway(this.handler, {Stream<Map<String, dynamic>>? events})
+    : _events = events ?? const Stream.empty();
   final Future<Map<String, dynamic>> Function(
     String method,
     Map<String, dynamic> params,
   )
   handler;
+  final Stream<Map<String, dynamic>> _events;
 
   @override
   Future<Map<String, dynamic>> call(
@@ -26,13 +30,16 @@ class _FakeGateway extends CoreGateway {
   }) => handler(method, params);
 
   @override
-  Stream<Map<String, dynamic>> get events => const Stream.empty();
+  Stream<Map<String, dynamic>> get events => _events;
 }
 
 class _FakeWorkspaceController extends WorkspaceController {
   @override
-  Future<WorkspaceState> build() async =>
-      const WorkspaceState(needsPairing: false, selectedAgentId: 'agent-1');
+  Future<WorkspaceState> build() async => const WorkspaceState(
+    needsPairing: false,
+    selectedAgentId: 'agent-1',
+    selectedDaemonId: 'daemon-1',
+  );
 }
 
 class _FakeImagePicker extends ImagePicker {
@@ -103,6 +110,333 @@ Map<String, dynamic> _item(String id) => {
 };
 
 void main() {
+  testWidgets('plan confirmation revises and replaces the composer', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    SharedPreferences.setMockInitialValues({});
+    final events = StreamController<Map<String, dynamic>>.broadcast();
+    addTearDown(events.close);
+    final calls = <Map<String, dynamic>>[];
+    var responded = false;
+    final gateway = _FakeGateway((method, params) async {
+      if (method == 'action.list') return {'result': <dynamic>[]};
+      if (method == 'conversation.subscribe') return {'result': const {}};
+      if (method == 'plan.respond') {
+        calls.add(Map<String, dynamic>.from(params));
+        responded = true;
+        return {
+          'result': {'started': true, 'turnId': 'turn-2'},
+        };
+      }
+      return {
+        'result': {
+          'conversation': {
+            'id': 'thread-plan',
+            'title': 'Plan thread',
+            'running': responded,
+          },
+          'revision': responded ? 8 : 7,
+          'timeline': {'items': const []},
+          if (!responded)
+            'planConfirmation': {
+              'planItemId': 'plan-1',
+              'turnId': 'turn-1',
+              'revision': 7,
+            },
+        },
+      };
+    }, events: events.stream);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          coreGatewayProvider.overrideWithValue(gateway),
+          workspaceProvider.overrideWith(_FakeWorkspaceController.new),
+        ],
+        child: MaterialApp(
+          locale: const Locale('zh', 'CN'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context)
+                .copyWith(textScaler: const TextScaler.linear(2)),
+            child: child!,
+          ),
+          home: const ConversationScreen(conversationId: 'thread-plan'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('plan-confirmation-panel')),
+      findsOneWidget,
+    );
+    expect(find.text('在电脑上继续工作'), findsNothing);
+    expect(find.byKey(const ValueKey('skip-plan')), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const ValueKey('plan-revision-input')),
+      '请增加测试',
+    );
+    await tester.pump();
+    expect(find.byKey(const ValueKey('submit-plan-revision')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('submit-plan-revision')));
+    await tester.pumpAndSettle();
+
+    expect(calls, hasLength(1));
+    expect(calls.single['decision'], 'revise');
+    expect(calls.single['text'], '请增加测试');
+    expect(calls.single['expectedRevision'], 7);
+    expect(find.byKey(const ValueKey('plan-confirmation-panel')), findsNothing);
+  });
+
+  testWidgets('skipping a plan is local and survives re-entry', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final events = StreamController<Map<String, dynamic>>.broadcast();
+    addTearDown(events.close);
+    var networkResponses = 0;
+    var planItemId = 'plan-skip';
+    var revision = 3;
+    Future<Map<String, dynamic>> handler(
+      String method,
+      Map<String, dynamic> params,
+    ) async {
+      if (method == 'plan.respond') networkResponses++;
+      if (method == 'action.list') return {'result': <dynamic>[]};
+      if (method == 'conversation.subscribe') return {'result': const {}};
+      return {
+        'result': {
+          'conversation': {
+            'id': 'thread-skip',
+            'title': 'Plan thread',
+            'running': false,
+          },
+          'revision': revision,
+          'timeline': {'items': const []},
+          'planConfirmation': {
+            'planItemId': planItemId,
+            'turnId': 'turn-1',
+            'revision': revision,
+          },
+        },
+      };
+    }
+
+    Widget screen() => ProviderScope(
+      overrides: [
+        coreGatewayProvider.overrideWithValue(
+          _FakeGateway(handler, events: events.stream),
+        ),
+        workspaceProvider.overrideWith(_FakeWorkspaceController.new),
+      ],
+      child: const MaterialApp(
+        locale: Locale('zh', 'CN'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: ConversationScreen(conversationId: 'thread-skip'),
+      ),
+    );
+
+    await tester.pumpWidget(screen());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('skip-plan')));
+    await tester.pumpAndSettle();
+    expect(networkResponses, 0);
+    expect(find.text('在电脑上继续工作'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(screen());
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('plan-confirmation-panel')), findsNothing);
+    expect(networkResponses, 0);
+
+    planItemId = 'plan-new';
+    revision = 4;
+    await tester.tap(find.byIcon(Icons.more_vert_rounded));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.refresh_rounded));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('plan-confirmation-panel')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('implementing a plan sends the authoritative plan identity', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final events = StreamController<Map<String, dynamic>>.broadcast();
+    addTearDown(events.close);
+    Map<String, dynamic>? response;
+    var completed = false;
+    final gateway = _FakeGateway((method, params) async {
+      if (method == 'action.list') return {'result': <dynamic>[]};
+      if (method == 'conversation.subscribe') return {'result': const {}};
+      if (method == 'plan.respond') {
+        response = Map<String, dynamic>.from(params);
+        completed = true;
+        return {
+          'result': {'started': true},
+        };
+      }
+      return {
+        'result': {
+          'conversation': {'id': 'thread-implement', 'running': completed},
+          'revision': completed ? 12 : 11,
+          'timeline': {'items': const []},
+          if (!completed)
+            'planConfirmation': {
+              'planItemId': 'plan-11',
+              'turnId': 'turn-11',
+              'revision': 11,
+            },
+        },
+      };
+    }, events: events.stream);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          coreGatewayProvider.overrideWithValue(gateway),
+          workspaceProvider.overrideWith(_FakeWorkspaceController.new),
+        ],
+        child: const MaterialApp(
+          locale: Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: ConversationScreen(conversationId: 'thread-implement'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('implement-plan')));
+    await tester.pumpAndSettle();
+
+    expect(response?['decision'], 'implement');
+    expect(response?['planItemId'], 'plan-11');
+    expect(response?['expectedRevision'], 11);
+    expect(response?['text'], 'Implement this plan.');
+  });
+
+  testWidgets('pending action takes precedence over plan confirmation', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final events = StreamController<Map<String, dynamic>>.broadcast();
+    addTearDown(events.close);
+    final gateway = _FakeGateway((method, params) async {
+      if (method == 'conversation.subscribe') return {'result': const {}};
+      if (method == 'action.list') {
+        return {
+          'result': [
+            {
+              'id': 'action-1',
+              'conversationId': 'thread-action-plan',
+              'method': 'requestApproval',
+            },
+          ],
+        };
+      }
+      return {
+        'result': {
+          'conversation': {
+            'id': 'thread-action-plan',
+            'title': 'Action before plan',
+            'running': false,
+          },
+          'revision': 5,
+          'timeline': {'items': const []},
+          'planConfirmation': {
+            'planItemId': 'plan-5',
+            'turnId': 'turn-5',
+            'revision': 5,
+          },
+        },
+      };
+    }, events: events.stream);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          coreGatewayProvider.overrideWithValue(gateway),
+          workspaceProvider.overrideWith(_FakeWorkspaceController.new),
+        ],
+        child: const MaterialApp(
+          locale: Locale('zh', 'CN'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: ConversationScreen(conversationId: 'thread-action-plan'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('需要你确认'), findsOneWidget);
+    expect(find.byKey(const ValueKey('plan-confirmation-panel')), findsNothing);
+  });
+
+  testWidgets('failed plan revision keeps the panel and input', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final events = StreamController<Map<String, dynamic>>.broadcast();
+    addTearDown(events.close);
+    final gateway = _FakeGateway((method, params) async {
+      if (method == 'action.list') return {'result': <dynamic>[]};
+      if (method == 'conversation.subscribe') return {'result': const {}};
+      if (method == 'plan.respond') {
+        throw CoreFault('peer_offline', 'offline');
+      }
+      return {
+        'result': {
+          'conversation': {
+            'id': 'thread-plan-error',
+            'title': 'Plan error',
+            'running': false,
+          },
+          'revision': 4,
+          'timeline': {'items': const []},
+          'planConfirmation': {
+            'planItemId': 'plan-error',
+            'turnId': 'turn-error',
+            'revision': 4,
+          },
+        },
+      };
+    }, events: events.stream);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          coreGatewayProvider.overrideWithValue(gateway),
+          workspaceProvider.overrideWith(_FakeWorkspaceController.new),
+        ],
+        child: const MaterialApp(
+          locale: Locale('zh', 'CN'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: ConversationScreen(conversationId: 'thread-plan-error'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('plan-revision-input')),
+      '保留这段修改意见',
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('submit-plan-revision')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('plan-confirmation-panel')),
+      findsOneWidget,
+    );
+    expect(find.text('保留这段修改意见'), findsOneWidget);
+    expect(find.textContaining('计划响应失败'), findsOneWidget);
+  });
+
   testWidgets('timeline summary is a single non-expandable row', (
     tester,
   ) async {
@@ -159,6 +493,59 @@ void main() {
     expect(find.text('调用 MCP：github/list_issues'), findsOneWidget);
     expect(find.byType(ExpansionTile), findsNothing);
     await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('command activity is localized and expands its detail', (
+    tester,
+  ) async {
+    final gateway = _FakeGateway((method, params) async {
+      if (method == 'action.list' || method == 'conversation.subscribe') {
+        return {'result': const {}};
+      }
+      return {
+        'result': {
+          'conversation': {
+            'id': 'thread-command',
+            'title': 'Command thread',
+            'running': false,
+          },
+          'timeline': {
+            'items': [
+              {
+                'id': 'command-1',
+                'kind': 'commandExecution',
+                'status': 'completed',
+                'blocks': [
+                  {'kind': 'text', 'text': 'echo hello', 'truncated': false},
+                ],
+              },
+            ],
+          },
+        },
+      };
+    });
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          coreGatewayProvider.overrideWithValue(gateway),
+          workspaceProvider.overrideWith(_FakeWorkspaceController.new),
+        ],
+        child: const MaterialApp(
+          locale: Locale('zh', 'CN'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: ConversationScreen(conversationId: 'thread-command'),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(find.text('命令执行'), findsOneWidget);
+    expect(find.text('commandExecution'), findsNothing);
+    expect(find.text('echo hello'), findsNothing);
+    await tester.tap(find.text('命令执行'));
+    await tester.pumpAndSettle();
+    expect(find.text('echo hello'), findsOneWidget);
   });
 
   testWidgets('timeline summary is localized in English', (tester) async {
@@ -400,6 +787,8 @@ void main() {
     );
     expect(scrollable.position.extentAfter, closeTo(0, 0.001));
 
+    await tester.tap(find.byIcon(Icons.more_vert_rounded));
+    await tester.pumpAndSettle();
     await tester.tap(find.byIcon(Icons.refresh_rounded));
     for (var index = 0; index < 5; index++) {
       await tester.pump();
@@ -465,6 +854,8 @@ void main() {
     final readingOffset = scrollable.position.pixels;
     expect(scrollable.position.extentAfter, greaterThan(24));
 
+    await tester.tap(find.byIcon(Icons.more_vert_rounded));
+    await tester.pumpAndSettle();
     await tester.tap(find.byIcon(Icons.refresh_rounded));
     for (var index = 0; index < 5; index++) {
       await tester.pump();
@@ -596,6 +987,8 @@ void main() {
   testWidgets('image selections append, deduplicate, remove, and scroll', (
     tester,
   ) async {
+    await tester.binding.setSurfaceSize(const Size(360, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final directory = Directory.systemTemp.createTempSync('waw-images-');
     addTearDown(() => _deleteTemporaryDirectory(directory));
     final images = [
@@ -635,7 +1028,7 @@ void main() {
     expect(strip, findsOneWidget);
     expect(
       find.descendant(of: strip, matching: find.byType(Image)),
-      findsNWidgets(10),
+      findsAtLeastNWidgets(4),
     );
     await tester.tap(find.byTooltip('添加附件'));
     await tester.pump();
@@ -649,13 +1042,20 @@ void main() {
     await tester.pump();
     expect(scrollable.position.pixels, greaterThan(0));
 
+    scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
+    await tester.pump();
+    expect(
+      find.byKey(ValueKey('attachment-thumbnail-${images.last.path}')),
+      findsOneWidget,
+    );
+
     await tester.tap(
       find.byKey(ValueKey('remove-attachment-${images.last.path}')),
     );
     await tester.pump();
     expect(
-      find.descendant(of: strip, matching: find.byType(Image)),
-      findsNWidgets(9),
+      find.byKey(ValueKey('attachment-thumbnail-${images.last.path}')),
+      findsNothing,
     );
     await tester.pumpWidget(const SizedBox());
   });
@@ -838,6 +1238,7 @@ void main() {
       'three.jpg',
     ]);
     expect(turnParams?['clientMessageId'], clientMessageId);
+    expect(turnParams?['expectedRevision'], 0);
     expect(turnParams?['attachmentIds'], [
       'attachment-1',
       'attachment-2',

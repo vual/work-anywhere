@@ -9,11 +9,13 @@ class ConversationState {
     this.metadata,
     this.items = const [],
     this.actions = const [],
+    this.planConfirmation,
     this.olderCursor,
     this.revision = 0,
     this.sequence = 0,
     this.loading = false,
     this.loadingOlder = false,
+    this.online = true,
     this.bodyError,
     this.actionError,
     this.olderError,
@@ -22,11 +24,13 @@ class ConversationState {
   final Map<String, dynamic>? metadata;
   final List<Map<String, dynamic>> items;
   final List<Map<String, dynamic>> actions;
+  final Map<String, dynamic>? planConfirmation;
   final String? olderCursor;
   final int revision;
   final int sequence;
   final bool loading;
   final bool loadingOlder;
+  final bool online;
   final CoreFault? bodyError;
   final CoreFault? actionError;
   final CoreFault? olderError;
@@ -65,8 +69,14 @@ class ConversationController extends ChangeNotifier {
     _liveTimer = null;
     _eventSubscription = gateway.events.listen(
       _handleLiveEvent,
-      onError: (_, _) => _startPollingFallback(),
-      onDone: _startPollingFallback,
+      onError: (_, _) {
+        _setOnline(false);
+        _startPollingFallback();
+      },
+      onDone: () {
+        _setOnline(false);
+        _startPollingFallback();
+      },
     );
   }
 
@@ -80,15 +90,18 @@ class ConversationController extends ChangeNotifier {
     if (event['type'] == 'transport') {
       switch (event['state'] as String? ?? '') {
         case 'online':
+          _setOnline(true);
           _liveTimer?.cancel();
           _liveTimer = null;
           unawaited(_syncLive());
           break;
         case 'disconnected':
+          _setOnline(false);
           _startPollingFallback();
           break;
         case 'revoked':
         case 'closed':
+          _setOnline(false);
           _liveTimer?.cancel();
           _liveTimer = null;
           break;
@@ -113,6 +126,26 @@ class ConversationController extends ChangeNotifier {
       }
       _queueConversationRefresh();
     }
+  }
+
+  void _setOnline(bool online) {
+    if (_disposed || _state.online == online) return;
+    _state = ConversationState(
+      metadata: _state.metadata,
+      items: _state.items,
+      actions: _state.actions,
+      planConfirmation: _state.planConfirmation,
+      olderCursor: _state.olderCursor,
+      revision: _state.revision,
+      sequence: _state.sequence,
+      loading: _state.loading,
+      loadingOlder: _state.loadingOlder,
+      online: online,
+      bodyError: _state.bodyError,
+      actionError: _state.actionError,
+      olderError: _state.olderError,
+    );
+    _notify();
   }
 
   void _queueConversationRefresh({bool immediate = false}) {
@@ -179,6 +212,7 @@ class ConversationController extends ChangeNotifier {
       if (result['snapshot'] == true || hasEvents) {
         _queueConversationRefresh(immediate: true);
       }
+      _setOnline(true);
     } catch (error) {
       // Live sync is best effort. A visible snapshot or paging error remains
       // local to that operation and the next poll/reconnect can recover it.
@@ -186,6 +220,9 @@ class ConversationController extends ChangeNotifier {
           (error.code == 'response_too_large' ||
               error.code == 'payload_too_large')) {
         _queueConversationRefresh(immediate: true);
+      }
+      if (error is CoreFault && error.code == 'peer_offline') {
+        _setOnline(false);
       }
     } finally {
       _syncing = false;
@@ -197,10 +234,12 @@ class ConversationController extends ChangeNotifier {
       metadata: _state.metadata,
       items: _state.items,
       actions: _state.actions,
+      planConfirmation: _state.planConfirmation,
       olderCursor: _state.olderCursor,
       revision: _state.revision,
       sequence: _state.sequence,
       loading: true,
+      online: _state.online,
     );
     _notify();
     await Future.wait([refreshConversation(), refreshActions()]);
@@ -208,9 +247,11 @@ class ConversationController extends ChangeNotifier {
       metadata: _state.metadata,
       items: _state.items,
       actions: _state.actions,
+      planConfirmation: _state.planConfirmation,
       olderCursor: _state.olderCursor,
       revision: _state.revision,
       sequence: _state.sequence,
+      online: _state.online,
       bodyError: _state.bodyError,
       actionError: _state.actionError,
       olderError: _state.olderError,
@@ -235,12 +276,14 @@ class ConversationController extends ChangeNotifier {
         metadata: result['conversation'] as Map<String, dynamic>?,
         items: _mergeLatest(_state.items, latest),
         actions: _state.actions,
+        planConfirmation: result['planConfirmation'] as Map<String, dynamic>?,
         olderCursor: _loadedOlder
             ? _state.olderCursor
             : timeline['nextCursor'] as String?,
         revision: (result['revision'] as num?)?.toInt() ?? 0,
         sequence: sequence,
         loading: _state.loading,
+        online: true,
         actionError: _state.actionError,
       );
     } catch (error) {
@@ -248,10 +291,14 @@ class ConversationController extends ChangeNotifier {
         metadata: _state.metadata,
         items: _state.items,
         actions: _state.actions,
+        planConfirmation: _state.planConfirmation,
         olderCursor: _state.olderCursor,
         revision: _state.revision,
         sequence: _state.sequence,
         loading: _state.loading,
+        online: error is CoreFault && error.code == 'peer_offline'
+            ? false
+            : _state.online,
         bodyError: _fault(error, 'conversation.read'),
         actionError: _state.actionError,
       );
@@ -273,10 +320,12 @@ class ConversationController extends ChangeNotifier {
         metadata: _state.metadata,
         items: _state.items,
         actions: actions,
+        planConfirmation: _state.planConfirmation,
         olderCursor: _state.olderCursor,
         revision: _state.revision,
         sequence: _state.sequence,
         loading: _state.loading,
+        online: true,
         bodyError: _state.bodyError,
         olderError: _state.olderError,
       );
@@ -285,10 +334,14 @@ class ConversationController extends ChangeNotifier {
         metadata: _state.metadata,
         items: _state.items,
         actions: _state.actions,
+        planConfirmation: _state.planConfirmation,
         olderCursor: _state.olderCursor,
         revision: _state.revision,
         sequence: _state.sequence,
         loading: _state.loading,
+        online: error is CoreFault && error.code == 'peer_offline'
+            ? false
+            : _state.online,
         bodyError: _state.bodyError,
         actionError: _fault(error, 'action.list'),
         olderError: _state.olderError,
@@ -304,10 +357,12 @@ class ConversationController extends ChangeNotifier {
       metadata: _state.metadata,
       items: _state.items,
       actions: _state.actions,
+      planConfirmation: _state.planConfirmation,
       olderCursor: cursor,
       revision: _state.revision,
       sequence: _state.sequence,
       loadingOlder: true,
+      online: _state.online,
       bodyError: _state.bodyError,
       actionError: _state.actionError,
     );
@@ -326,9 +381,11 @@ class ConversationController extends ChangeNotifier {
         metadata: _state.metadata,
         items: _dedupe([...older, ..._state.items]),
         actions: _state.actions,
+        planConfirmation: _state.planConfirmation,
         olderCursor: page['nextCursor'] as String?,
         revision: _state.revision,
         sequence: _state.sequence,
+        online: true,
         bodyError: _state.bodyError,
         actionError: _state.actionError,
       );
@@ -337,9 +394,13 @@ class ConversationController extends ChangeNotifier {
         metadata: _state.metadata,
         items: _state.items,
         actions: _state.actions,
+        planConfirmation: _state.planConfirmation,
         olderCursor: cursor,
         revision: _state.revision,
         sequence: _state.sequence,
+        online: error is CoreFault && error.code == 'peer_offline'
+            ? false
+            : _state.online,
         bodyError: _state.bodyError,
         actionError: _state.actionError,
         olderError: _fault(error, 'conversation.timeline.list'),

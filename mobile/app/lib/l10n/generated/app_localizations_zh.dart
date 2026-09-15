@@ -332,6 +332,62 @@ class AppLocalizationsZh extends AppLocalizations {
   String weeksAgo(int count) {
     return '$count 周';
   }
+
+  @override
+  String get computer => '电脑';
+
+  @override
+  String get connected => '已连接';
+
+  @override
+  String get refresh => '刷新';
+
+  @override
+  String get moreActions => '更多操作';
+
+  @override
+  String get scrollToBottom => '回到底部';
+
+  @override
+  String get commandExecution => '命令执行';
+
+  @override
+  String get toolActivity => '工具调用';
+
+  @override
+  String get reasoningActivity => '思考中';
+
+  @override
+  String get fileChange => '文件更改';
+
+  @override
+  String get showDetails => '展开详情';
+
+  @override
+  String get hideDetails => '收起详情';
+
+  @override
+  String get planConfirmationTitle => '是否执行此计划？';
+
+  @override
+  String get executePlan => '是，执行此计划';
+
+  @override
+  String get executePlanTurnPrompt => '执行此计划。';
+
+  @override
+  String get revisePlanHint => '否，请说明修改内容';
+
+  @override
+  String get skip => '跳过';
+
+  @override
+  String get submit => '提交';
+
+  @override
+  String planResponseFailed(String error) {
+    return '计划响应失败：$error';
+  }
 }
 
 /// The translations for Chinese, as used in China (`zh_CN`).

@@ -49,19 +49,19 @@ Desktop 解密并验证 desktop-control-json-v1 后，仅允许：
 
 每个方法映射到 pairing scope，再调用与本机 CLI 相同的 daemon manager。未知方法、system.shutdown、traffic、UI、install/uninstall 和 force-stop fail closed。system.status 响应会移除 remote 字段，避免向 Mobile 回显其他 pairing metadata。
 
-现有 Desktop 不变量仍由 manager/supervisor 执行：idle 才开始新 Turn、clientMessageId/expectedRevision、action first-valid-wins、App Server/session 权威等。Relay ACK 不代表业务完成。Mobile 时间线响应在加密前已受 512 KiB 上限保护，从而为 Relay 的 1 MiB ciphertext 上限保留余量。
+现有 Desktop 不变量仍由 manager/supervisor 执行：目标 thread idle 才开始新 Turn、clientMessageId/expectedRevision、action first-valid-wins、App Server/session 权威等。同一 Agent 的其他 thread 活跃时仍可向空闲 thread 开始 Turn。Relay ACK 不代表业务完成。Mobile 时间线响应在加密前已受 512 KiB 上限保护，从而为 Relay 的 1 MiB ciphertext 上限保留余量。
 
 ## Events, push, and reconnect
 
-remote Service 订阅 daemon event bus。action 相关事件要求 action.read，其他会话事件要求 conversation.read；每个 active Noise session 单独加密发送。action request 和 Turn complete/fail/interrupt 生成 metadata-only notify hint。
+remote Service 订阅 daemon event bus。action 相关事件要求 action.read，其他会话事件要求 conversation.read；事件只用于失效提示，因此同一 instance/thread 的普通流式更新会在 100 ms 窗口内合并，action 与 Turn terminal 事件使用独立合并类别，不能被普通更新覆盖。每个 active Noise session 单独加密发送合并后的事件。action request 和 Turn complete/fail/interrupt 生成 metadata-only notify hint。
 
-socket 断开会销毁内存 Noise sessions，不中断 Desktop Turn。重连后 Mobile 必须重新握手，并使用 conversation read/sequence/revision 获取 snapshot 或增量；同一 pairing 的新 session 会替换 daemon 内存中的旧 session，Mobile 也会丢弃跨 session 的迟到 frame，避免旧密文被投递到新 WebSocket 后触发解密断线。Relay 不保存丢失 event。daemon/PC 离线时 Mobile 写命令立即失败。
+socket 断开会销毁内存 Noise sessions，不中断 Desktop Turn。重连后 Mobile 必须重新握手，并使用 conversation read/sequence/revision 获取 snapshot 或增量；同一 pairing 的新 session 会替换 daemon 内存中的旧 session，Mobile 也会丢弃跨 session 的迟到 frame，避免旧密文被投递到新 WebSocket 后触发解密断线。若 Relay 对某个 response/event 返回 `peer_offline`，daemon 立即移除该消息所属 Noise session 并清理它的待确认投递，不再向离线 Mobile 持续发送流式事件。Relay 不保存丢失 event。daemon/PC 离线时 Mobile 写命令立即失败。
 
 ## Security and failure handling
 
 - production URL 必须 HTTPS/WSS，不提供跳过证书校验。
 - pairing secret、enrollment token、private key、ciphertext 和 control body不写结构化日志。
-- malformed JSON、Noise tamper、binding/sequence/expiry 或 endpoint mismatch 会拒绝 frame；无效 control request 关闭 session。旧 session 的迟到 frame 不会迁移到新 session。Relay route ACK 明确拒绝配对决定时，daemon 清除本地 submitted 状态并允许重新提交；response/event 的拒绝 ACK 只记录 kind 和 error code，业务消息不自动重发。发送前若发现本地 device identity 与当前 WebSocket 身份不一致，则拒绝发送并要求重连。
+- malformed JSON、Noise tamper、binding/sequence/expiry 或 endpoint mismatch 会拒绝 frame；无效 control request 关闭 session。旧 session 的迟到 frame 不会迁移到新 session。Relay route ACK 明确拒绝配对决定时，daemon 清除本地 submitted 状态并允许重新提交；response/event 的拒绝 ACK 只记录 kind 和 error code，业务消息不自动重发，其中 `peer_offline` 还会使对应 session 失效以阻止后续事件风暴。发送前若发现本地 device identity 与当前 WebSocket 身份不一致，则拒绝发送并要求重连。
 - socket writes 串行化并有 10 秒 timeout；失败只影响 remote connector。
 - 当前没有独立 attachment content type、远程 traffic capture 或 Mobile 离线 queue。
 

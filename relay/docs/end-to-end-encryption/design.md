@@ -55,7 +55,7 @@ outer header 只保留路由所需的 sender、recipient、pairing/session ID、
 
 - decrypt、authentication、sequence 或 transcript 失败：不重试当前 ciphertext，关闭 session，记录无 payload 的安全事件。
 - WSS 重连：重新认证设备、重新 Noise handshake，再按 conversation cursor 从 daemon 同步。
-- peer 离线：不创建可离线解密的 mailbox；发起方收到 `peer_offline`。
+- peer 离线：不创建可离线解密的 mailbox；发起方收到 `peer_offline`，并立即销毁当前 WSS/Noise transport，下一次恢复重新认证和握手，不能继续复用失去对端状态的 session。
 - 协议版本不匹配：在发送业务 payload 前失败，并返回支持版本范围。
 
 ## Invariants and non-goals

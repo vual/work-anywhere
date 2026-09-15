@@ -48,6 +48,29 @@ func TestEventSinkReceivesOnlyEventsAndCurrentTransportState(t *testing.T) {
 	}
 }
 
+func TestPeerOfflineInvalidatesSecureTransport(t *testing.T) {
+	client := New()
+	client.connected = true
+	client.pending["request"] = make(chan json.RawMessage)
+	client.pendingRoutes["route"] = make(chan routeResult)
+	received := make([]string, 0, 2)
+	client.SetEventSink(func(value string) { received = append(received, value) })
+
+	if !client.disconnectConnection(nil, "peer_offline", "Desktop peer is offline") {
+		t.Fatal("active transport was not invalidated")
+	}
+	status := client.Status()
+	if status.Connected || status.LastError != "Desktop peer is offline" {
+		t.Fatalf("unexpected disconnected status: %#v", status)
+	}
+	if len(client.pending) != 0 || len(client.pendingRoutes) != 0 {
+		t.Fatal("disconnect did not release pending calls")
+	}
+	if len(received) != 2 || received[0] != `{"state":"online","type":"transport"}` || received[1] != `{"errorCode":"peer_offline","state":"disconnected","type":"transport"}` {
+		t.Fatalf("unexpected transport events: %#v", received)
+	}
+}
+
 func TestBufferedEventsAreBoundedAndDrainedInOrder(t *testing.T) {
 	client := New()
 	for index := 0; index < 1002; index++ {

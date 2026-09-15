@@ -6,6 +6,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
+import '../../app/chrome.dart';
 import '../../app/localization.dart';
 import '../../core/models.dart';
 import '../pairing/pairing_screen.dart';
@@ -137,11 +138,17 @@ class WorkspaceScreen extends ConsumerWidget {
           WawCompact.horizontalPadding,
           14,
         ),
-        child: TextField(
-          onChanged: ref.read(workspaceProvider.notifier).setSearch,
-          decoration: InputDecoration(
-            prefixIcon: const Icon(Icons.search_rounded),
-            hintText: context.l10n.searchProjectsConversations,
+        child: WawFloatingSurface(
+          child: TextField(
+            onChanged: ref.read(workspaceProvider.notifier).setSearch,
+            decoration: InputDecoration(
+              filled: false,
+              prefixIcon: const Icon(Icons.search_rounded),
+              hintText: context.l10n.searchProjectsConversations,
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+            ),
           ),
         ),
       ),
@@ -167,72 +174,69 @@ class _TopBar extends StatelessWidget {
         builder: (context, constraints) {
           final compact = constraints.maxWidth < 380;
           final selectorWidth = math.min(
-            compact ? 160.0 : 220.0,
-            constraints.maxWidth * (compact ? .52 : .48),
+            compact ? 148.0 : 220.0,
+            constraints.maxWidth * (compact ? .50 : .44),
           );
           final scaledTitle = MediaQuery.textScalerOf(context).scale(16);
           return SizedBox(
             height: math.max(60, 60 + (scaledTitle - 16) * 2),
             child: Row(
               children: [
-                Expanded(
-                  child: Row(
-                    children: [
-                      SvgPicture.asset(
-                        'assets/waw-app-icon.svg',
-                        width: 44,
-                        height: 44,
-                      ),
-                    ],
-                  ),
+                SvgPicture.asset(
+                  'assets/waw-app-icon.svg',
+                  width: 44,
+                  height: 44,
                 ),
-                if (data.runningCount > 0) ...[
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Semantics(
-                      label: context.l10n.runningCount(data.runningCount),
-                      button: true,
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(22),
-                        onTap: () {
-                          final item = data.conversations.firstWhere(
-                            (item) => item.running,
-                          );
-                          context.push('/conversation/${item.id}');
-                        },
-                        child: Padding(
-                          padding: const EdgeInsets.all(8),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const SizedBox.square(
-                                dimension: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2.4,
-                                  color: wawBlue,
+                const SizedBox(width: 8),
+                Expanded(
+                  key: const Key('workspace-running-indicator'),
+                  child: data.runningCount == 0
+                      ? const SizedBox.shrink()
+                      : Align(
+                          alignment: Alignment.center,
+                          child: Semantics(
+                            label: context.l10n.runningCount(data.runningCount),
+                            button: true,
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(22),
+                              onTap: () {
+                                final item = data.conversations.firstWhere(
+                                  (item) => item.running,
+                                );
+                                context.push('/conversation/${item.id}');
+                              },
+                              child: Padding(
+                                padding: const EdgeInsets.all(8),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const SizedBox.square(
+                                      dimension: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2.4,
+                                        color: wawBlue,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Flexible(
+                                      child: Text(
+                                        context.l10n.runningCount(
+                                          data.runningCount,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
-                              if (!compact) ...[
-                                const SizedBox(width: 8),
-                                Flexible(
-                                  child: Text(
-                                    context.l10n.runningCount(
-                                      data.runningCount,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
-                            ],
+                            ),
                           ),
                         ),
-                      ),
-                    ),
-                  ),
-                ],
+                ),
                 const SizedBox(width: 8),
                 SizedBox(
+                  key: const Key('workspace-daemon-selector'),
                   width: selectorWidth,
                   child: Semantics(
                     button: true,
@@ -365,9 +369,9 @@ class _AgentRail extends ConsumerWidget {
                   : agent.kind.characters.first.toUpperCase(),
             ),
             showCheckmark: false,
-            selectedColor: Colors.black,
+            selectedColor: Theme.of(context).colorScheme.onSurface,
             labelStyle: TextStyle(
-              color: selected ? Colors.white : null,
+              color: selected ? Theme.of(context).colorScheme.surface : null,
               fontWeight: FontWeight.w600,
             ),
             shape: const StadiumBorder(side: BorderSide.none),
@@ -388,16 +392,16 @@ class _ProjectRow extends StatelessWidget {
     contentPadding: const EdgeInsets.symmetric(
       horizontal: WawCompact.horizontalPadding,
     ),
-    leading: const Icon(Icons.folder_outlined, size: 24),
+    leading: const Icon(Icons.folder_outlined, size: 26),
     title: Text(
       project.name,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
-      style: WawCompact.listTitle.copyWith(fontWeight: FontWeight.w600),
+      style: WawCompact.listTitle,
     ),
     trailing: Text(
       _relativeTime(context, project.updatedAt),
-      style: WawCompact.metadata.copyWith(color: Colors.grey),
+      style: WawCompact.metadata.copyWith(color: Theme.of(context).mutedInk),
     ),
     onTap: () => context.push('/project/${project.id}'),
   );
@@ -431,7 +435,9 @@ class _ConversationRow extends StatelessWidget {
           )
         : Text(
             _relativeTime(context, conversation.updatedAt),
-            style: WawCompact.metadata.copyWith(color: Colors.grey),
+            style: WawCompact.metadata.copyWith(
+              color: Theme.of(context).mutedInk,
+            ),
           ),
     onTap: () => context.push('/conversation/${conversation.id}'),
   );

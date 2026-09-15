@@ -27,6 +27,7 @@ import (
 )
 
 const remoteStateKey = "remote.state.v1"
+const remoteEventCoalesceWindow = 100 * time.Millisecond
 
 var defaultScopes = []string{"status.read", "conversation.read", "conversation.create", "turn.start", "turn.interrupt", "action.read", "action.resolve", "attachment.write", "catalog.read"}
 
@@ -110,7 +111,12 @@ type Service struct {
 	lastError    string
 	wake         chan struct{}
 	writeMu      sync.Mutex
-	sentControl  map[string]string
+	sentControl  map[string]sentControlDelivery
+}
+
+type sentControlDelivery struct {
+	kind      string
+	sessionID string
 }
 
 type sessionState struct {
@@ -120,7 +126,7 @@ type sessionState struct {
 }
 
 func New(stateStore settingsStore, control func(protocol.ControlRequest) protocol.ControlResponse, subscribe func() (<-chan protocol.Event, func()), logger logSink) (*Service, error) {
-	service := &Service{store: stateStore, control: control, subscribe: subscribe, log: logger, attempts: make(map[string]*PairAttempt), sessions: make(map[string]*sessionState), wake: make(chan struct{}, 1), sentControl: make(map[string]string)}
+	service := &Service{store: stateStore, control: control, subscribe: subscribe, log: logger, attempts: make(map[string]*PairAttempt), sessions: make(map[string]*sessionState), wake: make(chan struct{}, 1), sentControl: make(map[string]sentControlDelivery)}
 	service.state.Pairings = make(map[string]Pairing)
 	if found, err := stateStore.GetSetting(remoteStateKey, &service.state); err != nil {
 		return nil, err
@@ -155,7 +161,7 @@ func (s *Service) Run(ctx context.Context) {
 		s.conn = nil
 		s.connDeviceID = uuid.Nil
 		s.sessions = make(map[string]*sessionState)
-		s.sentControl = make(map[string]string)
+		s.sentControl = make(map[string]sentControlDelivery)
 		s.mu.Unlock()
 		if err != nil {
 			s.log.Event("remote.disconnected", map[string]any{"error": err.Error()})
@@ -473,7 +479,7 @@ func (s *Service) handleFrame(frame *relayv1.ServerFrame) error {
 
 func (s *Service) handleRouteAck(ack *relayv1.RouteAck) error {
 	s.mu.Lock()
-	kind := s.sentControl[string(ack.RoutedMessageId)]
+	delivery, tracked := s.sentControl[string(ack.RoutedMessageId)]
 	delete(s.sentControl, string(ack.RoutedMessageId))
 	if ack.Accepted {
 		s.mu.Unlock()
@@ -491,9 +497,21 @@ func (s *Service) handleRouteAck(ack *relayv1.RouteAck) error {
 			return nil
 		}
 	}
+	if tracked && ack.ErrorCode == "peer_offline" {
+		delete(s.sessions, delivery.sessionID)
+		// Once Relay says the Mobile peer is gone, every already queued event
+		// for this Noise session is stale too. Forget those correlations so a
+		// streaming turn cannot produce an ACK/log storm that disconnects the
+		// daemon itself.
+		for messageID, pending := range s.sentControl {
+			if pending.sessionID == delivery.sessionID {
+				delete(s.sentControl, messageID)
+			}
+		}
+	}
 	s.mu.Unlock()
-	if kind != "" {
-		s.log.Event("remote.delivery_rejected", map[string]any{"kind": kind, "errorCode": ack.ErrorCode})
+	if tracked {
+		s.log.Event("remote.delivery_rejected", map[string]any{"kind": delivery.kind, "errorCode": ack.ErrorCode})
 	}
 	return nil
 }
@@ -688,9 +706,9 @@ func (s *Service) sendControl(session *sessionState, value any) error {
 	}
 	s.mu.Lock()
 	if s.sentControl == nil {
-		s.sentControl = make(map[string]string)
+		s.sentControl = make(map[string]sentControlDelivery)
 	}
-	s.sentControl[string(messageID)] = kind
+	s.sentControl[string(messageID)] = sentControlDelivery{kind: kind, sessionID: string(sessionID)}
 	s.mu.Unlock()
 	err = s.send(&relayv1.ClientFrame{WireMajor: wireMajor, WireMinor: wireMinor, MessageId: messageID, Body: &relayv1.ClientFrame_SessionData{SessionData: &relayv1.SessionData{PairingId: pairingID[:], SessionId: sessionID, RecipientDeviceId: mobileID[:], SenderSequence: sequence, TrafficClass: relayv1.TrafficClass_TRAFFIC_CLASS_CONTROL, CreatedAtMs: time.Now().UnixMilli(), ExpiresAtMs: time.Now().Add(time.Minute).UnixMilli(), Ciphertext: ciphertext}}})
 	if err != nil {
@@ -708,12 +726,27 @@ func (s *Service) closeSession(sessionID []byte) {
 }
 
 func (s *Service) forwardEvents(ctx context.Context, events <-chan protocol.Event) {
+	pending := make(map[string]protocol.Event)
+	var timer *time.Timer
+	var timerC <-chan time.Time
+	flush := func() {
+		for _, event := range pending {
+			s.forwardEvent(event)
+		}
+		clear(pending)
+	}
 	for {
 		select {
 		case <-ctx.Done():
+			if timer != nil {
+				timer.Stop()
+			}
 			return
 		case event, ok := <-events:
 			if !ok {
+				if timer != nil {
+					timer.Stop()
+				}
 				return
 			}
 			event.Contract = protocol.MobileControlContract
@@ -722,22 +755,45 @@ func (s *Service) forwardEvents(ctx context.Context, events <-chan protocol.Even
 			// (which can contain large command output/diffs) over the relay event
 			// path.
 			event.Payload = nil
-			s.mu.RLock()
-			sessions := make([]*sessionState, 0, len(s.sessions))
-			for _, session := range s.sessions {
-				sessions = append(sessions, session)
+			pending[remoteEventKey(event)] = event
+			if timer == nil {
+				timer = time.NewTimer(remoteEventCoalesceWindow)
+				timerC = timer.C
 			}
-			s.mu.RUnlock()
-			for _, session := range sessions {
-				method := "conversation.subscribe"
-				if strings.Contains(strings.ToLower(event.Event), "action") {
-					method = "action.list"
-				}
-				if scopeAllows(session.pairing.Scopes, method) {
-					_ = s.sendControl(session, event)
-					s.sendNotificationHint(session.pairing, event)
-				}
-			}
+		case <-timerC:
+			flush()
+			timer = nil
+			timerC = nil
+		}
+	}
+}
+
+func remoteEventKey(event protocol.Event) string {
+	lower := strings.ToLower(event.Event)
+	class := "conversation"
+	if strings.Contains(lower, "action") {
+		class = "action"
+	} else if strings.Contains(lower, "complete") || strings.Contains(lower, "failed") || strings.Contains(lower, "interrupt") {
+		class = "terminal"
+	}
+	return event.InstanceID + "\x00" + event.ConversationID + "\x00" + class
+}
+
+func (s *Service) forwardEvent(event protocol.Event) {
+	s.mu.RLock()
+	sessions := make([]*sessionState, 0, len(s.sessions))
+	for _, session := range s.sessions {
+		sessions = append(sessions, session)
+	}
+	s.mu.RUnlock()
+	for _, session := range sessions {
+		method := "conversation.subscribe"
+		if strings.Contains(strings.ToLower(event.Event), "action") {
+			method = "action.list"
+		}
+		if scopeAllows(session.pairing.Scopes, method) {
+			_ = s.sendControl(session, event)
+			s.sendNotificationHint(session.pairing, event)
 		}
 	}
 }
@@ -822,7 +878,7 @@ func scopeAllows(scopes []string, method string) bool {
 		"project.list":      "conversation.read",
 		"conversation.list": "conversation.read", "conversation.read": "conversation.read", "conversation.timeline.list": "conversation.read", "conversation.content.read": "conversation.read", "conversation.content.resolve": "conversation.read", "conversation.subscribe": "conversation.read",
 		"conversation.create": "conversation.create",
-		"turn.start":          "turn.start", "turn.interrupt": "turn.interrupt",
+		"turn.start":          "turn.start", "plan.respond": "turn.start", "turn.interrupt": "turn.interrupt",
 		"action.list": "action.read", "action.resolve": "action.resolve",
 		"attachment.begin": "attachment.write", "attachment.chunk": "attachment.write", "attachment.commit": "attachment.write", "attachment.abort": "attachment.write",
 		"catalog.models": "catalog.read", "catalog.permissionProfiles": "catalog.read",
