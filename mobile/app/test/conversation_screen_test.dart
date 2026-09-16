@@ -1309,6 +1309,7 @@ void main() {
       expect(find.text('允许完全访问计算机？'), findsOneWidget);
       await tester.tap(find.text('允许完全访问'));
       await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
 
       await tester.tap(find.byType(TextField));
       await tester.pumpAndSettle();

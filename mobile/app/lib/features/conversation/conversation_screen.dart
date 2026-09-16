@@ -1499,6 +1499,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                   canSend: _canSend,
                   submitting: _submitting,
                   settings: _settings,
+                  permissionIcon: _permissionIcon(
+                    _settings?.permissionModeId ?? 'default',
+                  ),
                   model: _selectedModel,
                   settingsVisible: !_catalogFailed && _settings != null,
                   settingsEnabled: _canChangeSettings,
@@ -1827,6 +1830,7 @@ class _ComposerPanel extends StatefulWidget {
     required this.canSend,
     required this.submitting,
     required this.settings,
+    required this.permissionIcon,
     required this.model,
     required this.settingsVisible,
     required this.settingsEnabled,
@@ -1848,6 +1852,7 @@ class _ComposerPanel extends StatefulWidget {
   final bool canSend;
   final bool submitting;
   final ConversationSettings? settings;
+  final IconData permissionIcon;
   final ModelOption? model;
   final bool settingsVisible;
   final bool settingsEnabled;
@@ -1997,7 +2002,7 @@ class _ComposerPanelState extends State<_ComposerPanel> {
                             ? widget.onPermissions
                             : null,
                         tooltip: context.l10n.permissions,
-                        icon: const Icon(Icons.pan_tool_alt_outlined, size: 24),
+                        icon: Icon(widget.permissionIcon, size: 24),
                       ),
                     const Spacer(),
                     if (widget.settingsVisible)
