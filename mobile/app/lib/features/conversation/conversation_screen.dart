@@ -1554,7 +1554,7 @@ class _PlanConfirmationPanel extends StatelessWidget {
   }
 }
 
-class _ComposerPanel extends StatelessWidget {
+class _ComposerPanel extends StatefulWidget {
   const _ComposerPanel({
     required this.composer,
     required this.images,
@@ -1598,108 +1598,172 @@ class _ComposerPanel extends StatelessWidget {
   final VoidCallback onInterrupt;
 
   @override
-  Widget build(BuildContext context) => SafeArea(
-    top: false,
-    minimum: const EdgeInsets.fromLTRB(16, 6, 16, 10),
-    child: WawFloatingSurface(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (images.isNotEmpty)
-            _AttachmentStrip(
-              images: images,
-              enabled: enabled,
-              onRemove: onRemoveImage,
-            ),
-          TextField(
-            controller: composer,
-            enabled: enabled,
-            minLines: 1,
-            maxLines: 5,
-            textAlignVertical: TextAlignVertical.center,
-            style: WawCompact.body,
-            decoration: InputDecoration(
-              filled: false,
-              border: InputBorder.none,
-              enabledBorder: InputBorder.none,
-              focusedBorder: InputBorder.none,
-              contentPadding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-              hintText: context.l10n.continueWorking,
-            ),
-          ),
-          Row(
-            children: [
-              IconButton(
-                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                onPressed: enabled && !selectingImages ? onAdd : null,
-                tooltip: context.l10n.addMenu,
-                icon: const Icon(Icons.add_rounded, size: 28),
-              ),
-              if (settingsVisible)
-                IconButton(
-                  constraints: const BoxConstraints(
-                    minWidth: 48,
-                    minHeight: 48,
-                  ),
-                  onPressed: settingsEnabled ? onPermissions : null,
-                  tooltip: context.l10n.permissions,
-                  icon: const Icon(Icons.pan_tool_alt_outlined, size: 24),
-                ),
-              const Spacer(),
-              if (settingsVisible)
-                Flexible(
-                  child: TextButton(
-                    onPressed: settingsEnabled ? onModelAndEffort : null,
-                    style: TextButton.styleFrom(
-                      minimumSize: const Size(48, 48),
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                    ),
-                    child: settingsUpdating
-                        ? const SizedBox.square(
-                            dimension: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : Text(
-                            '${settings?.mode == 'plan' ? '${context.l10n.plan} · ' : ''}'
-                            '${model?.name ?? ''} · '
-                            '${_composerEffortLabel(context, settings?.reasoningEffort ?? '')}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                  ),
-                ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(4, 2, 8, 4),
-                child: IconButton.filled(
-                  onPressed: online
-                      ? (running ? onInterrupt : (canSend ? onSend : null))
-                      : null,
-                  tooltip: running ? context.l10n.stop : context.l10n.send,
-                  style: IconButton.styleFrom(
-                    minimumSize: const Size.square(48),
-                    backgroundColor: running ? Colors.black : wawBlue,
-                    foregroundColor: Colors.white,
-                  ),
-                  icon: running
-                      ? const Icon(Icons.stop_rounded)
-                      : submitting
-                      ? const SizedBox.square(
-                          dimension: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Icon(Icons.arrow_upward_rounded),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
+  State<_ComposerPanel> createState() => _ComposerPanelState();
+}
+
+class _ComposerPanelState extends State<_ComposerPanel> {
+  final FocusNode _focusNode = FocusNode();
+  final GlobalKey _inputKey = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode.addListener(_handleFocusChange);
+  }
+
+  @override
+  void dispose() {
+    _focusNode
+      ..removeListener(_handleFocusChange)
+      ..dispose();
+    super.dispose();
+  }
+
+  void _handleFocusChange() {
+    if (mounted) setState(() {});
+  }
+
+  Widget _input(BuildContext context, {required bool compact}) => TextField(
+    key: _inputKey,
+    controller: widget.composer,
+    focusNode: _focusNode,
+    enabled: widget.enabled,
+    minLines: 1,
+    maxLines: compact ? 1 : 5,
+    textAlignVertical: TextAlignVertical.center,
+    style: WawCompact.body,
+    decoration: InputDecoration(
+      filled: false,
+      border: InputBorder.none,
+      enabledBorder: InputBorder.none,
+      focusedBorder: InputBorder.none,
+      contentPadding: compact
+          ? const EdgeInsets.symmetric(horizontal: 4, vertical: 12)
+          : const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      hintText: context.l10n.continueWorking,
     ),
   );
+
+  Widget _addButton(BuildContext context) => IconButton(
+    constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+    onPressed: widget.enabled && !widget.selectingImages ? widget.onAdd : null,
+    tooltip: context.l10n.addMenu,
+    icon: const Icon(Icons.add_rounded, size: 28),
+  );
+
+  Widget _actionButton(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(4, 2, 8, 4),
+    child: IconButton.filled(
+      onPressed: widget.online
+          ? (widget.running
+                ? widget.onInterrupt
+                : (widget.canSend ? widget.onSend : null))
+          : null,
+      tooltip: widget.running ? context.l10n.stop : context.l10n.send,
+      style: IconButton.styleFrom(
+        minimumSize: const Size.square(48),
+        backgroundColor: widget.running ? Colors.black : wawBlue,
+        foregroundColor: Colors.white,
+      ),
+      icon: widget.running
+          ? const Icon(Icons.stop_rounded)
+          : widget.submitting
+          ? const SizedBox.square(
+              dimension: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            )
+          : const Icon(Icons.arrow_upward_rounded),
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final expanded = _focusNode.hasFocus && widget.enabled;
+    return SafeArea(
+      top: false,
+      minimum: const EdgeInsets.fromLTRB(16, 6, 16, 10),
+      child: WawFloatingSurface(
+        child: AnimatedSize(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          alignment: Alignment.bottomCenter,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (widget.images.isNotEmpty)
+                _AttachmentStrip(
+                  images: widget.images,
+                  enabled: widget.enabled,
+                  onRemove: widget.onRemoveImage,
+                ),
+              if (!expanded)
+                Row(
+                  key: const ValueKey('composer-collapsed'),
+                  children: [
+                    _addButton(context),
+                    Expanded(child: _input(context, compact: true)),
+                    _actionButton(context),
+                  ],
+                )
+              else ...[
+                _input(context, compact: false),
+                Row(
+                  key: const ValueKey('composer-expanded-controls'),
+                  children: [
+                    _addButton(context),
+                    if (widget.settingsVisible)
+                      IconButton(
+                        constraints: const BoxConstraints(
+                          minWidth: 48,
+                          minHeight: 48,
+                        ),
+                        onPressed: widget.settingsEnabled
+                            ? widget.onPermissions
+                            : null,
+                        tooltip: context.l10n.permissions,
+                        icon: const Icon(Icons.pan_tool_alt_outlined, size: 24),
+                      ),
+                    const Spacer(),
+                    if (widget.settingsVisible)
+                      Flexible(
+                        child: TextButton(
+                          onPressed: widget.settingsEnabled
+                              ? widget.onModelAndEffort
+                              : null,
+                          style: TextButton.styleFrom(
+                            minimumSize: const Size(48, 48),
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                          ),
+                          child: widget.settingsUpdating
+                              ? const SizedBox.square(
+                                  dimension: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : Text(
+                                  '${widget.settings?.mode == 'plan' ? '${context.l10n.plan} · ' : ''}'
+                                  '${widget.model?.name ?? ''} · '
+                                  '${_composerEffortLabel(context, widget.settings?.reasoningEffort ?? '')}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                        ),
+                      ),
+                    _actionButton(context),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 String _composerEffortLabel(BuildContext context, String id) => switch (id) {

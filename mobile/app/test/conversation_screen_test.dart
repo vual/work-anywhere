@@ -1132,6 +1132,29 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      expect(find.byKey(const ValueKey('composer-collapsed')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('composer-expanded-controls')),
+        findsNothing,
+      );
+      expect(find.byTooltip('权限'), findsNothing);
+      expect(find.textContaining('GPT A'), findsNothing);
+
+      await tester.tap(find.byType(TextField));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('composer-expanded-controls')),
+        findsOneWidget,
+      );
+      expect(find.byTooltip('权限'), findsOneWidget);
+      expect(find.textContaining('GPT A'), findsOneWidget);
+
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('composer-collapsed')), findsOneWidget);
+      expect(find.byTooltip('权限'), findsNothing);
+      expect(find.textContaining('GPT A'), findsNothing);
+
       await tester.tap(find.byTooltip('添加'));
       await tester.pumpAndSettle();
       expect(
@@ -1141,6 +1164,8 @@ void main() {
       await tester.tap(find.text('计划模式'));
       await tester.pumpAndSettle();
 
+      await tester.tap(find.byType(TextField));
+      await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('权限'));
       await tester.pumpAndSettle();
       expect(
@@ -1157,6 +1182,8 @@ void main() {
       await tester.tap(find.text('允许完全访问'));
       await tester.pumpAndSettle();
 
+      await tester.tap(find.byType(TextField));
+      await tester.pumpAndSettle();
       await tester.tap(find.textContaining('GPT A'));
       await tester.pumpAndSettle();
       expect(
@@ -1274,6 +1301,8 @@ void main() {
       (updateParams?['settings'] as Map<String, dynamic>?)?['mode'],
       'plan',
     );
+    await tester.tap(find.byType(TextField));
+    await tester.pumpAndSettle();
     expect(find.textContaining('计划 · GPT A'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
@@ -1316,6 +1345,7 @@ void main() {
     await _finishFileIo(tester);
     await tester.tap(find.byTooltip('添加'));
     await _finishFileIo(tester);
+    await tester.pump(const Duration(milliseconds: 200));
 
     expect(picker.requestedLimits, [10, 8]);
     final strip = find.byKey(const ValueKey('attachment-thumbnail-strip'));
@@ -1355,6 +1385,7 @@ void main() {
   });
 
   testWidgets('failed image upload aborts and keeps the draft', (tester) async {
+    SharedPreferences.setMockInitialValues({});
     final directory = Directory.systemTemp.createTempSync('waw-failure-');
     addTearDown(() => _deleteTemporaryDirectory(directory));
     final images = [
@@ -1428,7 +1459,10 @@ void main() {
 
     expect(aborted, ['attachment-2']);
     expect(turnStarted, isFalse);
-    expect(find.text('Keep this draft'), findsOneWidget);
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller?.text,
+      'Keep this draft',
+    );
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('attachment-thumbnail-strip')),
