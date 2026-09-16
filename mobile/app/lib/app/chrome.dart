@@ -27,6 +27,7 @@ class WawCircleButton extends StatelessWidget {
         foregroundColor: Theme.of(context).colorScheme.onSurface,
         shadowColor: Colors.black12,
         elevation: 1,
+        shape: const CircleBorder(),
       ),
       icon: Icon(icon, size: 28),
     ),

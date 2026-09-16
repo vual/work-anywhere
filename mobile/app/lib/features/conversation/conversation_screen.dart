@@ -22,6 +22,7 @@ const _maxImageCount = 10;
 const _maxImageBytes = 48 * 1024 * 1024;
 const _bottomFollowThreshold = 24.0;
 const _showJumpToBottomThreshold = 96.0;
+const _conversationToolbarHeight = 60.0;
 const _dismissedPlanConfirmationsKey = 'dismissedPlanConfirmations';
 
 @visibleForTesting
@@ -1212,9 +1213,14 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     final planConfirmation = _showPlanConfirmation(state)
         ? state.planConfirmation
         : null;
+    final timelineTopPadding =
+        MediaQuery.paddingOf(context).top + _conversationToolbarHeight + 10;
     return Scaffold(
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
-        toolbarHeight: 60,
+        toolbarHeight: _conversationToolbarHeight,
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor
+            .withValues(alpha: .72),
         leadingWidth: 64,
         leading: Padding(
           padding: const EdgeInsets.only(left: 12),
@@ -1351,6 +1357,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                   loadingOlder: state.loadingOlder,
                   olderError: state.olderError,
                   onRetryOlder: _loadOlder,
+                  topPadding: timelineTopPadding,
                 ),
               ),
               if (planConfirmation != null)
@@ -1864,6 +1871,7 @@ class _Timeline extends StatelessWidget {
     required this.loadingOlder,
     required this.olderError,
     required this.onRetryOlder,
+    required this.topPadding,
   });
 
   final List<Map<String, dynamic>> items;
@@ -1873,6 +1881,7 @@ class _Timeline extends StatelessWidget {
   final bool loadingOlder;
   final CoreFault? olderError;
   final VoidCallback onRetryOlder;
+  final double topPadding;
 
   @override
   Widget build(BuildContext context) {
@@ -1889,10 +1898,10 @@ class _Timeline extends StatelessWidget {
       controller: scrollController,
       padding: const EdgeInsets.fromLTRB(
         WawCompact.horizontalPadding,
-        10,
+        0,
         WawCompact.horizontalPadding,
         6,
-      ),
+      ).copyWith(top: topPadding),
       itemCount: items.length + 1,
       itemBuilder: (context, index) {
         if (index == 0) {

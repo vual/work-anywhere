@@ -143,7 +143,7 @@ Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项�
 
 ### Timeline
 
-顶部使用约 60dp 的紧凑栏，返回和操作按钮同步缩小；对话标题使用约 15sp 常规字重并单行省略，标题下方显示“项目名称 · Agent 名称”。连接状态保留为标题下方前导状态点及完整无障碍朗读，overflow 继续承载低频操作。内容 block：
+顶部使用约 60dp 的紧凑悬浮栏，返回按钮固定为正圆，标题和右侧操作分别使用独立胶囊；三块控件之间仅保留半透明页面底色。时间线视口延伸到顶栏背后，首屏通过可滚动顶部留白从顶栏下方开始，向上滚动后文字可透过控件间隙继续辨认。对话标题使用约 15sp 常规字重并单行省略，标题下方显示“项目名称 · Agent 名称”。连接状态保留为标题下方前导状态点及完整无障碍朗读，overflow 继续承载低频操作。内容 block：
 
 - user/assistant：常规气泡/正文；由 `app/lib/features/conversation/markdown_renderer.dart` 使用 GFM 安全 renderer，支持标题、强调、列表、引用、表格、任务列表、代码块和选择/复制；不解析任意 HTML，不自动加载图片；`http/https` 链接显示目标 host 并在打开前二次确认。
 - summary item：daemon 仅返回 `summaryKind + summaryValue` 和语言无关 fallback；Flutter 用 ARB 生成完整本地化句子，不使用气泡、Markdown 或全文展开，status 同样以本地化弱化文字/图标展示。`hookPrompt` 不渲染；`commandExecution` 只展示命令。
