@@ -25,7 +25,7 @@ daemon 将控制方法路由到实例 supervisor；Codex driver/能力描述用�
 - 系统：`system.status`, `system.ui_url`, `system.control.pause`, `system.control.resume`, `system.shutdown`
 - 实例：`instance.list`, `instance.get`, `instance.restart`
 - Mobile navigation：`agent.list`, `project.list`（要求 `mobile-control-v1`）
-- 会话：`conversation.list`, `conversation.read`, `conversation.timeline.list`, `conversation.content.read`, `conversation.content.resolve`, `conversation.subscribe`, `conversation.create`, `conversation.settings.update`
+- 会话：`conversation.list`, `conversation.read`, `conversation.timeline.list`, `conversation.content.read`, `conversation.content.resolve`, `conversation.subscribe`, `conversation.create`, `conversation.settings.update`, `conversation.queue.add/update/delete/start`
 - Turn：`turn.start`, `turn.interrupt`, `plan.respond`（后者要求 `mobile-control-v1`）
 - action：`action.list`, `action.resolve`
 - catalog：`catalog.models`, `catalog.permissionProfiles`
@@ -43,11 +43,13 @@ Desktop 从 `turn/start`、`thread/settings/update` 和 `thread/settings/updated
 
 `conversation.settings.update(agentId, threadId, expectedRevision, settings)` 只在目标 thread 空闲且无阻塞 action 时调用官方 `thread/settings/update`；选择必须来自当前 catalog，错误稳定为 `invalid_selection`、`selection_unavailable`、`conversation_busy` 或 `revision_conflict`。只有 App Server 明确成功后才提交加密投影，失败或结果不明不进行自动重试。该方法复用 `turn.start` pairing scope。Mobile `turn.start.settings` 使用同一验证和映射，供尚未创建 thread 的草稿在首次发送时一次提交完整设置。
 
+`conversation.read.queue` 通过官方 `thread/queue/list` 返回 App Server 权威排队消息，只投影 `{id,clientMessageId,text,attachmentCount}`，不暴露图片路径、mention 路径或其他 provider 输入。`conversation.queue.add` 复用图片附件解析并映射 `thread/queue/add`；`update` 在替换文字时保留现有非文字输入；`delete` 映射 `thread/queue/delete`；`start` 映射 `thread/queue/start`，用于把指定消息立即作为引导提交。四个方法都要求 `mobile-control-v1` 和 `turn.start` pairing scope；新增/立即引导在 App Server 可写且无阻塞 action 时允许当前 thread 正在运行。写入结果未知时客户端只刷新 queue 对账，不自动重试。
+
 `attachment.begin` 在 Mobile contract 下接受 `agentId`、`projectId`、`conversationId`、`clientMessageId`、`mimeType`、文件名和大小。一次发送生成的 `clientMessageId` 同时用于 begin 和 `turn.start`。Desktop 先用 `agentId` 解析并绑定上传所属实例，再将 provider 路由字段从下游参数中移除；这样上传完成后只能由同一实例的 `turn.start` 使用。附件内容直接写入项目目录的 `.work-anywhere-remote-attachments/<conversationId>/<clientMessageId>/`，文件名为清理后的原名加唯一 attachment ID 后缀。
 
 `conversation.create` 仅在 `mobile-control-v1` 下可用，接受 `agentId` 和当前 Codex `projectId`，映射为 App Server `thread/start`，返回稳定的 `{id, projectId?}`。它是受控写操作，要求在线 App Server；新 pairing 使用 `conversation.create` scope，已有仅授予 `turn.start` 的 pairing 也保持向后兼容。Mobile 收到结果前断线时不得自动重试。
 
-`mobile-control-v1` 接受 `agentId` 作为 `instanceId` 的产品化别名，并把 `query` 转为 App Server `searchTerm`。`agent.list` 返回 Codex Agent summary；Mobile-facing `project.list` 不返回 provider 根路径，`conversation.list` 不返回 preview，只返回稳定导航字段。Mobile contract 下的 `project.list` 会读取 provider 项目和 thread 列表，按每个项目最近一条对话的 `updatedAt` 倒序聚合，只返回至少有一条对话的项目；并列时间按项目 ID 倒序，分页 cursor 锚定这两个字段。聚合时优先使用 thread 的 `projectId`；字段缺失、为空或指向未知项目时，以 thread `cwd`（必要时使用 environment cwd/workspace roots）匹配最长的 provider 项目根目录。返回给 Mobile 的 `ProjectSummary.updatedAt` 是该项目最近对话的时间，而不是 provider 项目元数据时间。项目过滤的正常路径使用 App Server `thread/list(projectId)`；若结果为空，Desktop 会根据同一 Project ID 解析根目录并以 `thread/list(cwd)` 回退，以兼容项目迁移前仍只保存旧项目关联或 session cwd 的历史线程。`conversation.read` 使用 `thread/read(includeTurns=false)` 读取 metadata，再用 `thread/items/list(sortDirection=desc)` 返回最近 20 项（最大 50）的稳定 `ConversationSnapshot`；归一化器解包官方 `ThreadItemEntry` 的 `{item,turnId}` 结构，并兼容旧的扁平 fixture。`conversation.timeline.list` 原样续传 App Server opaque cursor 读取更早页。Plan item 的原始 `text` 被归一化为单个 `kind=plan` block；真正超过 5 个源文件行时，普通 Timeline response 只返回原始 Markdown 前五行，并返回绑定 agent/thread/turn/item/block 的随机 `contentRef` 与 UTF-8 字节数。`conversation.content.read` 以稳定定位重新遍历该 turn 的 provider item 页，并按最多 128 KiB 返回正文；引用过期后，Mobile 可用相同定位调用 `conversation.content.resolve` 重新签发引用，item 已删除时返回 `content_not_found`。引用只保存定位，不缓存正文。
+`mobile-control-v1` 接受 `agentId` 作为 `instanceId` 的产品化别名，并把 `query` 转为 App Server `searchTerm`。`agent.list` 返回 Codex Agent summary；Mobile-facing `project.list` 不返回 provider 根路径，`conversation.list` 不返回 preview，只返回稳定导航字段。Mobile contract 下的 `project.list` 会读取 provider 项目和 thread 列表，按每个项目最近一条对话的 `updatedAt` 倒序聚合，只返回至少有一条对话的项目；并列时间按项目 ID 倒序，分页 cursor 锚定这两个字段。聚合时优先使用 thread 的 `projectId`；字段缺失、为空或指向未知项目时，以 thread `cwd`（必要时使用 environment cwd/workspace roots）匹配最长的 provider 项目根目录。返回给 Mobile 的 `ProjectSummary.updatedAt` 是该项目最近对话的时间，而不是 provider 项目元数据时间。项目过滤的正常路径使用 App Server `thread/list(projectId)`；若结果为空，Desktop 会根据同一 Project ID 解析根目录并以 `thread/list(cwd)` 回退，以兼容项目迁移前仍只保存旧项目关联或 session cwd 的历史线程。`conversation.read` 使用 `thread/read(includeTurns=false)` 读取 metadata，再用 `thread/items/list(sortDirection=desc)` 返回最近 20 项（最大 50）的稳定 `ConversationSnapshot`，同时用 `thread/queue/list` 返回当前 queue；归一化器解包官方 `ThreadItemEntry` 的 `{item,turnId}` 结构，并兼容旧的扁平 fixture。`conversation.timeline.list` 原样续传 App Server opaque cursor 读取更早页。Plan item 的原始 `text` 被归一化为单个 `kind=plan` block；真正超过 5 个源文件行时，普通 Timeline response 只返回原始 Markdown 前五行，并返回绑定 agent/thread/turn/item/block 的随机 `contentRef` 与 UTF-8 字节数。`conversation.content.read` 以稳定定位重新遍历该 turn 的 provider item 页，并按最多 128 KiB 返回正文；引用过期后，Mobile 可用相同定位调用 `conversation.content.resolve` 重新签发引用，item 已删除时返回 `content_not_found`。引用只保存定位，不缓存正文。
 
 `hookPrompt` 不进入 Mobile DTO；function/tool、协作、搜索、图片、sleep、review 和 compaction item 只生成单个结构化 summary block：`summaryKind` 保存 provider item 类型，`summaryValue` 保存最长 512 UTF-8 字节的脱敏单行值，`text` 是语言无关 fallback。完整展示文案由 Mobile 本地化，daemon 不拼接中英文句子。summary 不含 arguments/output/result/error/path/prompt，也不生成 `contentRef`；`commandExecution` 只返回 command，不返回 aggregated output。过滤后可见 item 不足请求数量时，daemon 沿 provider cursor 补读后续页面，最多追踪 8 页。
 
@@ -90,6 +92,7 @@ Provider capabilities 当前包含 history、live stream、text/image input、ap
 - 附件 begin/chunk/commit 后可用于图片输入；abort、size mismatch、路径穿越、项目目录回退和重启清理测试覆盖文件存储边界。
 - cursor 重连补发和 snapshot fallback 测试。
 - metadata/timeline DTO、结构化 summary、本地化边界、opaque cursor、自适应页大小、UTF-8 内容分块和引用越权/过期/重新签发测试。
+- queue DTO 路径脱敏、文字更新保留非文字输入、四种 provider 方法映射、阻塞 action 门禁和 `turn.start` scope 测试。
 - plan/default 配置投影、重启恢复、成功 Plan 门禁、计划身份/revision/action 冲突、模式切换和 `turn.start` scope 复用测试。
 - Origin、CSRF、一次性 token、控制暂停和慢订阅者测试。
 

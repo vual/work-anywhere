@@ -47,7 +47,7 @@
 - 完善 composer；计划模式、模型、思考等级、四种执行权限、`expectedRevision`、`clientMessageId` 和 ambiguous-write reconciliation 已有代码与 Widget 覆盖，仍需 Android 真机链路验收。
 - 实现相册/相机选择、图片预览、begin/chunk/commit、取消与失败重试。
 
-验收：两台 Mobile + Desktop 的 action race、turn.start response 丢失、interrupt/completion race、revision conflict、48 MiB/1 MiB 分块边界和跨 instance attachment 安全测试通过；抓包、Relay DB/log、Mobile log 不出现明文。
+验收：两台 Mobile + Desktop 的 action race、turn.start response 丢失、运行中 queue add/edit/start/delete 及结果不明恢复、interrupt/completion race、revision conflict、48 MiB/1 MiB 分块边界和跨 instance attachment 安全测试通过；抓包、Relay DB/log、Mobile log 不出现明文。
 
 ## Phase 4 — push and lifecycle
 

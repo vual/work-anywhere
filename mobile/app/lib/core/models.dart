@@ -81,6 +81,28 @@ class ConversationSummary {
       );
 }
 
+class QueuedSubmission {
+  const QueuedSubmission({
+    required this.id,
+    required this.clientMessageId,
+    required this.text,
+    required this.attachmentCount,
+  });
+
+  final String id;
+  final String clientMessageId;
+  final String text;
+  final int attachmentCount;
+
+  factory QueuedSubmission.fromJson(Map<String, dynamic> json) =>
+      QueuedSubmission(
+        id: json['id'] as String,
+        clientMessageId: json['clientMessageId'] as String? ?? '',
+        text: json['text'] as String? ?? '',
+        attachmentCount: (json['attachmentCount'] as num?)?.toInt() ?? 0,
+      );
+}
+
 class PageResult<T> {
   const PageResult(this.items, this.nextCursor);
   final List<T> items;

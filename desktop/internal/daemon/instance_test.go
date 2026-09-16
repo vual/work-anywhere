@@ -192,6 +192,31 @@ func TestCanStartTurnOnlyBlocksTheAffectedConversation(t *testing.T) {
 	}
 }
 
+func TestCanSubmitQueueAllowsActiveConversationWithoutBlockingAction(t *testing.T) {
+	instance, _, cleanup := testInstance(t)
+	defer cleanup()
+	instance.state = "ready"
+	instance.activeTurns["thread-running"] = "turn-1"
+
+	if !instance.CanSubmitQueue("thread-running") {
+		t.Fatal("active conversation without an action could not accept queue input")
+	}
+	instance.actions["action-running"] = &pendingAction{
+		ID:             json.RawMessage(`"action-running"`),
+		ConversationID: "thread-running",
+	}
+	if instance.CanSubmitQueue("thread-running") {
+		t.Fatal("conversation waiting for an action accepted queue input")
+	}
+	if !instance.CanSubmitQueue("thread-other") {
+		t.Fatal("an action for another conversation blocked queue input")
+	}
+	instance.actions["action-unknown"] = &pendingAction{ID: json.RawMessage(`"action-unknown"`)}
+	if instance.CanSubmitQueue("thread-other") {
+		t.Fatal("an unowned blocking action allowed queue input")
+	}
+}
+
 func TestCompletingOneTurnPreservesOtherConversationActivity(t *testing.T) {
 	instance, _, cleanup := testInstance(t)
 	defer cleanup()

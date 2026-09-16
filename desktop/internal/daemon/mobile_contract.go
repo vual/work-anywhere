@@ -762,7 +762,110 @@ type mobileConversationSnapshot struct {
 	Revision         int64                      `json:"revision"`
 	Sequence         int64                      `json:"sequence"`
 	Timeline         mobileTimelinePage         `json:"timeline"`
+	Queue            mobileQueuePage            `json:"queue"`
 	PlanConfirmation *mobilePlanConfirmation    `json:"planConfirmation,omitempty"`
+}
+
+type mobileQueuedSubmission struct {
+	ID              string `json:"id"`
+	ClientMessageID string `json:"clientMessageId"`
+	Text            string `json:"text"`
+	AttachmentCount int    `json:"attachmentCount"`
+}
+
+type mobileQueuePage struct {
+	Items      []mobileQueuedSubmission `json:"items"`
+	NextCursor string                   `json:"nextCursor,omitempty"`
+}
+
+type providerQueuedSubmission struct {
+	ID                  string            `json:"id"`
+	ClientUserMessageID string            `json:"clientUserMessageId"`
+	Input               []json.RawMessage `json:"input"`
+}
+
+func normalizeQueuedSubmission(source providerQueuedSubmission) (mobileQueuedSubmission, error) {
+	if source.ID == "" {
+		return mobileQueuedSubmission{}, errors.New("queued submission has no id")
+	}
+	textParts := make([]string, 0, 1)
+	attachments := 0
+	for _, rawInput := range source.Input {
+		var input struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal(rawInput, &input); err != nil {
+			return mobileQueuedSubmission{}, fmt.Errorf("decode queued input: %w", err)
+		}
+		switch input.Type {
+		case "text":
+			if input.Text != "" {
+				textParts = append(textParts, input.Text)
+			}
+		case "image", "localImage":
+			attachments++
+		}
+	}
+	return mobileQueuedSubmission{
+		ID: source.ID, ClientMessageID: source.ClientUserMessageID,
+		Text: strings.Join(textParts, "\n"), AttachmentCount: attachments,
+	}, nil
+}
+
+func normalizeMobileQueuePage(raw json.RawMessage) (mobileQueuePage, error) {
+	var source struct {
+		Data       []providerQueuedSubmission `json:"data"`
+		NextCursor *string                    `json:"nextCursor"`
+	}
+	if err := json.Unmarshal(raw, &source); err != nil {
+		return mobileQueuePage{}, fmt.Errorf("decode thread/queue/list: %w", err)
+	}
+	page := mobileQueuePage{Items: make([]mobileQueuedSubmission, 0, len(source.Data))}
+	if source.NextCursor != nil {
+		page.NextCursor = *source.NextCursor
+	}
+	for _, item := range source.Data {
+		normalized, err := normalizeQueuedSubmission(item)
+		if err != nil {
+			return mobileQueuePage{}, err
+		}
+		page.Items = append(page.Items, normalized)
+	}
+	return page, nil
+}
+
+func normalizeQueuedMutation(raw json.RawMessage) (mobileQueuedSubmission, error) {
+	var source struct {
+		QueuedSubmission providerQueuedSubmission `json:"queuedSubmission"`
+	}
+	if err := json.Unmarshal(raw, &source); err != nil {
+		return mobileQueuedSubmission{}, fmt.Errorf("decode queued submission: %w", err)
+	}
+	return normalizeQueuedSubmission(source.QueuedSubmission)
+}
+
+func queuedInputsWithText(current []json.RawMessage, text string) ([]json.RawMessage, error) {
+	inputs := make([]json.RawMessage, 0, len(current)+1)
+	if text = strings.TrimSpace(text); text != "" {
+		encoded, _ := json.Marshal(map[string]any{"type": "text", "text": text})
+		inputs = append(inputs, encoded)
+	}
+	for _, rawInput := range current {
+		var kind struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(rawInput, &kind); err != nil {
+			return nil, fmt.Errorf("decode queued input: %w", err)
+		}
+		if kind.Type != "text" {
+			inputs = append(inputs, rawInput)
+		}
+	}
+	if len(inputs) == 0 {
+		return nil, errors.New("queued input cannot be empty")
+	}
+	return inputs, nil
 }
 
 func projectedMobileSettings(settings threadCollaborationSettings) mobileConversationSettings {
@@ -1418,9 +1521,13 @@ func (m *Manager) conversationSnapshot(instance *Instance, agentID string, param
 	if err != nil {
 		return mobileConversationSnapshot{}, err
 	}
+	queue, err := m.mobileQueueList(instance, request.ThreadID)
+	if err != nil {
+		return mobileConversationSnapshot{}, err
+	}
 	revision, sequence := instance.ConversationVersion(request.ThreadID)
 	settings, _ := instance.collaborationSettings(request.ThreadID)
-	snapshot := mobileConversationSnapshot{Conversation: metadata, Settings: projectedMobileSettings(settings), Revision: revision, Sequence: sequence, Timeline: page}
+	snapshot := mobileConversationSnapshot{Conversation: metadata, Settings: projectedMobileSettings(settings), Revision: revision, Sequence: sequence, Timeline: page, Queue: queue}
 	snapshot.PlanConfirmation = planConfirmationFor(instance, request.ThreadID, metadata, page, revision)
 	return snapshot, nil
 }
@@ -1533,6 +1640,172 @@ func planTurnStartParams(threadID, decision, text string, settings threadCollabo
 		params["approvalsReviewer"] = settings.ApprovalsReviewer
 	}
 	return params
+}
+
+func (m *Manager) mobileQueueList(instance mobileProviderCaller, threadID string) (mobileQueuePage, error) {
+	if threadID == "" {
+		return mobileQueuePage{}, &mobileContractError{code: "invalid_params", message: "threadId is required"}
+	}
+	params, _ := json.Marshal(map[string]any{"threadId": threadID, "limit": mobileMaxTimelineLimit})
+	raw, err := instance.Call(m.ctx, "thread/queue/list", params)
+	if err != nil {
+		return mobileQueuePage{}, &mobileContractError{code: "provider_error", message: err.Error()}
+	}
+	page, err := normalizeMobileQueuePage(raw)
+	if err != nil {
+		return mobileQueuePage{}, &mobileContractError{code: "invalid_provider_response", message: err.Error()}
+	}
+	return page, nil
+}
+
+func (m *Manager) mobileQueueAdd(instance *Instance, params json.RawMessage) (mobileQueuedSubmission, error) {
+	var request struct {
+		ThreadID string `json:"threadId"`
+	}
+	if json.Unmarshal(params, &request) != nil || request.ThreadID == "" {
+		return mobileQueuedSubmission{}, &mobileContractError{code: "invalid_params", message: "threadId is required"}
+	}
+	if !instance.CanSubmitQueue(request.ThreadID) {
+		return mobileQueuedSubmission{}, &mobileContractError{code: "conversation_busy", message: "the conversation is waiting for an action"}
+	}
+	normalized, err := m.normalizeTurnStart(instance.descriptor.ID, params)
+	if err != nil {
+		return mobileQueuedSubmission{}, err
+	}
+	var provider map[string]any
+	if err = json.Unmarshal(normalized, &provider); err != nil {
+		return mobileQueuedSubmission{}, &mobileContractError{code: "invalid_params", message: err.Error()}
+	}
+	input, _ := provider["input"].([]any)
+	messageID, _ := provider["clientUserMessageId"].(string)
+	if len(input) == 0 || messageID == "" {
+		return mobileQueuedSubmission{}, &mobileContractError{code: "invalid_params", message: "clientMessageId and non-empty input are required"}
+	}
+	provider = map[string]any{
+		"threadId": request.ThreadID, "clientUserMessageId": messageID, "input": input,
+	}
+	providerParams, _ := json.Marshal(provider)
+	raw, err := instance.Call(m.ctx, "thread/queue/add", providerParams)
+	if err != nil {
+		return mobileQueuedSubmission{}, &mobileContractError{code: "provider_error", message: err.Error()}
+	}
+	result, err := normalizeQueuedMutation(raw)
+	if err != nil {
+		return mobileQueuedSubmission{}, &mobileContractError{code: "invalid_provider_response", message: err.Error()}
+	}
+	return result, nil
+}
+
+func (m *Manager) providerQueuedSubmission(instance mobileProviderCaller, threadID, submissionID string) (providerQueuedSubmission, error) {
+	cursor := ""
+	for page := 0; page < mobileMaxTimelineProviderPages; page++ {
+		provider := map[string]any{"threadId": threadID, "limit": mobileMaxTimelineLimit}
+		if cursor != "" {
+			provider["cursor"] = cursor
+		}
+		params, _ := json.Marshal(provider)
+		raw, err := instance.Call(m.ctx, "thread/queue/list", params)
+		if err != nil {
+			return providerQueuedSubmission{}, &mobileContractError{code: "provider_error", message: err.Error()}
+		}
+		var response struct {
+			Data       []providerQueuedSubmission `json:"data"`
+			NextCursor *string                    `json:"nextCursor"`
+		}
+		if err = json.Unmarshal(raw, &response); err != nil {
+			return providerQueuedSubmission{}, &mobileContractError{code: "invalid_provider_response", message: err.Error()}
+		}
+		for _, item := range response.Data {
+			if item.ID == submissionID {
+				return item, nil
+			}
+		}
+		if response.NextCursor == nil || *response.NextCursor == "" {
+			break
+		}
+		cursor = *response.NextCursor
+	}
+	return providerQueuedSubmission{}, &mobileContractError{code: "queue_item_not_found", message: "the queued message no longer exists"}
+}
+
+func (m *Manager) mobileQueueUpdate(instance *Instance, params json.RawMessage) (mobileQueuedSubmission, error) {
+	var request struct {
+		ThreadID         string `json:"threadId"`
+		QueuedSubmission string `json:"queuedSubmissionId"`
+		Text             string `json:"text"`
+	}
+	if json.Unmarshal(params, &request) != nil || request.ThreadID == "" || request.QueuedSubmission == "" {
+		return mobileQueuedSubmission{}, &mobileContractError{code: "invalid_params", message: "threadId and queuedSubmissionId are required"}
+	}
+	if !instance.CanSubmitQueue(request.ThreadID) {
+		return mobileQueuedSubmission{}, &mobileContractError{code: "conversation_busy", message: "the conversation is waiting for an action"}
+	}
+	current, err := m.providerQueuedSubmission(instance, request.ThreadID, request.QueuedSubmission)
+	if err != nil {
+		return mobileQueuedSubmission{}, err
+	}
+	inputs, err := queuedInputsWithText(current.Input, request.Text)
+	if err != nil {
+		return mobileQueuedSubmission{}, &mobileContractError{code: "invalid_params", message: err.Error()}
+	}
+	providerParams, _ := json.Marshal(map[string]any{
+		"threadId": request.ThreadID, "queuedSubmissionId": request.QueuedSubmission, "input": inputs,
+	})
+	raw, err := instance.Call(m.ctx, "thread/queue/update", providerParams)
+	if err != nil {
+		return mobileQueuedSubmission{}, &mobileContractError{code: "provider_error", message: err.Error()}
+	}
+	result, err := normalizeQueuedMutation(raw)
+	if err != nil {
+		return mobileQueuedSubmission{}, &mobileContractError{code: "invalid_provider_response", message: err.Error()}
+	}
+	return result, nil
+}
+
+func (m *Manager) mobileQueueDelete(instance *Instance, params json.RawMessage) (map[string]any, error) {
+	var request struct {
+		ThreadID         string `json:"threadId"`
+		QueuedSubmission string `json:"queuedSubmissionId"`
+	}
+	if json.Unmarshal(params, &request) != nil || request.ThreadID == "" || request.QueuedSubmission == "" {
+		return nil, &mobileContractError{code: "invalid_params", message: "threadId and queuedSubmissionId are required"}
+	}
+	if !instance.CanSubmitQueue(request.ThreadID) {
+		return nil, &mobileContractError{code: "conversation_busy", message: "the conversation is waiting for an action"}
+	}
+	providerParams, _ := json.Marshal(map[string]any{"threadId": request.ThreadID, "queuedSubmissionId": request.QueuedSubmission})
+	if _, err := instance.Call(m.ctx, "thread/queue/delete", providerParams); err != nil {
+		return nil, &mobileContractError{code: "provider_error", message: err.Error()}
+	}
+	return map[string]any{"deleted": true, "queuedSubmissionId": request.QueuedSubmission}, nil
+}
+
+func (m *Manager) mobileQueueStart(instance *Instance, params json.RawMessage) (map[string]any, error) {
+	var request struct {
+		ThreadID         string `json:"threadId"`
+		QueuedSubmission string `json:"queuedSubmissionId"`
+	}
+	if json.Unmarshal(params, &request) != nil || request.ThreadID == "" || request.QueuedSubmission == "" {
+		return nil, &mobileContractError{code: "invalid_params", message: "threadId and queuedSubmissionId are required"}
+	}
+	if !instance.CanSubmitQueue(request.ThreadID) {
+		return nil, &mobileContractError{code: "conversation_busy", message: "the conversation is waiting for an action"}
+	}
+	providerParams, _ := json.Marshal(map[string]any{"threadId": request.ThreadID, "queuedSubmissionId": request.QueuedSubmission})
+	raw, err := instance.Call(m.ctx, "thread/queue/start", providerParams)
+	if err != nil {
+		return nil, &mobileContractError{code: "provider_error", message: err.Error()}
+	}
+	result := map[string]any{"started": true, "queuedSubmissionId": request.QueuedSubmission}
+	var started struct {
+		Turn struct {
+			ID string `json:"id"`
+		} `json:"turn"`
+	}
+	if json.Unmarshal(raw, &started) == nil && started.Turn.ID != "" {
+		result["turnId"] = started.Turn.ID
+	}
+	return result, nil
 }
 
 func (m *Manager) mobileConversationRead(instance *Instance, params json.RawMessage) (mobileConversationSnapshot, error) {

@@ -400,6 +400,37 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String get queuedMessage => '排队中的消息';
+
+  @override
+  String get queuedMessageActions => '排队消息操作';
+
+  @override
+  String get editQueuedMessage => '编辑消息';
+
+  @override
+  String get guideQueuedMessageNow => '立即引导';
+
+  @override
+  String get cancelQueuedMessage => '取消发送';
+
+  @override
+  String queuedAttachmentCount(int count) {
+    return '$count 个附件';
+  }
+
+  @override
+  String queueOperationFailed(String error) {
+    return '无法更新排队消息：$error';
+  }
+
+  @override
+  String get currentDraftMustBeEmpty => '请先发送或清空当前输入内容，再编辑排队消息';
+
+  @override
+  String get queuedAttachmentsEditUnavailable => '这条排队消息包含已无法从手机恢复的附件';
+
+  @override
   String get noTimeline => '暂无可显示的内容';
 
   @override

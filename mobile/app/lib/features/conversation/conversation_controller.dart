@@ -9,6 +9,7 @@ class ConversationState {
   const ConversationState({
     this.metadata,
     this.items = const [],
+    this.queuedSubmissions = const [],
     this.actions = const [],
     this.planConfirmation,
     this.olderCursor,
@@ -24,6 +25,7 @@ class ConversationState {
 
   final Map<String, dynamic>? metadata;
   final List<Map<String, dynamic>> items;
+  final List<QueuedSubmission> queuedSubmissions;
   final List<Map<String, dynamic>> actions;
   final Map<String, dynamic>? planConfirmation;
   final String? olderCursor;
@@ -136,6 +138,7 @@ class ConversationController extends ChangeNotifier {
     _state = ConversationState(
       metadata: _state.metadata,
       items: _state.items,
+      queuedSubmissions: _state.queuedSubmissions,
       actions: _state.actions,
       planConfirmation: _state.planConfirmation,
       olderCursor: _state.olderCursor,
@@ -236,6 +239,7 @@ class ConversationController extends ChangeNotifier {
     _state = ConversationState(
       metadata: _state.metadata,
       items: _state.items,
+      queuedSubmissions: _state.queuedSubmissions,
       actions: _state.actions,
       planConfirmation: _state.planConfirmation,
       olderCursor: _state.olderCursor,
@@ -249,6 +253,7 @@ class ConversationController extends ChangeNotifier {
     _state = ConversationState(
       metadata: _state.metadata,
       items: _state.items,
+      queuedSubmissions: _state.queuedSubmissions,
       actions: _state.actions,
       planConfirmation: _state.planConfirmation,
       olderCursor: _state.olderCursor,
@@ -275,13 +280,18 @@ class ConversationController extends ChangeNotifier {
         _settings = ConversationSettings.fromJson(settings);
       }
       final timeline = result['timeline'] as Map<String, dynamic>? ?? const {};
+      final queue = result['queue'] as Map<String, dynamic>? ?? const {};
       final newestFirst = _maps(timeline['items']);
+      final queuedSubmissions = _maps(queue['items'])
+          .map(QueuedSubmission.fromJson)
+          .toList(growable: false);
       final sequence = (result['sequence'] as num?)?.toInt() ?? 0;
       if (sequence < _state.sequence) return;
       final latest = _dedupe(newestFirst.reversed);
       _state = ConversationState(
         metadata: result['conversation'] as Map<String, dynamic>?,
         items: _mergeLatest(_state.items, latest),
+        queuedSubmissions: queuedSubmissions,
         actions: _state.actions,
         planConfirmation: result['planConfirmation'] as Map<String, dynamic>?,
         olderCursor: _loadedOlder
@@ -297,6 +307,7 @@ class ConversationController extends ChangeNotifier {
       _state = ConversationState(
         metadata: _state.metadata,
         items: _state.items,
+        queuedSubmissions: _state.queuedSubmissions,
         actions: _state.actions,
         planConfirmation: _state.planConfirmation,
         olderCursor: _state.olderCursor,
@@ -326,6 +337,7 @@ class ConversationController extends ChangeNotifier {
       _state = ConversationState(
         metadata: _state.metadata,
         items: _state.items,
+        queuedSubmissions: _state.queuedSubmissions,
         actions: actions,
         planConfirmation: _state.planConfirmation,
         olderCursor: _state.olderCursor,
@@ -340,6 +352,7 @@ class ConversationController extends ChangeNotifier {
       _state = ConversationState(
         metadata: _state.metadata,
         items: _state.items,
+        queuedSubmissions: _state.queuedSubmissions,
         actions: _state.actions,
         planConfirmation: _state.planConfirmation,
         olderCursor: _state.olderCursor,
@@ -363,6 +376,7 @@ class ConversationController extends ChangeNotifier {
     _state = ConversationState(
       metadata: _state.metadata,
       items: _state.items,
+      queuedSubmissions: _state.queuedSubmissions,
       actions: _state.actions,
       planConfirmation: _state.planConfirmation,
       olderCursor: cursor,
@@ -387,6 +401,7 @@ class ConversationController extends ChangeNotifier {
       _state = ConversationState(
         metadata: _state.metadata,
         items: _dedupe([...older, ..._state.items]),
+        queuedSubmissions: _state.queuedSubmissions,
         actions: _state.actions,
         planConfirmation: _state.planConfirmation,
         olderCursor: page['nextCursor'] as String?,
@@ -400,6 +415,7 @@ class ConversationController extends ChangeNotifier {
       _state = ConversationState(
         metadata: _state.metadata,
         items: _state.items,
+        queuedSubmissions: _state.queuedSubmissions,
         actions: _state.actions,
         planConfirmation: _state.planConfirmation,
         olderCursor: cursor,

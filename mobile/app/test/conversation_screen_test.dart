@@ -1043,23 +1043,105 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('running conversation keeps the composer and uses a stop icon', (
+  testWidgets(
+    'running conversation accepts input and switches from stop to queue',
+    (tester) async {
+      final events = StreamController<Map<String, dynamic>>();
+      addTearDown(events.close);
+      final gateway = _FakeGateway((method, params) async {
+        if (method == 'action.list') return {'result': const <dynamic>[]};
+        if (method == 'conversation.subscribe') return {'result': const {}};
+        return {
+          'result': {
+            'conversation': {
+              'id': 'thread-running',
+              'title': 'Running thread',
+              'running': true,
+            },
+            'timeline': {'items': const []},
+          },
+        };
+      }, events: events.stream);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            coreGatewayProvider.overrideWithValue(gateway),
+            workspaceProvider.overrideWith(_FakeWorkspaceController.new),
+          ],
+          child: const MaterialApp(
+            locale: Locale('zh', 'CN'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: ConversationScreen(conversationId: 'thread-running'),
+          ),
+        ),
+      );
+
+      for (var index = 0; index < 5; index++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      expect(find.byType(TextField), findsOneWidget);
+      expect(find.byIcon(Icons.add_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
+      expect(tester.widget<TextField>(find.byType(TextField)).enabled, isTrue);
+      await tester.enterText(find.byType(TextField), 'Next instruction');
+      await tester.pump();
+      expect(find.byIcon(Icons.stop_rounded), findsNothing);
+      expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
+      expect(find.text('任务运行中 · 停止'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets('queued messages can be edited, guided now, or cancelled', (
     tester,
   ) async {
+    final events = StreamController<Map<String, dynamic>>();
+    addTearDown(events.close);
+    final queue = <Map<String, dynamic>>[];
+    final calls = <String>[];
+    var nextId = 1;
     final gateway = _FakeGateway((method, params) async {
-      if (method == 'action.list') return {'result': const <dynamic>[]};
-      if (method == 'conversation.subscribe') return {'result': const {}};
-      return {
-        'result': {
-          'conversation': {
-            'id': 'thread-running',
-            'title': 'Running thread',
-            'running': true,
-          },
-          'timeline': {'items': const []},
-        },
-      };
-    });
+      switch (method) {
+        case 'conversation.read':
+          return {
+            'result': {
+              'conversation': {
+                'id': 'thread-running',
+                'title': 'Running thread',
+                'running': true,
+              },
+              'timeline': {'items': const []},
+              'queue': {'items': List<Map<String, dynamic>>.from(queue)},
+            },
+          };
+        case 'action.list':
+          return {'result': const <dynamic>[]};
+        case 'conversation.subscribe':
+          return {'result': const {}};
+        case 'conversation.queue.add':
+          calls.add(method);
+          final item = <String, dynamic>{
+            'id': 'queued-${nextId++}',
+            'clientMessageId': params['clientMessageId'],
+            'text': params['text'],
+            'attachmentCount': 0,
+          };
+          queue.add(item);
+          return {'result': item};
+        case 'conversation.queue.delete':
+        case 'conversation.queue.start':
+          calls.add(method);
+          queue.removeWhere(
+            (item) => item['id'] == params['queuedSubmissionId'],
+          );
+          return {'result': const {}};
+        default:
+          fail('unexpected method: $method');
+      }
+    }, events: events.stream);
 
     await tester.pumpWidget(
       ProviderScope(
@@ -1067,24 +1149,61 @@ void main() {
           coreGatewayProvider.overrideWithValue(gateway),
           workspaceProvider.overrideWith(_FakeWorkspaceController.new),
         ],
-        child: const MaterialApp(
-          locale: Locale('zh', 'CN'),
+        child: MaterialApp(
+          theme: buildLightTheme(),
+          locale: const Locale('zh', 'CN'),
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
-          home: ConversationScreen(conversationId: 'thread-running'),
+          home: const ConversationScreen(conversationId: 'thread-running'),
         ),
       ),
     );
-
-    for (var index = 0; index < 5; index++) {
-      await tester.pump(const Duration(milliseconds: 100));
+    for (var index = 0; index < 6; index++) {
+      await tester.pump(const Duration(milliseconds: 80));
     }
 
-    expect(find.byType(TextField), findsOneWidget);
-    expect(find.byIcon(Icons.add_rounded), findsOneWidget);
-    expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
-    expect(tester.widget<TextField>(find.byType(TextField)).enabled, isFalse);
-    expect(find.text('任务运行中 · 停止'), findsNothing);
+    Future<void> send(String text) async {
+      await tester.enterText(find.byType(TextField), text);
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      for (var index = 0; index < 5; index++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+    }
+
+    Future<void> choose(String id, String label) async {
+      await tester.tap(find.byKey(ValueKey('queued-message-menu-$id')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(label));
+      for (var index = 0; index < 5; index++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+    }
+
+    await send('First queued message');
+    expect(find.text('First queued message'), findsOneWidget);
+    await choose('queued-1', '编辑消息');
+    expect(find.text('First queued message'), findsOneWidget);
+    expect(queue, isEmpty);
+
+    await send('First queued message');
+    await choose('queued-2', '立即引导');
+    expect(queue, isEmpty);
+
+    await send('Cancel this message');
+    await choose('queued-3', '取消发送');
+    expect(queue, isEmpty);
+    expect(
+      calls,
+      containsAllInOrder([
+        'conversation.queue.add',
+        'conversation.queue.delete',
+        'conversation.queue.add',
+        'conversation.queue.start',
+        'conversation.queue.add',
+        'conversation.queue.delete',
+      ]),
+    );
     await tester.pumpWidget(const SizedBox());
   });
 

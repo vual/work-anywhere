@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/base64"
@@ -108,6 +109,36 @@ func TestNormalizeConversationMetadataAndTimeline(t *testing.T) {
 	nested, _, err := normalizeTimelinePage(json.RawMessage(`{"data":[{"turnId":"turn-2","item":{"id":"i3","type":"agentMessage","text":"nested"}}]}`))
 	if err != nil || len(nested.Items) != 1 || nested.Items[0].ID != "i3" || nested.Items[0].TurnID != "turn-2" || nested.Items[0].Blocks[0].Text != "nested" {
 		t.Fatalf("nested thread item was not normalized: page=%#v err=%v", nested, err)
+	}
+}
+
+func TestNormalizeMobileQueueRedactsProviderInputs(t *testing.T) {
+	page, err := normalizeMobileQueuePage(json.RawMessage(`{"data":[{"id":"queue-1","clientUserMessageId":"client-1","input":[{"type":"text","text":"first"},{"type":"text","text":"second"},{"type":"localImage","path":"C:\\secret\\photo.jpg"},{"type":"mention","name":"private","path":"C:\\secret"}]}],"nextCursor":"next"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0].ID != "queue-1" || page.Items[0].ClientMessageID != "client-1" || page.Items[0].Text != "first\nsecond" || page.Items[0].AttachmentCount != 1 || page.NextCursor != "next" {
+		t.Fatalf("unexpected queue projection: %#v", page)
+	}
+	encoded, _ := json.Marshal(page)
+	if strings.Contains(string(encoded), "secret") || strings.Contains(string(encoded), "photo.jpg") {
+		t.Fatalf("provider-only paths escaped queue projection: %s", encoded)
+	}
+}
+
+func TestQueuedInputsWithTextPreservesNonTextInputs(t *testing.T) {
+	inputs, err := queuedInputsWithText([]json.RawMessage{
+		json.RawMessage(`{"type":"text","text":"old"}`),
+		json.RawMessage(`{"type":"localImage","path":"C:\\attachments\\photo.jpg"}`),
+	}, "  revised  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inputs) != 2 || string(inputs[0]) != `{"text":"revised","type":"text"}` || !strings.Contains(string(inputs[1]), "localImage") {
+		t.Fatalf("unexpected updated inputs: %s", inputs)
+	}
+	if _, err = queuedInputsWithText([]json.RawMessage{json.RawMessage(`{"type":"text","text":"old"}`)}, "  "); err == nil {
+		t.Fatal("expected an empty queued input to be rejected")
 	}
 }
 
@@ -367,6 +398,78 @@ func TestMobileConversationSettingsUpdateCommitsOnlyAfterProviderSuccess(t *test
 	}
 	_ = serverWriter.Close()
 	<-done
+}
+
+func TestMobileQueueMethodsMapToProviderQueue(t *testing.T) {
+	instance, _, cleanup := testInstance(t)
+	defer cleanup()
+	instance.manager.ctx = context.Background()
+	instance.manager.instances = map[string]*Instance{"test-instance": instance}
+	instance.state = "ready"
+	instance.activeTurns["thread-1"] = "turn-running"
+
+	serverReader, serverWriter := io.Pipe()
+	defer serverReader.Close()
+	defer serverWriter.Close()
+	instance.stdin = serverWriter
+	methods := make([]string, 0, 5)
+	var updateParams json.RawMessage
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		scanner := bufio.NewScanner(serverReader)
+		for scanner.Scan() {
+			var request struct {
+				ID     string          `json:"id"`
+				Method string          `json:"method"`
+				Params json.RawMessage `json:"params"`
+			}
+			_ = json.Unmarshal(scanner.Bytes(), &request)
+			methods = append(methods, request.Method)
+			var result string
+			switch request.Method {
+			case "thread/queue/add":
+				result = `{"queuedSubmission":{"id":"queue-1","clientUserMessageId":"client-1","input":[{"type":"text","text":"hello"}]}}`
+			case "thread/queue/list":
+				result = `{"data":[{"id":"queue-1","clientUserMessageId":"client-1","input":[{"type":"text","text":"hello"},{"type":"localImage","path":"C:\\private\\photo.jpg"}]}]}`
+			case "thread/queue/update":
+				updateParams = append(json.RawMessage(nil), request.Params...)
+				result = `{"queuedSubmission":{"id":"queue-1","clientUserMessageId":"client-1","input":[{"type":"text","text":"revised"},{"type":"localImage","path":"C:\\private\\photo.jpg"}]}}`
+			case "thread/queue/delete":
+				result = `{}`
+			case "thread/queue/start":
+				result = `{"turn":{"id":"turn-guided"}}`
+			}
+			instance.handleServerFrame(instance.generation, []byte(`{"jsonrpc":"2.0","id":"`+request.ID+`","result":`+result+`}`))
+		}
+	}()
+
+	added, err := instance.manager.mobileQueueAdd(instance, json.RawMessage(`{"threadId":"thread-1","clientMessageId":"client-1","text":"hello"}`))
+	if err != nil || added.ID != "queue-1" || added.Text != "hello" {
+		t.Fatalf("queue add = %#v, err=%v", added, err)
+	}
+	updated, err := instance.manager.mobileQueueUpdate(instance, json.RawMessage(`{"threadId":"thread-1","queuedSubmissionId":"queue-1","text":"revised"}`))
+	if err != nil || updated.Text != "revised" || updated.AttachmentCount != 1 {
+		t.Fatalf("queue update = %#v, err=%v", updated, err)
+	}
+	if !bytes.Contains(updateParams, []byte("localImage")) || bytes.Contains(updateParams, []byte(`"text":"hello"`)) {
+		t.Fatalf("queue update did not preserve only non-text input: %s", updateParams)
+	}
+	deleted, err := instance.manager.mobileQueueDelete(instance, json.RawMessage(`{"threadId":"thread-1","queuedSubmissionId":"queue-1"}`))
+	if err != nil || deleted["deleted"] != true {
+		t.Fatalf("queue delete = %#v, err=%v", deleted, err)
+	}
+	started, err := instance.manager.mobileQueueStart(instance, json.RawMessage(`{"threadId":"thread-1","queuedSubmissionId":"queue-1"}`))
+	if err != nil || started["turnId"] != "turn-guided" {
+		t.Fatalf("queue start = %#v, err=%v", started, err)
+	}
+
+	_ = serverWriter.Close()
+	<-done
+	wantMethods := []string{"thread/queue/add", "thread/queue/list", "thread/queue/update", "thread/queue/delete", "thread/queue/start"}
+	if fmt.Sprint(methods) != fmt.Sprint(wantMethods) {
+		t.Fatalf("provider methods = %v, want %v", methods, wantMethods)
+	}
 }
 
 func TestPlanRespondReturnsStablePreflightErrors(t *testing.T) {

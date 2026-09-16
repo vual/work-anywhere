@@ -23,7 +23,7 @@
 | `status.read` | Daemon/Agent 状态 | `system.status`, `instance.list/get`, `agent.list` |
 | `conversation.read` | 项目/对话列表、搜索、snapshot、增量与大内容读取 | `project.list`, `conversation.list/read/subscribe`, `conversation.timeline.list`, `conversation.content.read/resolve` |
 | `conversation.create` | 首次发送时在当前项目创建 Codex thread | `conversation.create` |
-| `turn.start` | 继续已有 thread、修改会话设置或响应已完成计划 | `turn.start`, `conversation.settings.update`, `plan.respond` |
+| `turn.start` | 继续已有 thread、管理运行中消息队列、修改会话设置或响应已完成计划 | `turn.start`, `conversation.queue.add/update/delete/start`, `conversation.settings.update`, `plan.respond` |
 | `turn.interrupt` | 中断活跃 Turn | `turn.interrupt` |
 | `action.read` | 查看待处理 action | `action.list` |
 | `action.resolve` | 回答 approval/question | `action.resolve` |
@@ -111,9 +111,11 @@ App 前台对未选中 Daemon 以有界短连接依次执行 status probe，更�
 
 `mobile-control-v1` envelope 会回显 contract，未知 contract 返回 `unsupported_contract`。Mobile-facing target 参数统一使用 `agentId`，Desktop 只在 provider 边界内转换为 `instanceId`；附件上传会先绑定该实例，再把 `instanceId` 从 provider 参数中移除。`agent.list`、`project.list`、`conversation.list`、conversation timeline 与 model/permission catalog 已输出稳定 DTO；project list 不暴露 root，conversation list 不暴露 preview，Mobile 不解析 provider 原始权限结构；action 仍有 provider-shaped payload。
 
-`conversation.read` 组合 metadata-only `thread/read` 与 `thread/items/list(sortDirection=desc)`，默认 20、最大 50。snapshot 包含 metadata、revision、sequence、timeline、opaque `nextCursor` 和权威 `settings={mode,modelId,reasoningEffort,permissionModeId}`。`TimelineItem` 固定为 id、可选 turnId、kind、status 与 blocks，不透传 provider JSON。Plan item 使用单个 `kind=plan` block，daemon 保留原始 Markdown；真正超过 5 个源文件行时普通 Timeline response 只返回前 5 行，并为完整正文返回 `contentRef` 与 `totalBytes`，不生成 title/summary。Plan 和其他大 block 通过 `conversation.content.read` 按 128 KiB 分块读取；引用过期后，Flutter 使用私有的 turnId/itemId/blockIndex 调用 `conversation.content.resolve`，daemon 在该 turn 内分页查找 item 并重新签发引用，找不到时返回 `content_not_found`，不要求刷新或丢弃已加载旧页。
+`conversation.read` 组合 metadata-only `thread/read`、`thread/items/list(sortDirection=desc)` 和 `thread/queue/list`，默认 timeline 20、最大 50。snapshot 包含 metadata、revision、sequence、timeline、权威 queue 和 `settings={mode,modelId,reasoningEffort,permissionModeId}`。queue item 固定为 `id`、`clientMessageId`、`text` 与 `attachmentCount`，不得把 Desktop 图片/mention 路径带到 Mobile。`TimelineItem` 固定为 id、可选 turnId、kind、status 与 blocks，不透传 provider JSON。Plan item 使用单个 `kind=plan` block，daemon 保留原始 Markdown；真正超过 5 个源文件行时普通 Timeline response 只返回前 5 行，并为完整正文返回 `contentRef` 与 `totalBytes`，不生成 title/summary。Plan 和其他大 block 通过 `conversation.content.read` 按 128 KiB 分块读取；引用过期后，Flutter 使用私有的 turnId/itemId/blockIndex 调用 `conversation.content.resolve`，daemon 在该 turn 内分页查找 item 并重新签发引用，找不到时返回 `content_not_found`，不要求刷新或丢弃已加载旧页。
 
 `catalog.models` 返回模型 ID/名称/说明、default/selectable、默认思考等级与该模型支持的等级；`catalog.permissionProfiles(modelId)` 固定返回 `default`、`autoReview`、`readOnly`、`fullAccess` 及 Desktop 根据 profile catalog、企业配置和该模型 auto-review 要求计算的可用性。更换模型时 Mobile 重新读取权限 catalog，仅保留仍可用的权限，并仅保留新模型仍支持的思考等级，否则分别回落到可用权限和模型默认等级。`conversation.settings.update` 携带最后确认的 revision 和完整 settings，只允许空闲且无阻塞 action 的 thread；明确失败后刷新 snapshot，结果不明不自动重试。尚未创建的草稿只在进程内保存选择，首次 `turn.start` 才提交完整 settings。计划的 revise/implement 继承 permission/model/effort，implement 将 mode 切回 `default`。
+
+目标 thread 运行时，Composer 继续接受文字和图片，发送调用 `conversation.queue.add` 并携带稳定 `clientMessageId`；成功后从下一次 snapshot 显示权威 queue。编辑操作先调用 `conversation.queue.delete`，明确成功后才把文字和当前进程仍持有的图片草稿放回 Composer；应用重启后无法恢复原图片内容的排队消息不允许编辑，但仍可立即引导或取消。立即引导调用 `conversation.queue.start`，取消调用 `conversation.queue.delete`；`conversation.queue.update` 保留为稳定协议能力，用于原位替换文字且保留非文字输入。所有队列写入结果未知时只刷新 snapshot 并按 ID/clientMessageId 对账，不自动重试。
 
 `hookPrompt` 不进入 DTO；function/tool、协作、搜索、图片、sleep、review 和 compaction item 只返回单个 `kind=summary` block。该 block 的 `summaryKind` 是原始类型，`summaryValue` 是脱敏、单行且不超过 512 UTF-8 字节的值，`text` 是语言无关 fallback；完整句子和 status 由 Flutter ARB 本地化。summary 不包含 arguments/output/result/error/path/prompt，不生成 `contentRef`；commandExecution 只返回 command block。过滤后可见 item 不足请求数量时 daemon 沿 provider cursor 补读后续页面，最多 8 页。其他单 block 超过 64 KiB 时内联 UTF-8 前 16 KiB，并用 15 分钟滑动过期的 `contentRef` 分块读取。项目下对话列表优先按 `projectId` 查询；Desktop 若发现历史线程项目关联未迁移，会按项目根目录 `cwd` 回退查询。Desktop control response 不超过 512 KiB；页面超预算时以相同 cursor 将 limit 逐次减半。
 
@@ -135,7 +137,7 @@ Mobile 产品页面只消费稳定 timeline 与 catalog/settings DTO；尚未规
 
 ### Turn start
 
-1. 本地检查 `online`、`turn.start` scope、conversation idle、无 blocking action。
+1. 本地检查 `online`、`turn.start` scope 和无 blocking action；idle 时开始新 Turn，running 时新增权威 queue item。
 2. 一次发送先生成唯一 `clientMessageId`；Mobile 每条消息最多接受 10 张图片，按用户选择顺序逐张执行 begin/chunk/commit，所有图片共用该 ID。begin 同时传递当前会话 metadata 中的 `projectId`、conversation ID、MIME、原始文件名和大小。显示逐文件进度，分块大小为 256 KiB。
 3. 上传失败调用 `attachment.abort` 清理 Desktop 的 `.part` 文件，不提交 Turn；用户重试时重新生成消息 ID并上传整份文件。
 4. response 成功只显示“已提交”；收到 matching turn event/snapshot 后才进入“运行中”。
@@ -160,7 +162,7 @@ V1 只支持图片附件，一条消息最多 10 张；单文件和图片总大�
 | status/list/read/catalog/subscribe | 是，限前台且有退避 | 丢弃旧 response，重新同步 |
 | pair join/auth/Noise handshake | 仅协议允许的全新 attempt/session | 旧 session 全部销毁 |
 | conversation.create | 否 | 结果未知时重新同步项目列表，不自动创建第二个 thread |
-| turn.start/conversation.settings.update/action.resolve/turn.interrupt | 否 | 若返回 `ambiguous_write` 或响应丢失，刷新 snapshot 对账；确认已执行后不再提示失败，也不自动重发 |
+| turn.start/conversation.queue.*/conversation.settings.update/action.resolve/turn.interrupt | 否 | 若返回 `ambiguous_write` 或响应丢失，刷新 snapshot 对账；确认已执行后不再提示失败，也不自动重发 |
 | attachment upload | 不续传旧 upload | 调用 abort 清理 `.part`，丢弃 attachment ID，用户触发整份重试 |
 | push register | 可按更高 generation 重试 | 新 socket auth 后再注册 |
 
@@ -204,6 +206,7 @@ Mobile 获取新 APNs/FCM token 后递增本地 generation，并由 host 直接�
 - 验证上次 Daemon/Agent 恢复、删除后的 fallback、未选中 Daemon status probe、Agent 切换 generation、project 10 条分页、project conversation 15 条分页、recent 20 条和 project/conversation 全集搜索。
 - 弱网 E2E 验证所有写操作不自动重复、断线轮询不会重复拨号，并验证 Relay 429 映射为 `rate_limited` 后按冷却窗口恢复；覆盖 `SessionOpen` route 拒绝、握手超时、旧 session handshake/data 迟到和启动 restore 首次失败后的重试；action 多端 race 正确归类 `already_resolved`。
 - 48 MiB 边界、1 MiB route 分块、取消上传、图片 MIME 和跨 instance attachment 拒绝测试。
+- 运行中输入、queue snapshot 恢复、add/edit/start/delete、当前草稿冲突、图片草稿恢复限制和结果不明对账测试。
 - push cold/background/terminated/token rotation/permission denied 场景，确认点击必先同步且 payload/log 无业务正文。
 
 ## 文档更新触发

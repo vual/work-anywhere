@@ -1131,6 +1131,22 @@ func (i *Instance) CanStartTurn(threadID string) bool {
 	return true
 }
 
+// CanSubmitQueue allows queue changes while a turn is active, but keeps the
+// same transport and blocking-action gate used by other conversation writes.
+func (i *Instance) CanSubmitQueue(threadID string) bool {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.stdin == nil || threadID == "" || i.state == "starting" || i.state == "waiting_initialize" || i.state == "stopped" || i.state == "error" || i.state == "upgrade_pending" {
+		return false
+	}
+	for _, action := range i.actions {
+		if action.ConversationID == "" || action.ConversationID == threadID {
+			return false
+		}
+	}
+	return true
+}
+
 func (i *Instance) updateActivityStateLocked() {
 	if i.state == "starting" || i.state == "waiting_initialize" || i.state == "stopped" || i.state == "error" || i.state == "upgrade_pending" {
 		return

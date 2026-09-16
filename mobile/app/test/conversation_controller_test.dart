@@ -34,6 +34,47 @@ Map<String, dynamic> _item(String id) => {
 };
 
 void main() {
+  test(
+    'conversation snapshot restores the authoritative queued messages',
+    () async {
+      final gateway = _FakeGateway((method, params) async {
+        if (method == 'action.list') return {'result': <dynamic>[]};
+        return {
+          'result': {
+            'conversation': {'id': 't1', 'running': true},
+            'timeline': {'items': const []},
+            'queue': {
+              'items': [
+                {
+                  'id': 'q1',
+                  'clientMessageId': 'client-1',
+                  'text': 'Queued instruction',
+                  'attachmentCount': 2,
+                },
+              ],
+            },
+          },
+        };
+      });
+      final controller = ConversationController(
+        gateway: gateway,
+        agentId: 'a1',
+        threadId: 't1',
+      );
+
+      await controller.load();
+
+      expect(controller.state.queuedSubmissions, hasLength(1));
+      expect(controller.state.queuedSubmissions.single.id, 'q1');
+      expect(
+        controller.state.queuedSubmissions.single.text,
+        'Queued instruction',
+      );
+      expect(controller.state.queuedSubmissions.single.attachmentCount, 2);
+      controller.dispose();
+    },
+  );
+
   test('active event refreshes the conversation without polling', () async {
     final events = StreamController<Map<String, dynamic>>();
     addTearDown(events.close);

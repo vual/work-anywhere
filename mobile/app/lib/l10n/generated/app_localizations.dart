@@ -802,6 +802,60 @@ abstract class AppLocalizations {
   /// **'移除图片：{name}'**
   String removeSelectedImage(String name);
 
+  /// No description provided for @queuedMessage.
+  ///
+  /// In zh, this message translates to:
+  /// **'排队中的消息'**
+  String get queuedMessage;
+
+  /// No description provided for @queuedMessageActions.
+  ///
+  /// In zh, this message translates to:
+  /// **'排队消息操作'**
+  String get queuedMessageActions;
+
+  /// No description provided for @editQueuedMessage.
+  ///
+  /// In zh, this message translates to:
+  /// **'编辑消息'**
+  String get editQueuedMessage;
+
+  /// No description provided for @guideQueuedMessageNow.
+  ///
+  /// In zh, this message translates to:
+  /// **'立即引导'**
+  String get guideQueuedMessageNow;
+
+  /// No description provided for @cancelQueuedMessage.
+  ///
+  /// In zh, this message translates to:
+  /// **'取消发送'**
+  String get cancelQueuedMessage;
+
+  /// No description provided for @queuedAttachmentCount.
+  ///
+  /// In zh, this message translates to:
+  /// **'{count} 个附件'**
+  String queuedAttachmentCount(int count);
+
+  /// No description provided for @queueOperationFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'无法更新排队消息：{error}'**
+  String queueOperationFailed(String error);
+
+  /// No description provided for @currentDraftMustBeEmpty.
+  ///
+  /// In zh, this message translates to:
+  /// **'请先发送或清空当前输入内容，再编辑排队消息'**
+  String get currentDraftMustBeEmpty;
+
+  /// No description provided for @queuedAttachmentsEditUnavailable.
+  ///
+  /// In zh, this message translates to:
+  /// **'这条排队消息包含已无法从手机恢复的附件'**
+  String get queuedAttachmentsEditUnavailable;
+
   /// No description provided for @noTimeline.
   ///
   /// In zh, this message translates to:

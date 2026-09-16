@@ -416,6 +416,39 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get queuedMessage => 'Queued message';
+
+  @override
+  String get queuedMessageActions => 'Queued message actions';
+
+  @override
+  String get editQueuedMessage => 'Edit message';
+
+  @override
+  String get guideQueuedMessageNow => 'Guide now';
+
+  @override
+  String get cancelQueuedMessage => 'Cancel sending';
+
+  @override
+  String queuedAttachmentCount(int count) {
+    return '$count attachment(s)';
+  }
+
+  @override
+  String queueOperationFailed(String error) {
+    return 'Could not update the queued message: $error';
+  }
+
+  @override
+  String get currentDraftMustBeEmpty =>
+      'Send or clear the current draft before editing a queued message';
+
+  @override
+  String get queuedAttachmentsEditUnavailable =>
+      'This queued message contains attachments that are no longer available on this phone';
+
+  @override
   String get noTimeline => 'No content to display';
 
   @override

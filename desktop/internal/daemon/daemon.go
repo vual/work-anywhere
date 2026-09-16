@@ -463,6 +463,32 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 		} else {
 			response.Result = result
 		}
+	case "conversation.queue.add", "conversation.queue.update", "conversation.queue.delete", "conversation.queue.start":
+		if request.Contract != protocol.MobileControlContract {
+			response.Error = &protocol.ControlError{Code: "contract_required", Message: request.Method + " requires mobile-control-v1"}
+			break
+		}
+		instance, params, err := m.mobileControlTarget(request.Params)
+		if err != nil {
+			response.Error = &protocol.ControlError{Code: "invalid_target", Message: err.Error()}
+			break
+		}
+		var result any
+		switch request.Method {
+		case "conversation.queue.add":
+			result, err = m.mobileQueueAdd(instance, params)
+		case "conversation.queue.update":
+			result, err = m.mobileQueueUpdate(instance, params)
+		case "conversation.queue.delete":
+			result, err = m.mobileQueueDelete(instance, params)
+		case "conversation.queue.start":
+			result, err = m.mobileQueueStart(instance, params)
+		}
+		if err != nil {
+			response.Error = mobileControlError(err)
+		} else {
+			response.Result = result
+		}
 	case "conversation.list", "turn.start", "turn.interrupt", "catalog.models":
 		var instance *Instance
 		var params json.RawMessage
@@ -902,7 +928,7 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 }
 
 func isMutatingControlMethod(method string) bool {
-	return method == "conversation.create" || method == "conversation.settings.update" || method == "plan.respond" || strings.HasPrefix(method, "turn.") || method == "action.resolve" || method == "instance.restart" || strings.HasPrefix(method, "attachment.") || strings.HasPrefix(method, "traffic.") || (strings.HasPrefix(method, "remote.") && method != "remote.status" && method != "remote.pair.list")
+	return method == "conversation.create" || method == "conversation.settings.update" || strings.HasPrefix(method, "conversation.queue.") || method == "plan.respond" || strings.HasPrefix(method, "turn.") || method == "action.resolve" || method == "instance.restart" || strings.HasPrefix(method, "attachment.") || strings.HasPrefix(method, "traffic.") || (strings.HasPrefix(method, "remote.") && method != "remote.status" && method != "remote.pair.list")
 }
 
 func (m *Manager) restartErroredInstances() int {

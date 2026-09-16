@@ -46,10 +46,13 @@ class ConversationScreen extends ConsumerStatefulWidget {
 
 class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   final _composer = TextEditingController();
+  final _composerPanelKey = GlobalKey<_ComposerPanelState>();
   final _planRevision = TextEditingController();
   final _scroll = ScrollController();
   ConversationController? _controller;
   final List<XFile> _images = [];
+  final Map<String, List<XFile>> _queuedImages = {};
+  final Set<String> _queueUpdating = {};
   bool _submitting = false;
   bool _selectingImages = false;
   bool _didAutoScrollToBottom = false;
@@ -158,6 +161,14 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
 
   void _changed() {
     if (!mounted) return;
+    final queuedClientIds = _controller?.state.queuedSubmissions
+        .map((item) => item.clientMessageId)
+        .toSet();
+    if (queuedClientIds != null) {
+      _queuedImages.removeWhere(
+        (clientMessageId, _) => !queuedClientIds.contains(clientMessageId),
+      );
+    }
     final authoritative = _controller?.settings;
     if (authoritative != null && !_settingsUpdating) {
       _settings = _normalizeSettings(authoritative);
@@ -1018,7 +1029,10 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       return;
     }
     setState(() => _submitting = true);
-    var turnStartSent = false;
+    var writeSent = false;
+    String? clientMessageId;
+    var queueWrite = false;
+    final selectedImages = List<XFile>.of(_images);
     try {
       if (!await _imagesWithinSizeLimit(_images)) {
         if (mounted) _showComposerMessage(context.l10n.imageSelectionTooLarge);
@@ -1030,29 +1044,48 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         throw CoreFault('invalid_params', 'An agent is required');
       }
       final conversationId = await _ensureConversation();
-      final clientMessageId = '${DateTime.now().microsecondsSinceEpoch}';
+      clientMessageId = '${DateTime.now().microsecondsSinceEpoch}';
       final attachmentIds = await _uploadImages(clientMessageId);
-      turnStartSent = true;
-      await ref.read(coreGatewayProvider).call('turn.start', {
-        'agentId': agentId,
-        'threadId': conversationId,
-        'text': text,
-        if (attachmentIds.isNotEmpty) 'attachmentIds': attachmentIds,
-        'clientMessageId': clientMessageId,
-        if (_settings != null && !_catalogFailed)
-          'settings': _settings!.toJson(),
-        if (_controller != null)
-          'expectedRevision': _controller!.state.revision,
-      }, timeoutMilliseconds: 60000);
+      queueWrite = _controller?.state.metadata?['running'] == true;
+      writeSent = true;
+      final envelope = await ref.read(coreGatewayProvider).call(
+        queueWrite ? 'conversation.queue.add' : 'turn.start',
+        {
+          'agentId': agentId,
+          'threadId': conversationId,
+          'text': text,
+          if (attachmentIds.isNotEmpty) 'attachmentIds': attachmentIds,
+          'clientMessageId': clientMessageId,
+          if (!queueWrite && _settings != null && !_catalogFailed)
+            'settings': _settings!.toJson(),
+          if (!queueWrite && _controller != null)
+            'expectedRevision': _controller!.state.revision,
+        },
+        timeoutMilliseconds: 60000,
+      );
+      if (queueWrite && selectedImages.isNotEmpty) {
+        final result = envelope['result'] as Map<String, dynamic>? ?? const {};
+        final returnedClientId =
+            result['clientMessageId'] as String? ?? clientMessageId;
+        _queuedImages[returnedClientId] = selectedImages;
+      }
       _composer.clear();
       setState(_images.clear);
       await _refresh();
     } catch (error) {
       final ambiguous =
-          turnStartSent &&
+          writeSent &&
           error is CoreFault &&
           (error.code == 'ambiguous_write' || error.code == 'peer_offline');
-      if (ambiguous && await _reconcileAmbiguousTurn()) {
+      final reconciled =
+          ambiguous &&
+          (queueWrite
+              ? await _reconcileAmbiguousQueue(clientMessageId!)
+              : await _reconcileAmbiguousTurn());
+      if (reconciled) {
+        if (queueWrite && selectedImages.isNotEmpty) {
+          _queuedImages[clientMessageId!] = selectedImages;
+        }
         _composer.clear();
         if (mounted) setState(_images.clear);
         return;
@@ -1070,6 +1103,76 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       }
     } finally {
       if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  Future<bool> _reconcileAmbiguousQueue(String clientMessageId) async {
+    final controller = _controller;
+    if (controller == null) return false;
+    await controller.refreshConversation();
+    return controller.state.queuedSubmissions.any(
+      (item) => item.clientMessageId == clientMessageId,
+    );
+  }
+
+  Future<void> _editQueuedSubmission(QueuedSubmission item) async {
+    if (_composer.text.trim().isNotEmpty || _images.isNotEmpty) {
+      _showComposerMessage(context.l10n.currentDraftMustBeEmpty);
+      return;
+    }
+    final cachedImages = _queuedImages[item.clientMessageId];
+    if (item.attachmentCount > 0 && cachedImages == null) {
+      _showComposerMessage(context.l10n.queuedAttachmentsEditUnavailable);
+      return;
+    }
+    final deleted = await _runQueueOperation(item, 'conversation.queue.delete');
+    if (!deleted || !mounted) return;
+    _queuedImages.remove(item.clientMessageId);
+    _composer.text = item.text;
+    _composer.selection = TextSelection.collapsed(offset: item.text.length);
+    setState(() {
+      _images
+        ..clear()
+        ..addAll(cachedImages ?? const []);
+    });
+    _composerPanelKey.currentState?.requestInputFocus();
+  }
+
+  Future<void> _guideQueuedSubmission(QueuedSubmission item) async {
+    final started = await _runQueueOperation(item, 'conversation.queue.start');
+    if (started) _queuedImages.remove(item.clientMessageId);
+  }
+
+  Future<void> _cancelQueuedSubmission(QueuedSubmission item) async {
+    final deleted = await _runQueueOperation(item, 'conversation.queue.delete');
+    if (deleted) _queuedImages.remove(item.clientMessageId);
+  }
+
+  Future<bool> _runQueueOperation(QueuedSubmission item, String method) async {
+    final agentId = _agentId;
+    final threadId = _activeConversationId;
+    if (agentId == null ||
+        threadId == null ||
+        _queueUpdating.contains(item.id)) {
+      return false;
+    }
+    setState(() => _queueUpdating.add(item.id));
+    try {
+      await ref.read(coreGatewayProvider).call(method, {
+        'agentId': agentId,
+        'threadId': threadId,
+        'queuedSubmissionId': item.id,
+      }, timeoutMilliseconds: 60000);
+      await _controller?.refreshConversation();
+      return true;
+    } catch (error) {
+      await _controller?.refreshConversation();
+      if (mounted) {
+        _showComposerMessage(context.l10n.queueOperationFailed('$error'));
+      }
+      return false;
+    } finally {
+      if (mounted) setState(() => _queueUpdating.remove(item.id));
     }
   }
 
@@ -1370,13 +1473,23 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                   onRevise: () => _respondToPlan(planConfirmation, 'revise'),
                   onSkip: () => _skipPlan(planConfirmation),
                 )
-              else
+              else ...[
+                if (state.queuedSubmissions.isNotEmpty)
+                  _QueuedSubmissionList(
+                    items: state.queuedSubmissions,
+                    online: online,
+                    blocked: state.actions.isNotEmpty || _submitting,
+                    updatingIds: _queueUpdating,
+                    onEdit: _editQueuedSubmission,
+                    onGuideNow: _guideQueuedSubmission,
+                    onCancel: _cancelQueuedSubmission,
+                  ),
                 _ComposerPanel(
+                  key: _composerPanelKey,
                   composer: _composer,
                   images: _images,
                   enabled:
                       !_submitting &&
-                      !running &&
                       online &&
                       state.actions.isEmpty &&
                       !_settingsUpdating,
@@ -1397,6 +1510,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                   onSend: _send,
                   onInterrupt: _interrupt,
                 ),
+              ],
             ],
           ),
           if (_showJumpToBottom)
@@ -1561,8 +1675,149 @@ class _PlanConfirmationPanel extends StatelessWidget {
   }
 }
 
+class _QueuedSubmissionList extends StatelessWidget {
+  const _QueuedSubmissionList({
+    required this.items,
+    required this.online,
+    required this.blocked,
+    required this.updatingIds,
+    required this.onEdit,
+    required this.onGuideNow,
+    required this.onCancel,
+  });
+
+  final List<QueuedSubmission> items;
+  final bool online;
+  final bool blocked;
+  final Set<String> updatingIds;
+  final ValueChanged<QueuedSubmission> onEdit;
+  final ValueChanged<QueuedSubmission> onGuideNow;
+  final ValueChanged<QueuedSubmission> onCancel;
+
+  @override
+  Widget build(BuildContext context) => ConstrainedBox(
+    constraints: const BoxConstraints(maxHeight: 176),
+    child: ListView.separated(
+      key: const ValueKey('queued-submission-list'),
+      shrinkWrap: true,
+      reverse: true,
+      padding: const EdgeInsets.fromLTRB(72, 4, 16, 2),
+      itemCount: items.length,
+      separatorBuilder: (_, _) => const SizedBox(height: 6),
+      itemBuilder: (context, index) {
+        final item = items[items.length - 1 - index];
+        final updating = updatingIds.contains(item.id);
+        final menuEnabled = online && !blocked && !updating;
+        final attachmentLabel = item.attachmentCount > 0
+            ? context.l10n.queuedAttachmentCount(item.attachmentCount)
+            : '';
+        return Align(
+          alignment: Alignment.centerRight,
+          child: Material(
+            color: Theme.of(context).colorScheme.surface,
+            elevation: 1,
+            shadowColor: Colors.black26,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+              side: BorderSide(
+                color: Theme.of(context).colorScheme.outlineVariant,
+              ),
+            ),
+            child: Semantics(
+              label: context.l10n.queuedMessage,
+              child: Padding(
+                padding: const EdgeInsets.only(left: 16),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.format_list_bulleted_rounded, size: 18),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        item.text.isNotEmpty ? item.text : attachmentLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (updating)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 15),
+                        child: SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
+                    else
+                      PopupMenuButton<String>(
+                        key: ValueKey('queued-message-menu-${item.id}'),
+                        enabled: menuEnabled,
+                        tooltip: context.l10n.queuedMessageActions,
+                        constraints: const BoxConstraints(minWidth: 220),
+                        onSelected: (value) {
+                          switch (value) {
+                            case 'edit':
+                              onEdit(item);
+                              break;
+                            case 'guide':
+                              onGuideNow(item);
+                              break;
+                            case 'cancel':
+                              onCancel(item);
+                              break;
+                          }
+                        },
+                        itemBuilder: (context) => [
+                          PopupMenuItem(
+                            value: 'edit',
+                            child: ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: const Icon(Icons.edit_outlined),
+                              title: Text(context.l10n.editQueuedMessage),
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'guide',
+                            child: ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: const Icon(
+                                Icons.subdirectory_arrow_left,
+                              ),
+                              title: Text(context.l10n.guideQueuedMessageNow),
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'cancel',
+                            child: ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: Icon(
+                                Icons.delete_outline_rounded,
+                                color: Theme.of(context).colorScheme.error,
+                              ),
+                              title: Text(
+                                context.l10n.cancelQueuedMessage,
+                                style: TextStyle(
+                                  color: Theme.of(context).colorScheme.error,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                        icon: const Icon(Icons.more_horiz_rounded),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    ),
+  );
+}
+
 class _ComposerPanel extends StatefulWidget {
   const _ComposerPanel({
+    super.key,
     required this.composer,
     required this.images,
     required this.enabled,
@@ -1630,6 +1885,10 @@ class _ComposerPanelState extends State<_ComposerPanel> {
     if (mounted) setState(() {});
   }
 
+  void requestInputFocus() {
+    _focusNode.requestFocus();
+  }
+
   Widget _input(BuildContext context, {required bool compact}) => TextField(
     key: _inputKey,
     controller: widget.composer,
@@ -1661,20 +1920,24 @@ class _ComposerPanelState extends State<_ComposerPanel> {
   Widget _actionButton(BuildContext context) => Padding(
     padding: const EdgeInsets.fromLTRB(4, 2, 8, 4),
     child: IconButton.filled(
-      onPressed: widget.online
-          ? (widget.running
-                ? widget.onInterrupt
-                : (widget.canSend ? widget.onSend : null))
+      onPressed: !widget.online || widget.submitting
+          ? null
+          : widget.canSend
+          ? widget.onSend
+          : widget.running
+          ? widget.onInterrupt
           : null,
-      tooltip: widget.running ? context.l10n.stop : context.l10n.send,
+      tooltip: widget.running && !widget.canSend
+          ? context.l10n.stop
+          : context.l10n.send,
       style: IconButton.styleFrom(
         minimumSize: const Size.square(48),
-        backgroundColor: widget.running ? Colors.black : wawBlue,
+        backgroundColor: widget.running && !widget.canSend
+            ? Colors.black
+            : wawBlue,
         foregroundColor: Colors.white,
       ),
-      icon: widget.running
-          ? const Icon(Icons.stop_rounded)
-          : widget.submitting
+      icon: widget.submitting
           ? const SizedBox.square(
               dimension: 18,
               child: CircularProgressIndicator(
@@ -1682,6 +1945,8 @@ class _ComposerPanelState extends State<_ComposerPanel> {
                 color: Colors.white,
               ),
             )
+          : widget.running && !widget.canSend
+          ? const Icon(Icons.stop_rounded)
           : const Icon(Icons.arrow_upward_rounded),
     ),
   );
