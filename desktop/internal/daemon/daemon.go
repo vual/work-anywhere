@@ -447,6 +447,22 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 		} else {
 			response.Result = result
 		}
+	case "conversation.settings.update":
+		if request.Contract != protocol.MobileControlContract {
+			response.Error = &protocol.ControlError{Code: "contract_required", Message: "conversation.settings.update requires mobile-control-v1"}
+			break
+		}
+		instance, params, err := m.mobileControlTarget(request.Params)
+		if err != nil {
+			response.Error = &protocol.ControlError{Code: "invalid_target", Message: err.Error()}
+			break
+		}
+		result, updateErr := m.mobileConversationSettingsUpdate(instance, params)
+		if updateErr != nil {
+			response.Error = mobileControlError(updateErr)
+		} else {
+			response.Result = result
+		}
 	case "conversation.list", "turn.start", "turn.interrupt", "catalog.models":
 		var instance *Instance
 		var params json.RawMessage
@@ -479,7 +495,12 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 			}
 			params, err = m.normalizeTurnStart(instance.descriptor.ID, params)
 			if err != nil {
-				response.Error = &protocol.ControlError{Code: "invalid_turn", Message: err.Error()}
+				var contractErr *mobileContractError
+				if errors.As(err, &contractErr) {
+					response.Error = mobileControlError(err)
+				} else {
+					response.Error = &protocol.ControlError{Code: "invalid_turn", Message: err.Error()}
+				}
 				break
 			}
 		}
@@ -494,6 +515,11 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 			response.Error = &protocol.ControlError{Code: "provider_error", Message: callErr.Error()}
 		} else if request.Contract == protocol.MobileControlContract && request.Method == "conversation.list" {
 			response.Result, callErr = normalizeConversationList(instance.descriptor.ID, result)
+			if callErr != nil {
+				response.Error = &protocol.ControlError{Code: "invalid_provider_response", Message: callErr.Error()}
+			}
+		} else if request.Contract == protocol.MobileControlContract && request.Method == "catalog.models" {
+			response.Result, callErr = normalizeMobileModelCatalog(result)
 			if callErr != nil {
 				response.Error = &protocol.ControlError{Code: "invalid_provider_response", Message: callErr.Error()}
 			}
@@ -552,9 +578,29 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 			response.Error = &protocol.ControlError{Code: "invalid_target", Message: err.Error()}
 			break
 		}
-		result, callErr := instance.Call(m.ctx, "permissionProfile/list", params)
+		modelID := ""
+		providerParams := params
+		if request.Contract == protocol.MobileControlContract {
+			var mobileParams struct {
+				ModelID string `json:"modelId"`
+			}
+			_ = json.Unmarshal(params, &mobileParams)
+			modelID = mobileParams.ModelID
+			providerParams = json.RawMessage(`{}`)
+		}
+		result, callErr := instance.Call(m.ctx, "permissionProfile/list", providerParams)
 		if callErr != nil {
 			response.Error = &protocol.ControlError{Code: "provider_error", Message: callErr.Error()}
+		} else if request.Contract == protocol.MobileControlContract {
+			requirements, requirementsErr := instance.Call(m.ctx, "configRequirements/read", json.RawMessage(`{}`))
+			if requirementsErr != nil {
+				response.Error = &protocol.ControlError{Code: "provider_error", Message: requirementsErr.Error()}
+			} else {
+				response.Result, callErr = normalizeMobilePermissionCatalog(result, requirements, modelID)
+				if callErr != nil {
+					response.Error = &protocol.ControlError{Code: "invalid_provider_response", Message: callErr.Error()}
+				}
+			}
 		} else {
 			response.Result = result
 		}
@@ -856,7 +902,7 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 }
 
 func isMutatingControlMethod(method string) bool {
-	return method == "conversation.create" || method == "plan.respond" || strings.HasPrefix(method, "turn.") || method == "action.resolve" || method == "instance.restart" || strings.HasPrefix(method, "attachment.") || strings.HasPrefix(method, "traffic.") || (strings.HasPrefix(method, "remote.") && method != "remote.status" && method != "remote.pair.list")
+	return method == "conversation.create" || method == "conversation.settings.update" || method == "plan.respond" || strings.HasPrefix(method, "turn.") || method == "action.resolve" || method == "instance.restart" || strings.HasPrefix(method, "attachment.") || strings.HasPrefix(method, "traffic.") || (strings.HasPrefix(method, "remote.") && method != "remote.status" && method != "remote.pair.list")
 }
 
 func (m *Manager) restartErroredInstances() int {
@@ -885,7 +931,25 @@ func (m *Manager) normalizeTurnStart(instanceID string, raw json.RawMessage) (js
 	}
 	threadID, _ := params["threadId"].(string)
 	if threadID == "" {
-		return nil, errors.New("threadId is required")
+		return nil, &mobileContractError{code: "invalid_selection", message: "threadId is required"}
+	}
+	if settingsValue, ok := params["settings"]; ok {
+		encodedSettings, marshalErr := json.Marshal(settingsValue)
+		if marshalErr != nil {
+			return nil, &mobileContractError{code: "invalid_selection", message: "settings are invalid"}
+		}
+		var requested mobileConversationSettings
+		if json.Unmarshal(encodedSettings, &requested) != nil {
+			return nil, &mobileContractError{code: "invalid_selection", message: "settings are invalid"}
+		}
+		current, _ := instance.collaborationSettings(threadID)
+		providerSettings, _, settingsErr := m.providerThreadSettings(instance, requested, current.Model)
+		if settingsErr != nil {
+			return nil, settingsErr
+		}
+		for key, value := range providerSettings {
+			params[key] = value
+		}
 	}
 	if _, ok := params["input"]; !ok {
 		inputs := make([]map[string]any, 0)
@@ -945,7 +1009,7 @@ func (m *Manager) normalizeTurnStart(instanceID string, raw json.RawMessage) (js
 	if messageID, ok := params["clientMessageId"]; ok {
 		params["clientUserMessageId"] = messageID
 	}
-	for _, key := range []string{"text", "attachmentIds", "reasoningEffort", "clientMessageId", "expectedRevision"} {
+	for _, key := range []string{"text", "attachmentIds", "reasoningEffort", "clientMessageId", "expectedRevision", "settings"} {
 		delete(params, key)
 	}
 	return json.Marshal(params)

@@ -25,7 +25,7 @@ daemon 将控制方法路由到实例 supervisor；Codex driver/能力描述用�
 - 系统：`system.status`, `system.ui_url`, `system.control.pause`, `system.control.resume`, `system.shutdown`
 - 实例：`instance.list`, `instance.get`, `instance.restart`
 - Mobile navigation：`agent.list`, `project.list`（要求 `mobile-control-v1`）
-- 会话：`conversation.list`, `conversation.read`, `conversation.timeline.list`, `conversation.content.read`, `conversation.content.resolve`, `conversation.subscribe`, `conversation.create`
+- 会话：`conversation.list`, `conversation.read`, `conversation.timeline.list`, `conversation.content.read`, `conversation.content.resolve`, `conversation.subscribe`, `conversation.create`, `conversation.settings.update`
 - Turn：`turn.start`, `turn.interrupt`, `plan.respond`（后者要求 `mobile-control-v1`）
 - action：`action.list`, `action.resolve`
 - catalog：`catalog.models`, `catalog.permissionProfiles`
@@ -35,9 +35,13 @@ daemon 将控制方法路由到实例 supervisor；Codex driver/能力描述用�
 
 `turn.start` 当前接受 `instanceId`、`threadId`、文字、attachment IDs、model、reasoning effort、approval policy、sandbox policy、client message ID 和 expected revision。附件中的图片被转换为官方 App Server 支持的输入项；调用必须指向已有 thread。忙碌门禁按目标 thread 判断：同一 thread 已有活跃 Turn、等待该 thread 的 action，或 action 无法归属 thread 时拒绝；同一 Agent 的其他 thread 正在运行或等待自身 action 时不阻塞本 thread。实例仍汇总保存全部活跃 Turn，用于状态、升级和强制退出。
 
-Desktop 从 `turn/start` 和 `thread/settings/updated` 投影各 thread 最近确认的 collaboration mode、model 与 reasoning effort，并使用现有加密 settings 存储按 instance/thread 持久化。投影不保存 developer instructions 或计划正文；Turn 的 started/completed/failed/interrupted 通知用于把配置绑定到权威 Turn 并记录其是否成功完成。`ConversationSnapshot.planConfirmation` 仅在最新 Turn 成功完成、以 plan mode 启动、包含完成的 Plan item、当前 thread 空闲且无阻塞 action，并且 model/effort 足以安全启动下一 Turn 时返回 `{planItemId, turnId, revision}`。
+Desktop 从 `turn/start`、`thread/settings/update` 和 `thread/settings/updated` 投影各 thread 最近确认的 collaboration mode、model、reasoning effort 与稳定 permission mode，并使用现有加密 settings 存储按 instance/thread 持久化。Mobile 的 `conversation.read.settings` 固定返回 `mode`、`modelId`、`reasoningEffort` 与 `permissionModeId`。投影不保存 developer instructions 或计划正文；Turn 的 started/completed/failed/interrupted 通知用于把配置绑定到权威 Turn 并记录其是否成功完成。`ConversationSnapshot.planConfirmation` 仅在最新 Turn 成功完成、以 plan mode 启动、包含完成的 Plan item、当前 thread 空闲且无阻塞 action，并且 model/effort 足以安全启动下一 Turn 时返回 `{planItemId, turnId, revision}`。
 
-`plan.respond` 接受 `agentId`、`threadId`、`planItemId`、`expectedRevision`、`decision=implement|revise` 和非空 `text`。它重新读取权威 snapshot 并校验计划身份、revision、空闲/action 状态和配置：`implement` 以相同 model/effort 和 `collaborationMode.mode=default` 启动 Turn，`revise` 以 `mode=plan` 启动 Turn，两者都显式清空 `developer_instructions`。响应为 `{started:true, turnId?}`；`invalid_params`、`conversation_busy`、`revision_conflict`、`stale_plan`、`plan_mode_unavailable` 和 `provider_error` 保持稳定。该方法复用 `turn.start` pairing scope。
+`plan.respond` 接受 `agentId`、`threadId`、`planItemId`、`expectedRevision`、`decision=implement|revise` 和非空 `text`。它重新读取权威 snapshot 并校验计划身份、revision、空闲/action 状态和配置：`implement` 继承 model/effort/permission 并以 `collaborationMode.mode=default` 启动 Turn，`revise` 继承同一组设置并以 `mode=plan` 启动 Turn，两者都显式清空 `developer_instructions`。响应为 `{started:true, turnId?}`；`invalid_params`、`conversation_busy`、`revision_conflict`、`stale_plan`、`plan_mode_unavailable` 和 `provider_error` 保持稳定。该方法复用 `turn.start` pairing scope。
+
+`catalog.models` 在 Mobile contract 下把 App Server catalog 归一化为模型 ID、名称、说明、默认标记、可选择标记、默认思考等级和受支持等级；隐藏的当前模型可以作为不可重新选择的当前值呈现。`catalog.permissionProfiles` 同时读取 permission profile 和配置约束，按可选 `modelId` 应用 auto-review 强制规则，固定输出 `default`、`autoReview`、`readOnly`、`fullAccess` 四项及可用性/原因，Mobile 不解析 provider 原始权限 JSON。四项分别映射到 `:workspace/on-request/user`、`:workspace/on-request/auto_review`、`:read-only/on-request/user` 和 `:danger-full-access/never/user`。
+
+`conversation.settings.update(agentId, threadId, expectedRevision, settings)` 只在目标 thread 空闲且无阻塞 action 时调用官方 `thread/settings/update`；选择必须来自当前 catalog，错误稳定为 `invalid_selection`、`selection_unavailable`、`conversation_busy` 或 `revision_conflict`。只有 App Server 明确成功后才提交加密投影，失败或结果不明不进行自动重试。该方法复用 `turn.start` pairing scope。Mobile `turn.start.settings` 使用同一验证和映射，供尚未创建 thread 的草稿在首次发送时一次提交完整设置。
 
 `attachment.begin` 在 Mobile contract 下接受 `agentId`、`projectId`、`conversationId`、`clientMessageId`、`mimeType`、文件名和大小。一次发送生成的 `clientMessageId` 同时用于 begin 和 `turn.start`。Desktop 先用 `agentId` 解析并绑定上传所属实例，再将 provider 路由字段从下游参数中移除；这样上传完成后只能由同一实例的 `turn.start` 使用。附件内容直接写入项目目录的 `.work-anywhere-remote-attachments/<conversationId>/<clientMessageId>/`，文件名为清理后的原名加唯一 attachment ID 后缀。
 
@@ -69,7 +73,7 @@ Provider capabilities 当前包含 history、live stream、text/image input、ap
 - 本机控制协议使用版本化 envelope，业务错误使用稳定 code/message，而不是泄露内部 panic。
 - Relay 出站连接器通过 scope allowlist 复用本控制语义，不绕过 daemon 直接操作 App Server stdio；当前实现见 [`remote-relay-connector`](../remote-relay-connector/design.md)。
 - 管理页实现 daemon/Relay/配对管理，不实现聊天、Timeline 或 Prompt UI。
-- 本机 control 不直接实现网络身份；网络配对和 Mobile 身份由 outbound Relay connector 负责。push provider 与 action/catalog 的完整稳定 DTO 尚未完成。
+- 本机 control 不直接实现网络身份；网络配对和 Mobile 身份由 outbound Relay connector 负责。push provider 与 action 的完整稳定 DTO 尚未完成。
 
 ## Code ownership
 

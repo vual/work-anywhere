@@ -1,15 +1,18 @@
 package daemon
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -226,7 +229,10 @@ func TestPlanConfirmationRequiresLatestSuccessfulPlanTurn(t *testing.T) {
 }
 
 func TestPlanTurnStartParamsSwitchModeAndDiscardDeveloperInstructions(t *testing.T) {
-	settings := threadCollaborationSettings{Model: "gpt-test", ReasoningEffort: "high"}
+	settings := threadCollaborationSettings{
+		Model: "gpt-test", ReasoningEffort: "high", PermissionModeID: "autoReview",
+		PermissionProfile: ":workspace", ApprovalPolicy: "on-request", ApprovalsReviewer: "auto_review",
+	}
 	for _, test := range []struct {
 		decision string
 		wantMode string
@@ -246,7 +252,121 @@ func TestPlanTurnStartParamsSwitchModeAndDiscardDeveloperInstructions(t *testing
 		if value, exists := modeSettings["developer_instructions"]; !exists || value != nil {
 			t.Fatalf("developer instructions must be explicitly cleared: %#v", modeSettings)
 		}
+		if params["permissions"] != ":workspace" || params["approvalPolicy"] != "on-request" || params["approvalsReviewer"] != "auto_review" {
+			t.Fatalf("permission settings were not carried forward: %#v", params)
+		}
 	}
+}
+
+func TestNormalizeMobileModelCatalog(t *testing.T) {
+	catalog, err := normalizeMobileModelCatalog(json.RawMessage(`{"data":[{"id":"gpt-a","model":"gpt-a","displayName":"GPT A","description":"Primary","hidden":false,"isDefault":true,"defaultReasoningEffort":"high","supportedReasoningEfforts":[{"reasoningEffort":"low","description":"Fast"},{"reasoningEffort":"high","description":"Deep"}]},{"id":"legacy","displayName":"Legacy","hidden":true,"isDefault":false,"defaultReasoningEffort":"low","supportedReasoningEfforts":[{"reasoningEffort":"low"}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Items) != 2 || catalog.Items[0].ID != "gpt-a" || !catalog.Items[0].Default || !catalog.Items[0].Selectable || catalog.Items[1].Selectable {
+		t.Fatalf("unexpected normalized catalog: %#v", catalog)
+	}
+	if len(catalog.Items[0].ReasoningEfforts) != 2 || catalog.Items[0].DefaultReasoningEffort != "high" {
+		t.Fatalf("reasoning efforts were not normalized: %#v", catalog.Items[0])
+	}
+}
+
+func TestNormalizeMobilePermissionCatalogAppliesRequirements(t *testing.T) {
+	profiles := json.RawMessage(`{"data":[{"id":":workspace","allowed":true},{"id":":read-only","allowed":true},{"id":":danger-full-access","allowed":true}]}`)
+	requirements := json.RawMessage(`{"requirements":{"allowedApprovalPolicies":["on-request"],"allowedApprovalsReviewers":["user"],"allowedPermissionProfiles":{":workspace":true,":read-only":true,":danger-full-access":true},"allowedSandboxModes":["workspace-write","read-only"]}}`)
+	catalog, err := normalizeMobilePermissionCatalog(profiles, requirements)
+	if err != nil {
+		t.Fatal(err)
+	}
+	available := map[string]bool{}
+	for _, item := range catalog.Items {
+		available[item.ID] = item.Available
+	}
+	if !available["default"] || !available["readOnly"] || available["autoReview"] || available["fullAccess"] {
+		t.Fatalf("requirements were not applied: %#v", catalog.Items)
+	}
+}
+
+func TestNormalizeMobilePermissionCatalogRequiresAutoReviewForConfiguredModel(t *testing.T) {
+	profiles := json.RawMessage(`{"data":[{"id":":workspace","allowed":true},{"id":":read-only","allowed":true},{"id":":danger-full-access","allowed":true}]}`)
+	requirements := json.RawMessage(`{"requirements":{"allowedApprovalsReviewers":["user","auto_review"],"autoReview":{"requiredOnModels":["model-guarded"]}}}`)
+	catalog, err := normalizeMobilePermissionCatalog(profiles, requirements, "model-guarded")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range catalog.Items {
+		if item.Available != (item.ID == "autoReview") {
+			t.Fatalf("auto review requirement was not enforced: %#v", catalog.Items)
+		}
+	}
+}
+
+func TestMobileConversationSettingsUpdateCommitsOnlyAfterProviderSuccess(t *testing.T) {
+	instance, _, cleanup := testInstance(t)
+	defer cleanup()
+	instance.manager.ctx = context.Background()
+	instance.state = "ready"
+	instance.conversations["thread-1"] = &conversationProjection{ID: "thread-1", Revision: 3}
+	instance.threadSettings["thread-1"] = threadCollaborationSettings{
+		Mode: "default", Model: "model-a", ReasoningEffort: "high", PermissionModeID: "default",
+		PermissionProfile: ":workspace", ApprovalPolicy: "on-request", ApprovalsReviewer: "user",
+	}
+
+	serverReader, serverWriter := io.Pipe()
+	defer serverReader.Close()
+	defer serverWriter.Close()
+	instance.stdin = serverWriter
+	var failUpdate atomic.Bool
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		scanner := bufio.NewScanner(serverReader)
+		for scanner.Scan() {
+			var request struct {
+				ID     string `json:"id"`
+				Method string `json:"method"`
+			}
+			_ = json.Unmarshal(scanner.Bytes(), &request)
+			var response string
+			switch request.Method {
+			case "model/list":
+				response = `{"jsonrpc":"2.0","id":"` + request.ID + `","result":{"data":[{"id":"model-a","displayName":"A","hidden":false,"isDefault":true,"defaultReasoningEffort":"high","supportedReasoningEfforts":[{"reasoningEffort":"high"}]}]}}`
+			case "permissionProfile/list":
+				response = `{"jsonrpc":"2.0","id":"` + request.ID + `","result":{"data":[{"id":":workspace","allowed":true},{"id":":read-only","allowed":true},{"id":":danger-full-access","allowed":true}]}}`
+			case "configRequirements/read":
+				response = `{"jsonrpc":"2.0","id":"` + request.ID + `","result":{"requirements":null}}`
+			case "thread/settings/update":
+				if failUpdate.Load() {
+					response = `{"jsonrpc":"2.0","id":"` + request.ID + `","error":{"code":-32602,"message":"rejected"}}`
+				} else {
+					response = `{"jsonrpc":"2.0","id":"` + request.ID + `","result":{}}`
+				}
+			}
+			instance.handleServerFrame(instance.generation, []byte(response))
+		}
+	}()
+
+	request := json.RawMessage(`{"threadId":"thread-1","expectedRevision":3,"settings":{"mode":"plan","modelId":"model-a","reasoningEffort":"high","permissionModeId":"autoReview"}}`)
+	updated, err := instance.manager.mobileConversationSettingsUpdate(instance, request)
+	if err != nil || updated.Mode != "plan" || updated.PermissionModeID != "autoReview" {
+		t.Fatalf("successful settings update = %#v, err=%v", updated, err)
+	}
+	committed, _ := instance.collaborationSettings("thread-1")
+	if committed.Mode != "plan" || committed.PermissionModeID != "autoReview" {
+		t.Fatalf("successful provider response was not committed: %#v", committed)
+	}
+
+	failUpdate.Store(true)
+	request = json.RawMessage(`{"threadId":"thread-1","expectedRevision":3,"settings":{"mode":"default","modelId":"model-a","reasoningEffort":"high","permissionModeId":"readOnly"}}`)
+	if _, err = instance.manager.mobileConversationSettingsUpdate(instance, request); err == nil {
+		t.Fatal("provider rejection must fail the settings update")
+	}
+	afterFailure, _ := instance.collaborationSettings("thread-1")
+	if afterFailure.Mode != "plan" || afterFailure.PermissionModeID != "autoReview" {
+		t.Fatalf("provider rejection changed the committed projection: %#v", afterFailure)
+	}
+	_ = serverWriter.Close()
+	<-done
 }
 
 func TestPlanRespondReturnsStablePreflightErrors(t *testing.T) {

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -54,6 +55,14 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   bool _followScrollScheduled = false;
   bool _showJumpToBottom = false;
   bool _planSubmitting = false;
+  bool _catalogLoading = false;
+  bool _settingsUpdating = false;
+  bool _catalogFailed = false;
+  bool _lastOnline = true;
+  List<ModelOption> _models = const [];
+  List<PermissionModeOption> _permissionModes = const [];
+  String _permissionCatalogModelId = '';
+  ConversationSettings? _settings;
   bool _planPreferencesLoaded = false;
   final Set<String> _dismissedPlanConfirmations = {};
   final Set<String> _handledPlanConfirmations = {};
@@ -61,10 +70,22 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   late String? _activeConversationId = widget.conversationId;
 
   bool get _isDraft => _activeConversationId == null;
+  bool get _connectionOnline {
+    final controller = _controller;
+    if (controller != null) return controller.state.online;
+    final workspace = ref.read(workspaceProvider).value;
+    final selectedDaemonId = workspace?.selectedDaemonId;
+    final daemon = workspace?.daemons
+        .where((item) => item.id == selectedDaemonId)
+        .firstOrNull;
+    return daemon == null || daemon.phase == ConnectionPhase.online;
+  }
+
   bool get _canSend =>
       !_submitting &&
       !_selectingImages &&
-      (_controller?.state.online ?? true) &&
+      !_settingsUpdating &&
+      _connectionOnline &&
       (_controller?.state.actions.isEmpty ?? true) &&
       (_composer.text.trim().isNotEmpty || _images.isNotEmpty);
 
@@ -83,13 +104,14 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   }
 
   Future<void> _initializeConversation() async {
-    final conversationId = _activeConversationId;
-    if (conversationId == null) return;
     try {
       final workspace = await ref.read(workspaceProvider.future);
       if (!mounted) return;
       final agentId = workspace.selectedAgentId;
       if (agentId == null) return;
+      await _loadCatalogs(agentId);
+      final conversationId = _activeConversationId;
+      if (conversationId == null || !mounted) return;
       final controller = ConversationController(
         gateway: ref.read(coreGatewayProvider),
         agentId: agentId,
@@ -135,6 +157,24 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
 
   void _changed() {
     if (!mounted) return;
+    final authoritative = _controller?.settings;
+    if (authoritative != null && !_settingsUpdating) {
+      _settings = _normalizeSettings(authoritative);
+      if (_settings?.modelId.isNotEmpty == true &&
+          _permissionCatalogModelId != _settings!.modelId &&
+          !_catalogLoading) {
+        final agentId = _agentId;
+        if (agentId != null) {
+          unawaited(_reloadPermissions(agentId, _settings!.modelId));
+        }
+      }
+    }
+    final online = _controller?.state.online ?? true;
+    if (online && !_lastOnline && !_catalogLoading) {
+      final agentId = _agentId;
+      if (agentId != null) unawaited(_loadCatalogs(agentId));
+    }
+    _lastOnline = online;
     final signature = _tailSignature(_controller?.state.items ?? const []);
     final timelineChanged = signature != _timelineTailSignature;
     _timelineTailSignature = signature;
@@ -146,6 +186,113 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
 
     setState(() {});
     if (shouldFollow) _followTimelineToBottom();
+  }
+
+  ConversationSettings? _normalizeSettings(ConversationSettings? value) {
+    if (_models.isEmpty || _permissionModes.isEmpty) return value;
+    var model = _models.where((item) => item.id == value?.modelId).firstOrNull;
+    model ??= _models
+        .where((item) => item.isDefault && item.selectable)
+        .firstOrNull;
+    model ??= _models.where((item) => item.selectable).firstOrNull;
+    if (model == null) return value;
+    var effort = value?.reasoningEffort ?? '';
+    if (!model.reasoningEfforts.any((item) => item.id == effort)) {
+      effort = model.defaultReasoningEffort;
+    }
+    if (effort.isEmpty && model.reasoningEfforts.isNotEmpty) {
+      effort = model.reasoningEfforts.first.id;
+    }
+    final permission = _permissionModes
+        .where((item) => item.id == value?.permissionModeId)
+        .firstOrNull;
+    final fallbackPermission =
+        _permissionModes
+            .where((item) => item.id == 'default' && item.available)
+            .firstOrNull ??
+        _permissionModes.where((item) => item.available).firstOrNull;
+    return ConversationSettings(
+      mode: value?.mode == 'plan' ? 'plan' : 'default',
+      modelId: model.id,
+      reasoningEffort: effort,
+      permissionModeId: (permission ?? fallbackPermission)?.id ?? 'default',
+    );
+  }
+
+  Future<void> _loadCatalogs(String agentId) async {
+    if (_catalogLoading) return;
+    if (mounted) setState(() => _catalogLoading = true);
+    try {
+      final gateway = ref.read(coreGatewayProvider);
+      final modelResponse = await gateway.call('catalog.models', {
+        'agentId': agentId,
+      });
+      final modelResult =
+          modelResponse['result'] as Map<String, dynamic>? ?? const {};
+      final models = (modelResult['items'] as List? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(ModelOption.fromJson)
+          .toList(growable: false);
+      if (models.isEmpty) {
+        throw const FormatException('empty catalog');
+      }
+      final requestedModelId = _controller?.settings?.modelId.isNotEmpty == true
+          ? _controller!.settings!.modelId
+          : (_settings?.modelId.isNotEmpty == true
+                ? _settings!.modelId
+                : (models.where((item) => item.isDefault).firstOrNull ??
+                          models.first)
+                      .id);
+      final permissions = await _fetchPermissions(agentId, requestedModelId);
+      if (permissions.isEmpty) throw const FormatException('empty catalog');
+      if (!mounted) return;
+      setState(() {
+        _models = models;
+        _permissionModes = permissions;
+        _permissionCatalogModelId = requestedModelId;
+        _catalogFailed = false;
+        _settings = _normalizeSettings(_controller?.settings ?? _settings);
+      });
+    } catch (_) {
+      if (mounted) setState(() => _catalogFailed = true);
+    } finally {
+      if (mounted) setState(() => _catalogLoading = false);
+    }
+  }
+
+  Future<List<PermissionModeOption>> _fetchPermissions(
+    String agentId,
+    String modelId,
+  ) async {
+    final response = await ref.read(coreGatewayProvider).call(
+      'catalog.permissionProfiles',
+      {'agentId': agentId, 'modelId': modelId},
+    );
+    final result = response['result'] as Map<String, dynamic>? ?? const {};
+    return (result['items'] as List? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .map(PermissionModeOption.fromJson)
+        .toList(growable: false);
+  }
+
+  Future<void> _reloadPermissions(String agentId, String modelId) async {
+    if (_catalogLoading) return;
+    setState(() => _catalogLoading = true);
+    try {
+      final permissions = await _fetchPermissions(agentId, modelId);
+      if (permissions.isEmpty) throw const FormatException('empty catalog');
+      if (!mounted) return;
+      setState(() {
+        _permissionModes = permissions;
+        _permissionCatalogModelId = modelId;
+        _catalogFailed = false;
+        _settings = _normalizeSettings(_controller?.settings ?? _settings);
+      });
+    } catch (_) {
+      if (mounted) setState(() => _catalogFailed = true);
+    } finally {
+      if (mounted) setState(() => _catalogLoading = false);
+    }
   }
 
   int _tailSignature(List<Map<String, dynamic>> items) {
@@ -509,6 +656,361 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     setState(() => _images.removeWhere((item) => item.path == image.path));
   }
 
+  bool get _canChangeSettings {
+    final state = _controller?.state;
+    return !_submitting &&
+        !_settingsUpdating &&
+        !_catalogLoading &&
+        !_catalogFailed &&
+        _connectionOnline &&
+        (state?.metadata?['running'] != true) &&
+        (state?.actions.isEmpty ?? true) &&
+        !_showPlanConfirmation(state ?? const ConversationState());
+  }
+
+  Future<void> _applySettings(ConversationSettings next) async {
+    if (!_canChangeSettings) return;
+    if (_isDraft) {
+      setState(() => _settings = _normalizeSettings(next));
+      return;
+    }
+    final agentId = _agentId;
+    final threadId = _activeConversationId;
+    final controller = _controller;
+    if (agentId == null || threadId == null || controller == null) return;
+    setState(() => _settingsUpdating = true);
+    try {
+      await ref.read(coreGatewayProvider).call('conversation.settings.update', {
+        'agentId': agentId,
+        'threadId': threadId,
+        'expectedRevision': controller.state.revision,
+        'settings': next.toJson(),
+      });
+      await controller.refreshConversation();
+      if (mounted) {
+        setState(() => _settings = _normalizeSettings(controller.settings));
+      }
+    } catch (error) {
+      await controller.refreshConversation();
+      if (mounted) {
+        setState(() => _settings = _normalizeSettings(controller.settings));
+        _showComposerMessage(
+          context.l10n.settingsUpdateFailed(error.toString()),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _settingsUpdating = false);
+    }
+  }
+
+  Future<void> _showAddMenu() async {
+    if (_submitting || _selectingImages || !_connectionOnline) {
+      return;
+    }
+    if (_catalogFailed || _settings == null) {
+      await _pickImages();
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      constraints: const BoxConstraints(maxWidth: 520),
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                minTileHeight: 56,
+                leading: const Icon(Icons.photo_library_outlined),
+                title: Text(context.l10n.uploadPhoto),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  unawaited(_pickImages());
+                },
+              ),
+              if (_settings != null && !_catalogFailed)
+                ListTile(
+                  minTileHeight: 56,
+                  enabled: _canChangeSettings,
+                  leading: const Icon(Icons.rule_rounded),
+                  title: Text(context.l10n.planMode),
+                  trailing: _settings?.mode == 'plan'
+                      ? const Icon(Icons.check_rounded)
+                      : null,
+                  onTap: !_canChangeSettings
+                      ? null
+                      : () {
+                          Navigator.pop(sheetContext);
+                          final current = _settings;
+                          if (current != null) {
+                            unawaited(
+                              _applySettings(
+                                current.copyWith(
+                                  mode: current.mode == 'plan'
+                                      ? 'default'
+                                      : 'plan',
+                                ),
+                              ),
+                            );
+                          }
+                        },
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _permissionTitle(String id) => switch (id) {
+    'autoReview' => context.l10n.permissionAutoReview,
+    'readOnly' => context.l10n.permissionReadOnly,
+    'fullAccess' => context.l10n.permissionFullAccess,
+    _ => context.l10n.permissionDefault,
+  };
+
+  String _permissionDescription(String id) => switch (id) {
+    'autoReview' => context.l10n.permissionAutoReviewDescription,
+    'readOnly' => context.l10n.permissionReadOnlyDescription,
+    'fullAccess' => context.l10n.permissionFullAccessDescription,
+    _ => context.l10n.permissionDefaultDescription,
+  };
+
+  IconData _permissionIcon(String id) => switch (id) {
+    'autoReview' => Icons.verified_user_outlined,
+    'readOnly' => Icons.lock_outline_rounded,
+    'fullAccess' => Icons.warning_amber_rounded,
+    _ => Icons.pan_tool_alt_outlined,
+  };
+
+  Future<void> _showPermissionMenu() async {
+    if (!_canChangeSettings) return;
+    final selected = await showModalBottomSheet<PermissionModeOption>(
+      context: context,
+      showDragHandle: true,
+      constraints: const BoxConstraints(maxWidth: 520),
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+          children: [
+            for (final mode in _permissionModes)
+              ListTile(
+                minTileHeight: 68,
+                enabled: mode.available,
+                leading: Icon(
+                  _permissionIcon(mode.id),
+                  color: mode.dangerous ? Colors.deepOrange : null,
+                ),
+                title: Text(_permissionTitle(mode.id)),
+                subtitle: Text(
+                  mode.available
+                      ? _permissionDescription(mode.id)
+                      : context.l10n.permissionUnavailable,
+                ),
+                trailing: _settings?.permissionModeId == mode.id
+                    ? const Icon(Icons.check_rounded)
+                    : null,
+                onTap: mode.available
+                    ? () => Navigator.pop(sheetContext, mode)
+                    : null,
+              ),
+          ],
+        ),
+      ),
+    );
+    if (selected == null ||
+        !mounted ||
+        selected.id == _settings?.permissionModeId) {
+      return;
+    }
+    if (selected.dangerous) {
+      final confirmed =
+          await showDialog<bool>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              title: Text(context.l10n.fullAccessTitle),
+              content: Text(context.l10n.fullAccessBody),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: Text(context.l10n.cancel),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(dialogContext, true),
+                  child: Text(context.l10n.confirmFullAccess),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+      if (!confirmed) return;
+    }
+    final current = _settings;
+    if (current != null) {
+      await _applySettings(current.copyWith(permissionModeId: selected.id));
+    }
+  }
+
+  String _effortLabel(String id) => switch (id) {
+    'minimal' || 'low' => context.l10n.settingLow,
+    'medium' => context.l10n.settingMedium,
+    'high' => context.l10n.settingHigh,
+    'xhigh' => context.l10n.settingXhigh,
+    'max' => context.l10n.settingMax,
+    'ultra' => context.l10n.settingUltra,
+    _ => context.l10n.settingSmart,
+  };
+
+  ModelOption? get _selectedModel =>
+      _models.where((item) => item.id == _settings?.modelId).firstOrNull;
+
+  Future<void> _showReasoningMenu() async {
+    if (!_canChangeSettings || _settings == null || _selectedModel == null) {
+      return;
+    }
+    final model = _selectedModel!;
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      constraints: const BoxConstraints(maxWidth: 520),
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+          children: [
+            for (final effort in model.reasoningEfforts)
+              ListTile(
+                minTileHeight: 52,
+                title: Text(_effortLabel(effort.id)),
+                trailing: effort.id == _settings!.reasoningEffort
+                    ? const Icon(Icons.check_rounded)
+                    : null,
+                onTap: () => Navigator.pop(sheetContext, effort.id),
+              ),
+            const Divider(),
+            ListTile(
+              minTileHeight: 64,
+              title: Text(context.l10n.model),
+              subtitle: Text(model.name),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () {
+                Navigator.pop(sheetContext, '__model__');
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || selected == null) return;
+    if (selected == '__model__') {
+      await _showModelMenu();
+    } else if (selected != _settings?.reasoningEffort) {
+      await _applySettings(_settings!.copyWith(reasoningEffort: selected));
+    }
+  }
+
+  Future<void> _showModelMenu({bool showAll = false}) async {
+    final selectable = _models.where((item) => item.selectable).toList();
+    final visible = showAll ? selectable : selectable.take(3).toList();
+    final currentModel = _selectedModel;
+    if (currentModel != null &&
+        !visible.any((item) => item.id == currentModel.id)) {
+      visible.add(currentModel);
+    }
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      constraints: const BoxConstraints(maxWidth: 520),
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text(
+                context.l10n.model,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ),
+            for (final model in visible)
+              ListTile(
+                minTileHeight: 68,
+                enabled: model.selectable,
+                title: Text(model.name),
+                subtitle: model.description.isEmpty
+                    ? null
+                    : Text(
+                        model.description,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                trailing: model.id == _settings?.modelId
+                    ? const Icon(Icons.check_rounded)
+                    : null,
+                onTap: model.selectable
+                    ? () => Navigator.pop(sheetContext, model.id)
+                    : null,
+              ),
+            if (!showAll && selectable.length > 3)
+              ListTile(
+                minTileHeight: 56,
+                title: Text(context.l10n.otherModels),
+                trailing: const Icon(Icons.chevron_right_rounded),
+                onTap: () => Navigator.pop(sheetContext, '__all__'),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || selected == null) return;
+    if (selected == '__all__') {
+      await _showModelMenu(showAll: true);
+      return;
+    }
+    final model = _models.where((item) => item.id == selected).firstOrNull;
+    final current = _settings;
+    if (model == null ||
+        current == null ||
+        !model.selectable ||
+        model.id == current.modelId) {
+      return;
+    }
+    var effort = current.reasoningEffort;
+    if (!model.reasoningEfforts.any((item) => item.id == effort)) {
+      effort = model.defaultReasoningEffort;
+    }
+    if (effort.isEmpty && model.reasoningEfforts.isNotEmpty) {
+      effort = model.reasoningEfforts.first.id;
+    }
+    final agentId = _agentId;
+    if (agentId != null && _permissionCatalogModelId != model.id) {
+      await _reloadPermissions(agentId, model.id);
+      if (!mounted || _catalogFailed) return;
+    }
+    var permissionModeId = current.permissionModeId;
+    if (!_permissionModes.any(
+      (item) => item.id == permissionModeId && item.available,
+    )) {
+      permissionModeId =
+          _permissionModes
+              .where((item) => item.id == 'autoReview' && item.available)
+              .firstOrNull
+              ?.id ??
+          _permissionModes.where((item) => item.available).first.id;
+    }
+    await _applySettings(
+      current.copyWith(
+        modelId: model.id,
+        reasoningEffort: effort,
+        permissionModeId: permissionModeId,
+      ),
+    );
+  }
+
   Future<void> _send() async {
     final text = _composer.text.trim();
     if (_submitting || (text.isEmpty && _images.isEmpty)) {
@@ -536,6 +1038,8 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         'text': text,
         if (attachmentIds.isNotEmpty) 'attachmentIds': attachmentIds,
         'clientMessageId': clientMessageId,
+        if (_settings != null && !_catalogFailed)
+          'settings': _settings!.toJson(),
         if (_controller != null)
           'expectedRevision': _controller!.state.revision,
       }, timeoutMilliseconds: 60000);
@@ -704,7 +1208,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         widget.projectName ?? project?.name ?? context.l10n.project;
     final agentName = agent?.name ?? workspace?.selectedAgent?.name ?? 'Codex';
     final running = conversation?['running'] as bool? ?? false;
-    final online = state.online;
+    final online = _isDraft ? _connectionOnline : state.online;
     final planConfirmation = _showPlanConfirmation(state)
         ? state.planConfirmation
         : null;
@@ -810,6 +1314,20 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                   onRetry: _controller!.refreshActions,
                   onCopyDiagnostics: _copyDiagnostics,
                 ),
+              if (_catalogFailed)
+                Material(
+                  color: Theme.of(context).colorScheme.surfaceContainerHigh,
+                  child: ListTile(
+                    dense: true,
+                    title: Text(context.l10n.settingsUnavailable),
+                    trailing: TextButton(
+                      onPressed: _agentId == null
+                          ? null
+                          : () => _loadCatalogs(_agentId!),
+                      child: Text(context.l10n.retrySettings),
+                    ),
+                  ),
+                ),
               if (state.actions.isNotEmpty)
                 for (final action in state.actions)
                   Padding(
@@ -849,13 +1367,25 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                 _ComposerPanel(
                   composer: _composer,
                   images: _images,
-                  enabled: !_submitting,
+                  enabled:
+                      !_submitting &&
+                      !running &&
+                      online &&
+                      state.actions.isEmpty &&
+                      !_settingsUpdating,
                   selectingImages: _selectingImages,
                   running: running,
                   online: online,
                   canSend: _canSend,
                   submitting: _submitting,
-                  onPickImages: _pickImages,
+                  settings: _settings,
+                  model: _selectedModel,
+                  settingsVisible: !_catalogFailed && _settings != null,
+                  settingsEnabled: _canChangeSettings,
+                  settingsUpdating: _settingsUpdating,
+                  onAdd: _showAddMenu,
+                  onPermissions: _showPermissionMenu,
+                  onModelAndEffort: _showReasoningMenu,
                   onRemoveImage: _removeImage,
                   onSend: _send,
                   onInterrupt: _interrupt,
@@ -1034,7 +1564,14 @@ class _ComposerPanel extends StatelessWidget {
     required this.online,
     required this.canSend,
     required this.submitting,
-    required this.onPickImages,
+    required this.settings,
+    required this.model,
+    required this.settingsVisible,
+    required this.settingsEnabled,
+    required this.settingsUpdating,
+    required this.onAdd,
+    required this.onPermissions,
+    required this.onModelAndEffort,
     required this.onRemoveImage,
     required this.onSend,
     required this.onInterrupt,
@@ -1048,7 +1585,14 @@ class _ComposerPanel extends StatelessWidget {
   final bool online;
   final bool canSend;
   final bool submitting;
-  final VoidCallback onPickImages;
+  final ConversationSettings? settings;
+  final ModelOption? model;
+  final bool settingsVisible;
+  final bool settingsEnabled;
+  final bool settingsUpdating;
+  final VoidCallback onAdd;
+  final VoidCallback onPermissions;
+  final VoidCallback onModelAndEffort;
   final ValueChanged<XFile> onRemoveImage;
   final VoidCallback onSend;
   final VoidCallback onInterrupt;
@@ -1068,41 +1612,72 @@ class _ComposerPanel extends StatelessWidget {
               enabled: enabled,
               onRemove: onRemoveImage,
             ),
+          TextField(
+            controller: composer,
+            enabled: enabled,
+            minLines: 1,
+            maxLines: 5,
+            textAlignVertical: TextAlignVertical.center,
+            style: WawCompact.body,
+            decoration: InputDecoration(
+              filled: false,
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              contentPadding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+              hintText: context.l10n.continueWorking,
+            ),
+          ),
           Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               IconButton(
-                onPressed: enabled && !selectingImages ? onPickImages : null,
-                tooltip: context.l10n.addAttachment,
-                icon: const Icon(Icons.add_rounded, size: 26),
+                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                onPressed: enabled && !selectingImages ? onAdd : null,
+                tooltip: context.l10n.addMenu,
+                icon: const Icon(Icons.add_rounded, size: 28),
               ),
-              Expanded(
-                child: TextField(
-                  controller: composer,
-                  enabled: enabled,
-                  minLines: 1,
-                  maxLines: 5,
-                  textAlignVertical: TextAlignVertical.center,
-                  style: WawCompact.body,
-                  decoration: InputDecoration(
-                    filled: false,
-                    border: InputBorder.none,
-                    enabledBorder: InputBorder.none,
-                    focusedBorder: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(vertical: 12),
-                    hintText: context.l10n.continueWorking,
+              if (settingsVisible)
+                IconButton(
+                  constraints: const BoxConstraints(
+                    minWidth: 48,
+                    minHeight: 48,
+                  ),
+                  onPressed: settingsEnabled ? onPermissions : null,
+                  tooltip: context.l10n.permissions,
+                  icon: const Icon(Icons.pan_tool_alt_outlined, size: 24),
+                ),
+              const Spacer(),
+              if (settingsVisible)
+                Flexible(
+                  child: TextButton(
+                    onPressed: settingsEnabled ? onModelAndEffort : null,
+                    style: TextButton.styleFrom(
+                      minimumSize: const Size(48, 48),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                    child: settingsUpdating
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Text(
+                            '${settings?.mode == 'plan' ? '${context.l10n.plan} · ' : ''}'
+                            '${model?.name ?? ''} · '
+                            '${_composerEffortLabel(context, settings?.reasoningEffort ?? '')}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                   ),
                 ),
-              ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(6, 6, 8, 6),
+                padding: const EdgeInsets.fromLTRB(4, 2, 8, 4),
                 child: IconButton.filled(
                   onPressed: online
                       ? (running ? onInterrupt : (canSend ? onSend : null))
                       : null,
                   tooltip: running ? context.l10n.stop : context.l10n.send,
                   style: IconButton.styleFrom(
-                    minimumSize: const Size.square(44),
+                    minimumSize: const Size.square(48),
                     backgroundColor: running ? Colors.black : wawBlue,
                     foregroundColor: Colors.white,
                   ),
@@ -1126,6 +1701,16 @@ class _ComposerPanel extends StatelessWidget {
     ),
   );
 }
+
+String _composerEffortLabel(BuildContext context, String id) => switch (id) {
+  'minimal' || 'low' => context.l10n.settingLow,
+  'medium' => context.l10n.settingMedium,
+  'high' => context.l10n.settingHigh,
+  'xhigh' => context.l10n.settingXhigh,
+  'max' => context.l10n.settingMax,
+  'ultra' => context.l10n.settingUltra,
+  _ => context.l10n.settingSmart,
+};
 
 class _AttachmentStrip extends StatelessWidget {
   const _AttachmentStrip({

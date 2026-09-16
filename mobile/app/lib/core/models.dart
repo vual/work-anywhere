@@ -86,3 +86,108 @@ class PageResult<T> {
   final List<T> items;
   final String? nextCursor;
 }
+
+class ReasoningEffortOption {
+  const ReasoningEffortOption({required this.id, required this.description});
+  final String id;
+  final String description;
+
+  factory ReasoningEffortOption.fromJson(Map<String, dynamic> json) =>
+      ReasoningEffortOption(
+        id: json['id'] as String,
+        description: json['description'] as String? ?? '',
+      );
+}
+
+class ModelOption {
+  const ModelOption({
+    required this.id,
+    required this.name,
+    required this.description,
+    required this.isDefault,
+    required this.selectable,
+    required this.defaultReasoningEffort,
+    required this.reasoningEfforts,
+  });
+  final String id;
+  final String name;
+  final String description;
+  final bool isDefault;
+  final bool selectable;
+  final String defaultReasoningEffort;
+  final List<ReasoningEffortOption> reasoningEfforts;
+
+  factory ModelOption.fromJson(Map<String, dynamic> json) => ModelOption(
+    id: json['id'] as String,
+    name: json['name'] as String? ?? json['id'] as String,
+    description: json['description'] as String? ?? '',
+    isDefault: json['default'] as bool? ?? false,
+    selectable: json['selectable'] as bool? ?? false,
+    defaultReasoningEffort: json['defaultReasoningEffort'] as String? ?? '',
+    reasoningEfforts: (json['reasoningEfforts'] as List? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .map(ReasoningEffortOption.fromJson)
+        .toList(growable: false),
+  );
+}
+
+class PermissionModeOption {
+  const PermissionModeOption({
+    required this.id,
+    required this.available,
+    required this.reason,
+    required this.dangerous,
+  });
+  final String id;
+  final bool available;
+  final String reason;
+  final bool dangerous;
+
+  factory PermissionModeOption.fromJson(Map<String, dynamic> json) =>
+      PermissionModeOption(
+        id: json['id'] as String,
+        available: json['available'] as bool? ?? false,
+        reason: json['reason'] as String? ?? '',
+        dangerous: json['dangerous'] as bool? ?? false,
+      );
+}
+
+class ConversationSettings {
+  const ConversationSettings({
+    required this.mode,
+    required this.modelId,
+    required this.reasoningEffort,
+    required this.permissionModeId,
+  });
+  final String mode;
+  final String modelId;
+  final String reasoningEffort;
+  final String permissionModeId;
+
+  factory ConversationSettings.fromJson(Map<String, dynamic> json) =>
+      ConversationSettings(
+        mode: json['mode'] as String? ?? 'default',
+        modelId: json['modelId'] as String? ?? '',
+        reasoningEffort: json['reasoningEffort'] as String? ?? '',
+        permissionModeId: json['permissionModeId'] as String? ?? 'default',
+      );
+
+  Map<String, dynamic> toJson() => {
+    'mode': mode,
+    'modelId': modelId,
+    'reasoningEffort': reasoningEffort,
+    'permissionModeId': permissionModeId,
+  };
+
+  ConversationSettings copyWith({
+    String? mode,
+    String? modelId,
+    String? reasoningEffort,
+    String? permissionModeId,
+  }) => ConversationSettings(
+    mode: mode ?? this.mode,
+    modelId: modelId ?? this.modelId,
+    reasoningEffort: reasoningEffort ?? this.reasoningEffort,
+    permissionModeId: permissionModeId ?? this.permissionModeId,
+  );
+}

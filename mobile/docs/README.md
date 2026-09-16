@@ -1,6 +1,6 @@
 # Mobile design documentation
 
-> 状态：Android-first 代码已建立并通过本地 Go/Flutter 测试；真机、iOS、push、安全审查和发布验收仍未完成。文档中的未完成目标不得被表述为当前可用能力。
+> 状态：Android-first 代码已建立并通过本地 Go/Flutter 测试，会话模式、模型、思考等级和执行权限选择已接入 Desktop 权威状态；真机、iOS、push、安全审查和发布验收仍未完成。文档中的未完成目标不得被表述为当前可用能力。
 
 本目录是 Mobile 模块设计的唯一主索引。运行/范围入口见 [`mobile/README.md`](../README.md)，仓库规则见 [`AGENTS.md`](../../AGENTS.md)。
 

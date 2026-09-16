@@ -1,6 +1,6 @@
 # Mobile protocol and synchronization
 
-> 状态：Mobile Go Core 已复用 Relay endpoint 完成 pair/auth/Noise/control 和 Android 安全恢复路径；Desktop 已发布 normalized summary、分页 timeline 与大内容引用，Mobile 会话控制器已支持分页、局部重试和 gap snapshot 恢复。完整 action/catalog DTO、多 pairing reducer和全量真机 E2E 尚未完成。
+> 状态：Mobile Go Core 已复用 Relay endpoint 完成 pair/auth/Noise/control 和 Android 安全恢复路径；Desktop 已发布 normalized summary、分页 timeline、大内容引用和会话 settings/catalog，Mobile 会话控制器已支持分页、局部重试和 gap snapshot 恢复。完整 action DTO、多 pairing reducer 和全量真机 E2E 尚未完成。
 
 ## 目标与范围
 
@@ -23,7 +23,7 @@
 | `status.read` | Daemon/Agent 状态 | `system.status`, `instance.list/get`, `agent.list` |
 | `conversation.read` | 项目/对话列表、搜索、snapshot、增量与大内容读取 | `project.list`, `conversation.list/read/subscribe`, `conversation.timeline.list`, `conversation.content.read/resolve` |
 | `conversation.create` | 首次发送时在当前项目创建 Codex thread | `conversation.create` |
-| `turn.start` | 继续已有 thread或响应已完成计划 | `turn.start`, `plan.respond` |
+| `turn.start` | 继续已有 thread、修改会话设置或响应已完成计划 | `turn.start`, `conversation.settings.update`, `plan.respond` |
 | `turn.interrupt` | 中断活跃 Turn | `turn.interrupt` |
 | `action.read` | 查看待处理 action | `action.list` |
 | `action.resolve` | 回答 approval/question | `action.resolve` |
@@ -109,9 +109,11 @@ App 前台对未选中 Daemon 以有界短连接依次执行 status probe，更�
 
 ### 规范化 DTO 当前边界与发布门槛
 
-`mobile-control-v1` envelope 会回显 contract，未知 contract 返回 `unsupported_contract`。Mobile-facing target 参数统一使用 `agentId`，Desktop 只在 provider 边界内转换为 `instanceId`；附件上传会先绑定该实例，再把 `instanceId` 从 provider 参数中移除。`agent.list`、`project.list`、`conversation.list` 和 conversation timeline 已输出稳定 DTO；project list 不暴露 root，conversation list 不暴露 preview；catalog 与 action 仍有 provider-shaped payload。
+`mobile-control-v1` envelope 会回显 contract，未知 contract 返回 `unsupported_contract`。Mobile-facing target 参数统一使用 `agentId`，Desktop 只在 provider 边界内转换为 `instanceId`；附件上传会先绑定该实例，再把 `instanceId` 从 provider 参数中移除。`agent.list`、`project.list`、`conversation.list`、conversation timeline 与 model/permission catalog 已输出稳定 DTO；project list 不暴露 root，conversation list 不暴露 preview，Mobile 不解析 provider 原始权限结构；action 仍有 provider-shaped payload。
 
-`conversation.read` 组合 metadata-only `thread/read` 与 `thread/items/list(sortDirection=desc)`，默认 20、最大 50。snapshot 包含 metadata、revision、sequence、timeline 和 opaque `nextCursor`。`TimelineItem` 固定为 id、可选 turnId、kind、status 与 blocks，不透传 provider JSON。Plan item 使用单个 `kind=plan` block，daemon 保留原始 Markdown；真正超过 5 个源文件行时普通 Timeline response 只返回前 5 行，并为完整正文返回 `contentRef` 与 `totalBytes`，不生成 title/summary。Plan 和其他大 block 通过 `conversation.content.read` 按 128 KiB 分块读取；引用过期后，Flutter 使用私有的 turnId/itemId/blockIndex 调用 `conversation.content.resolve`，daemon 在该 turn 内分页查找 item 并重新签发引用，找不到时返回 `content_not_found`，不要求刷新或丢弃已加载旧页。
+`conversation.read` 组合 metadata-only `thread/read` 与 `thread/items/list(sortDirection=desc)`，默认 20、最大 50。snapshot 包含 metadata、revision、sequence、timeline、opaque `nextCursor` 和权威 `settings={mode,modelId,reasoningEffort,permissionModeId}`。`TimelineItem` 固定为 id、可选 turnId、kind、status 与 blocks，不透传 provider JSON。Plan item 使用单个 `kind=plan` block，daemon 保留原始 Markdown；真正超过 5 个源文件行时普通 Timeline response 只返回前 5 行，并为完整正文返回 `contentRef` 与 `totalBytes`，不生成 title/summary。Plan 和其他大 block 通过 `conversation.content.read` 按 128 KiB 分块读取；引用过期后，Flutter 使用私有的 turnId/itemId/blockIndex 调用 `conversation.content.resolve`，daemon 在该 turn 内分页查找 item 并重新签发引用，找不到时返回 `content_not_found`，不要求刷新或丢弃已加载旧页。
+
+`catalog.models` 返回模型 ID/名称/说明、default/selectable、默认思考等级与该模型支持的等级；`catalog.permissionProfiles(modelId)` 固定返回 `default`、`autoReview`、`readOnly`、`fullAccess` 及 Desktop 根据 profile catalog、企业配置和该模型 auto-review 要求计算的可用性。更换模型时 Mobile 重新读取权限 catalog，仅保留仍可用的权限，并仅保留新模型仍支持的思考等级，否则分别回落到可用权限和模型默认等级。`conversation.settings.update` 携带最后确认的 revision 和完整 settings，只允许空闲且无阻塞 action 的 thread；明确失败后刷新 snapshot，结果不明不自动重试。尚未创建的草稿只在进程内保存选择，首次 `turn.start` 才提交完整 settings。计划的 revise/implement 继承 permission/model/effort，implement 将 mode 切回 `default`。
 
 `hookPrompt` 不进入 DTO；function/tool、协作、搜索、图片、sleep、review 和 compaction item 只返回单个 `kind=summary` block。该 block 的 `summaryKind` 是原始类型，`summaryValue` 是脱敏、单行且不超过 512 UTF-8 字节的值，`text` 是语言无关 fallback；完整句子和 status 由 Flutter ARB 本地化。summary 不包含 arguments/output/result/error/path/prompt，不生成 `contentRef`；commandExecution 只返回 command block。过滤后可见 item 不足请求数量时 daemon 沿 provider cursor 补读后续页面，最多 8 页。其他单 block 超过 64 KiB 时内联 UTF-8 前 16 KiB，并用 15 分钟滑动过期的 `contentRef` 分块读取。项目下对话列表优先按 `projectId` 查询；Desktop 若发现历史线程项目关联未迁移，会按项目根目录 `cwd` 回退查询。Desktop control response 不超过 512 KiB；页面超预算时以相同 cursor 将 limit 逐次减半。
 
@@ -127,7 +129,7 @@ App 前台对未选中 Daemon 以有界短连接依次执行 status probe，更�
 - `Page<T>`：items、next cursor、has more；project 默认请求 10、项目对话 15、最近对话 20，数量是 client request 而非 server hard limit；
 - 稳定 error code 包含 `payload_too_large`、`response_too_large`、`content_ref_expired`、`content_not_found`、`peer_offline`、`ambiguous_write`、`queue_full`、`request_timeout`，并保留 busy、revision conflict、already resolved 与 forbidden。
 
-Mobile 产品页面只消费稳定 timeline DTO；尚未规范化的 action/catalog 仍按预发布边界处理。
+Mobile 产品页面只消费稳定 timeline 与 catalog/settings DTO；尚未规范化的 action 仍按预发布边界处理。
 
 ## 写操作语义
 
@@ -158,7 +160,7 @@ V1 只支持图片附件，一条消息最多 10 张；单文件和图片总大�
 | status/list/read/catalog/subscribe | 是，限前台且有退避 | 丢弃旧 response，重新同步 |
 | pair join/auth/Noise handshake | 仅协议允许的全新 attempt/session | 旧 session 全部销毁 |
 | conversation.create | 否 | 结果未知时重新同步项目列表，不自动创建第二个 thread |
-| turn.start/action.resolve/turn.interrupt | 否 | 若返回 `ambiguous_write` 或响应丢失，刷新 snapshot 对账；确认已执行后不再提示失败，也不自动重发 |
+| turn.start/conversation.settings.update/action.resolve/turn.interrupt | 否 | 若返回 `ambiguous_write` 或响应丢失，刷新 snapshot 对账；确认已执行后不再提示失败，也不自动重发 |
 | attachment upload | 不续传旧 upload | 调用 abort 清理 `.part`，丢弃 attachment ID，用户触发整份重试 |
 | push register | 可按更高 generation 重试 | 新 socket auth 后再注册 |
 

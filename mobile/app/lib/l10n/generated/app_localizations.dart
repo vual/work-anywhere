@@ -598,6 +598,186 @@ abstract class AppLocalizations {
   /// **'添加附件'**
   String get addAttachment;
 
+  /// No description provided for @addMenu.
+  ///
+  /// In zh, this message translates to:
+  /// **'添加'**
+  String get addMenu;
+
+  /// No description provided for @uploadPhoto.
+  ///
+  /// In zh, this message translates to:
+  /// **'上传照片'**
+  String get uploadPhoto;
+
+  /// No description provided for @planMode.
+  ///
+  /// In zh, this message translates to:
+  /// **'计划模式'**
+  String get planMode;
+
+  /// No description provided for @planModeActive.
+  ///
+  /// In zh, this message translates to:
+  /// **'计划模式已开启'**
+  String get planModeActive;
+
+  /// No description provided for @permissions.
+  ///
+  /// In zh, this message translates to:
+  /// **'权限'**
+  String get permissions;
+
+  /// No description provided for @permissionDefault.
+  ///
+  /// In zh, this message translates to:
+  /// **'默认权限'**
+  String get permissionDefault;
+
+  /// No description provided for @permissionDefaultDescription.
+  ///
+  /// In zh, this message translates to:
+  /// **'在工作区沙盒中运行命令'**
+  String get permissionDefaultDescription;
+
+  /// No description provided for @permissionAutoReview.
+  ///
+  /// In zh, this message translates to:
+  /// **'自动审核'**
+  String get permissionAutoReview;
+
+  /// No description provided for @permissionAutoReviewDescription.
+  ///
+  /// In zh, this message translates to:
+  /// **'自动审查提权请求'**
+  String get permissionAutoReviewDescription;
+
+  /// No description provided for @permissionReadOnly.
+  ///
+  /// In zh, this message translates to:
+  /// **'只读'**
+  String get permissionReadOnly;
+
+  /// No description provided for @permissionReadOnlyDescription.
+  ///
+  /// In zh, this message translates to:
+  /// **'编辑文件或运行命令需要批准'**
+  String get permissionReadOnlyDescription;
+
+  /// No description provided for @permissionFullAccess.
+  ///
+  /// In zh, this message translates to:
+  /// **'完全访问权限'**
+  String get permissionFullAccess;
+
+  /// No description provided for @permissionFullAccessDescription.
+  ///
+  /// In zh, this message translates to:
+  /// **'完全访问计算机（风险较高）'**
+  String get permissionFullAccessDescription;
+
+  /// No description provided for @permissionUnavailable.
+  ///
+  /// In zh, this message translates to:
+  /// **'当前 Desktop 策略不允许使用'**
+  String get permissionUnavailable;
+
+  /// No description provided for @fullAccessTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'允许完全访问计算机？'**
+  String get fullAccessTitle;
+
+  /// No description provided for @fullAccessBody.
+  ///
+  /// In zh, this message translates to:
+  /// **'Codex 将可在工作区沙盒外运行命令且无需批准。仅在你信任此任务时继续。'**
+  String get fullAccessBody;
+
+  /// No description provided for @confirmFullAccess.
+  ///
+  /// In zh, this message translates to:
+  /// **'允许完全访问'**
+  String get confirmFullAccess;
+
+  /// No description provided for @model.
+  ///
+  /// In zh, this message translates to:
+  /// **'模型'**
+  String get model;
+
+  /// No description provided for @otherModels.
+  ///
+  /// In zh, this message translates to:
+  /// **'其他模型'**
+  String get otherModels;
+
+  /// No description provided for @reasoningEffort.
+  ///
+  /// In zh, this message translates to:
+  /// **'思考等级'**
+  String get reasoningEffort;
+
+  /// No description provided for @settingsUnavailable.
+  ///
+  /// In zh, this message translates to:
+  /// **'模型和权限设置加载失败，仍可发送普通文字和图片。'**
+  String get settingsUnavailable;
+
+  /// No description provided for @retrySettings.
+  ///
+  /// In zh, this message translates to:
+  /// **'重试设置'**
+  String get retrySettings;
+
+  /// No description provided for @settingsUpdateFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'无法更新会话设置：{error}'**
+  String settingsUpdateFailed(String error);
+
+  /// No description provided for @settingSmart.
+  ///
+  /// In zh, this message translates to:
+  /// **'智能'**
+  String get settingSmart;
+
+  /// No description provided for @settingLow.
+  ///
+  /// In zh, this message translates to:
+  /// **'低'**
+  String get settingLow;
+
+  /// No description provided for @settingMedium.
+  ///
+  /// In zh, this message translates to:
+  /// **'中'**
+  String get settingMedium;
+
+  /// No description provided for @settingHigh.
+  ///
+  /// In zh, this message translates to:
+  /// **'高'**
+  String get settingHigh;
+
+  /// No description provided for @settingXhigh.
+  ///
+  /// In zh, this message translates to:
+  /// **'极高'**
+  String get settingXhigh;
+
+  /// No description provided for @settingMax.
+  ///
+  /// In zh, this message translates to:
+  /// **'Max'**
+  String get settingMax;
+
+  /// No description provided for @settingUltra.
+  ///
+  /// In zh, this message translates to:
+  /// **'Ultra'**
+  String get settingUltra;
+
   /// No description provided for @imageSelectionLimit.
   ///
   /// In zh, this message translates to:

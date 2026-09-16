@@ -290,6 +290,98 @@ class AppLocalizationsZh extends AppLocalizations {
   String get addAttachment => '添加附件';
 
   @override
+  String get addMenu => '添加';
+
+  @override
+  String get uploadPhoto => '上传照片';
+
+  @override
+  String get planMode => '计划模式';
+
+  @override
+  String get planModeActive => '计划模式已开启';
+
+  @override
+  String get permissions => '权限';
+
+  @override
+  String get permissionDefault => '默认权限';
+
+  @override
+  String get permissionDefaultDescription => '在工作区沙盒中运行命令';
+
+  @override
+  String get permissionAutoReview => '自动审核';
+
+  @override
+  String get permissionAutoReviewDescription => '自动审查提权请求';
+
+  @override
+  String get permissionReadOnly => '只读';
+
+  @override
+  String get permissionReadOnlyDescription => '编辑文件或运行命令需要批准';
+
+  @override
+  String get permissionFullAccess => '完全访问权限';
+
+  @override
+  String get permissionFullAccessDescription => '完全访问计算机（风险较高）';
+
+  @override
+  String get permissionUnavailable => '当前 Desktop 策略不允许使用';
+
+  @override
+  String get fullAccessTitle => '允许完全访问计算机？';
+
+  @override
+  String get fullAccessBody => 'Codex 将可在工作区沙盒外运行命令且无需批准。仅在你信任此任务时继续。';
+
+  @override
+  String get confirmFullAccess => '允许完全访问';
+
+  @override
+  String get model => '模型';
+
+  @override
+  String get otherModels => '其他模型';
+
+  @override
+  String get reasoningEffort => '思考等级';
+
+  @override
+  String get settingsUnavailable => '模型和权限设置加载失败，仍可发送普通文字和图片。';
+
+  @override
+  String get retrySettings => '重试设置';
+
+  @override
+  String settingsUpdateFailed(String error) {
+    return '无法更新会话设置：$error';
+  }
+
+  @override
+  String get settingSmart => '智能';
+
+  @override
+  String get settingLow => '低';
+
+  @override
+  String get settingMedium => '中';
+
+  @override
+  String get settingHigh => '高';
+
+  @override
+  String get settingXhigh => '极高';
+
+  @override
+  String get settingMax => 'Max';
+
+  @override
+  String get settingUltra => 'Ultra';
+
+  @override
   String imageSelectionLimit(int count) {
     return '一次最多选择 $count 张图片';
   }

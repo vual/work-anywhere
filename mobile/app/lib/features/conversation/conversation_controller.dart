@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../../core/core_gateway.dart';
+import '../../core/models.dart';
 
 class ConversationState {
   const ConversationState({
@@ -49,6 +50,7 @@ class ConversationController extends ChangeNotifier {
   final String agentId;
   final String threadId;
   ConversationState _state = const ConversationState();
+  ConversationSettings? _settings;
   bool _disposed = false;
   bool _syncing = false;
   bool _loadedOlder = false;
@@ -62,6 +64,7 @@ class ConversationController extends ChangeNotifier {
   StreamSubscription<Map<String, dynamic>>? _eventSubscription;
 
   ConversationState get state => _state;
+  ConversationSettings? get settings => _settings;
 
   void startLiveSync() {
     _liveTimer?.cancel();
@@ -267,6 +270,10 @@ class ConversationController extends ChangeNotifier {
         'limit': 20,
       });
       final result = envelope['result'] as Map<String, dynamic>? ?? const {};
+      final settings = result['settings'];
+      if (settings is Map<String, dynamic>) {
+        _settings = ConversationSettings.fromJson(settings);
+      }
       final timeline = result['timeline'] as Map<String, dynamic>? ?? const {};
       final newestFirst = _maps(timeline['items']);
       final sequence = (result['sequence'] as num?)?.toInt() ?? 0;

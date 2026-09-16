@@ -37,7 +37,7 @@ func testInstance(t *testing.T) (*Instance, *bufferWriteCloser, func()) {
 func TestCollaborationSettingsPersistWithoutDeveloperInstructions(t *testing.T) {
 	instance, _, cleanup := testInstance(t)
 	defer cleanup()
-	params := json.RawMessage(`{"threadId":"thread-1","collaborationMode":{"mode":"plan","settings":{"model":"gpt-test","reasoning_effort":"high","developer_instructions":"do not persist this secret"}}}`)
+	params := json.RawMessage(`{"threadId":"thread-1","permissions":":workspace","approvalPolicy":"on-request","approvalsReviewer":"auto_review","collaborationMode":{"mode":"plan","settings":{"model":"gpt-test","reasoning_effort":"high","developer_instructions":"do not persist this secret"}}}`)
 	instance.observeOutgoingThreadSettings("turn/start", params)
 	instance.observeNotification("turn/started", json.RawMessage(`{"thread":{"id":"thread-1"},"turn":{"id":"turn-1"}}`))
 	instance.observeNotification("turn/completed", json.RawMessage(`{"threadId":"thread-1","turn":{"id":"turn-1"}}`))
@@ -46,7 +46,7 @@ func TestCollaborationSettingsPersistWithoutDeveloperInstructions(t *testing.T) 
 	instance.threadSettings = make(map[string]threadCollaborationSettings)
 	instance.mu.Unlock()
 	settings, ok := instance.collaborationSettings("thread-1")
-	if !ok || settings.Mode != "plan" || settings.Model != "gpt-test" || settings.ReasoningEffort != "high" || settings.TurnID != "turn-1" || !settings.Succeeded {
+	if !ok || settings.Mode != "plan" || settings.Model != "gpt-test" || settings.ReasoningEffort != "high" || settings.PermissionModeID != "autoReview" || settings.PermissionProfile != ":workspace" || settings.ApprovalPolicy != "on-request" || settings.ApprovalsReviewer != "auto_review" || settings.TurnID != "turn-1" || !settings.Succeeded {
 		t.Fatalf("unexpected restored collaboration settings: %#v, ok=%v", settings, ok)
 	}
 	encoded, err := json.Marshal(settings)
@@ -57,9 +57,9 @@ func TestCollaborationSettingsPersistWithoutDeveloperInstructions(t *testing.T) 
 		t.Fatalf("developer instructions leaked into the persisted projection: %s", encoded)
 	}
 
-	instance.observeThreadSettingsNotification(json.RawMessage(`{"threadId":"thread-1","threadSettings":{"collaborationMode":{"mode":"default","settings":{"model":"gpt-next","reasoning_effort":"medium","developer_instructions":"new secret"}}}}`))
+	instance.observeThreadSettingsNotification(json.RawMessage(`{"threadId":"thread-1","threadSettings":{"permissions":":read-only","approvalPolicy":"on-request","approvalsReviewer":"user","collaborationMode":{"mode":"default","settings":{"model":"gpt-next","reasoning_effort":"medium","developer_instructions":"new secret"}}}}`))
 	updated, ok := instance.collaborationSettings("thread-1")
-	if !ok || updated.Mode != "default" || updated.Model != "gpt-next" || updated.TurnID != "turn-1" || !updated.Succeeded {
+	if !ok || updated.Mode != "default" || updated.Model != "gpt-next" || updated.PermissionModeID != "readOnly" || updated.TurnID != "turn-1" || !updated.Succeeded {
 		t.Fatalf("settings notification did not preserve authoritative turn status: %#v", updated)
 	}
 }

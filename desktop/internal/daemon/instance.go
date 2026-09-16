@@ -49,11 +49,15 @@ type conversationProjection struct {
 }
 
 type threadCollaborationSettings struct {
-	TurnID          string `json:"turnId,omitempty"`
-	Mode            string `json:"mode"`
-	Model           string `json:"model"`
-	ReasoningEffort string `json:"reasoningEffort,omitempty"`
-	Succeeded       bool   `json:"succeeded"`
+	TurnID            string `json:"turnId,omitempty"`
+	Mode              string `json:"mode"`
+	Model             string `json:"model"`
+	ReasoningEffort   string `json:"reasoningEffort,omitempty"`
+	PermissionModeID  string `json:"permissionModeId,omitempty"`
+	PermissionProfile string `json:"permissionProfile,omitempty"`
+	ApprovalPolicy    string `json:"approvalPolicy,omitempty"`
+	ApprovalsReviewer string `json:"approvalsReviewer,omitempty"`
+	Succeeded         bool   `json:"succeeded"`
 }
 
 type initializeWaiter struct {
@@ -181,10 +185,33 @@ func collaborationSettingsFromParams(params json.RawMessage, notification bool) 
 	if model == "" {
 		model, _ = settingsRoot["model"].(string)
 	}
+	permissionProfile, _ := settingsRoot["permissions"].(string)
+	approvalPolicy, _ := settingsRoot["approvalPolicy"].(string)
+	approvalsReviewer, _ := settingsRoot["approvalsReviewer"].(string)
+	permissionModeID := permissionModeID(permissionProfile, approvalPolicy, approvalsReviewer)
 	if threadID == "" || (mode != "plan" && mode != "default") || model == "" {
 		return threadID, threadCollaborationSettings{}, false
 	}
-	return threadID, threadCollaborationSettings{Mode: mode, Model: model, ReasoningEffort: effort}, true
+	return threadID, threadCollaborationSettings{
+		Mode: mode, Model: model, ReasoningEffort: effort,
+		PermissionModeID: permissionModeID, PermissionProfile: permissionProfile,
+		ApprovalPolicy: approvalPolicy, ApprovalsReviewer: approvalsReviewer,
+	}, true
+}
+
+func permissionModeID(profile, approvalPolicy, reviewer string) string {
+	switch {
+	case profile == ":workspace" && approvalPolicy == "on-request" && reviewer == "auto_review":
+		return "autoReview"
+	case profile == ":workspace" && approvalPolicy == "on-request" && reviewer == "user":
+		return "default"
+	case profile == ":read-only" && approvalPolicy == "on-request" && reviewer == "user":
+		return "readOnly"
+	case profile == ":danger-full-access" && approvalPolicy == "never" && reviewer == "user":
+		return "fullAccess"
+	default:
+		return ""
+	}
 }
 
 func (i *Instance) observeOutgoingThreadSettings(method string, params json.RawMessage) {
@@ -1014,6 +1041,18 @@ func (i *Instance) Snapshot() InstanceSnapshot {
 }
 
 func (i *Instance) Call(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
+	return i.call(ctx, method, params, true)
+}
+
+func (i *Instance) callWithoutSettingsProjection(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
+	return i.call(ctx, method, params, false)
+}
+
+func (i *Instance) commitThreadSettings(params json.RawMessage) {
+	i.observeOutgoingThreadSettings("thread/settings/update", params)
+}
+
+func (i *Instance) call(ctx context.Context, method string, params json.RawMessage, observeSettings bool) (json.RawMessage, error) {
 	i.mu.Lock()
 	if i.stdin == nil {
 		i.mu.Unlock()
@@ -1024,7 +1063,9 @@ func (i *Instance) Call(ctx context.Context, method string, params json.RawMessa
 	response := make(chan []byte, 1)
 	i.requests[string(mustJSON(id))] = requestOrigin{method: method, internal: true, response: response}
 	i.mu.Unlock()
-	i.observeOutgoingThreadSettings(method, params)
+	if observeSettings {
+		i.observeOutgoingThreadSettings(method, params)
+	}
 	request := map[string]any{"jsonrpc": "2.0", "id": id, "method": method}
 	if len(bytes.TrimSpace(params)) > 0 && !bytes.Equal(bytes.TrimSpace(params), []byte("null")) {
 		request["params"] = json.RawMessage(params)

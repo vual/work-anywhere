@@ -13,7 +13,7 @@
 - 使用 Flutter/Dart 构建 iOS 与 Android UI，采用 feature-first 目录和 MVVM：View 只渲染 immutable UI state，ViewModel 编排 use case，Repository 按 Daemon、Agent、Project/Bot、Conversation 聚合本地状态与远端 service。
 - App shell 使用单工作台与系统返回栈，不建立底部导航状态；Daemon/Agent 是工作台上下文 selection，项目和会话是可恢复的下钻 route。
 - 路由、依赖注入和状态容器使用锁定版本的 Dart package；具体 package 在 scaffold PoC 后写入 `pubspec.lock`，不得让其类型泄漏到 protocol/repository public interface。
-- Flutter 到 host 的命令边界集中在 `app/pigeons/mobile_core.dart` 生成的 Pigeon typed channel，host 到 Flutter 的主动状态/事件通过专用 EventChannel 传递。业务 widget 不直接依赖 channel 字符串，也不接触 key bytes 或 protobuf frame；当前 timeline summary 已在 Desktop 结构化，完整句子由 Flutter 本地化，action/catalog 仍含受控的 provider-shaped payload。
+- Flutter 到 host 的命令边界集中在 `app/pigeons/mobile_core.dart` 生成的 Pigeon typed channel，host 到 Flutter 的主动状态/事件通过专用 EventChannel 传递。业务 widget 不直接依赖 channel 字符串，也不接触 key bytes 或 protobuf frame；当前 timeline summary 和 model/permission catalog 已在 Desktop 结构化，完整句子由 Flutter 本地化，action 仍含受控的 provider-shaped payload。
 - endpoint core 使用 Go，与 Desktop/Relay 保持同一仓库工具链；一个窄 `mobilecore` facade 通过锁定 commit 的 `gomobile bind` 生成 Android AAR 和 iOS XCFramework。Go 官方工具明确支持这两类 library artifact：[gomobile bind](https://pkg.go.dev/golang.org/x/mobile/cmd/gomobile)。
 - Relay endpoint 的 canonical/protobuf/Noise 代码从 `relay/internal` 重构到可复用但不暴露服务端存储的 `relay/pkg/endpoint`；Mobile core 依赖该 package，Relay schema 仍是唯一所有者。生成脚本比较 schema hash，禁止手工编辑生成物。
 - Android Kotlin host 已使用 Android Keystore 中不可导出的 AES key，以 AES-GCM wrapping 保存 pairing credential；导出和恢复发生在 native host 与 Go Core 之间，private key 不经过 Dart heap。Android manifest 禁止备份 credential ciphertext；Activity 启动时显式清除 `FLAG_SECURE`，并保留在最近任务列表中，因此系统截图、录屏和后台任务缩略图保持可用。Swift Keychain/APNs、Android FCM、应用锁和 app-switcher 敏感内容遮罩尚未实现。
@@ -48,6 +48,7 @@ Go core 向 host 反向请求的窄接口只有：`SecretStore.load/save/delete`
 V1 持久化范围刻意保持最小：
 
 - Android `PairingCredentialSet`：Mobile/pairing/daemon ID、Ed25519/X25519 private keys、双方 capability、scope 与 Relay origin；由 Keystore AES-GCM wrapping 后进入 app-private SharedPreferences。多 pairing record 与 Android backup exclusion 尚未实现。
+- 会话 mode/model/reasoning/permission 设置由 Desktop 按 thread 加密持久化并随 snapshot 返回；Flutter 不写入 SharedPreferences。尚未创建 thread 的设置只存在当前会话页内存，首次 Turn 一次提交。
 - iOS `DeviceIdentityBundle`/`PairingRecord` 的 Keychain `ThisDeviceOnly` 存储尚未实现。
 - 非敏感偏好：主题、通知提示状态、隐私遮罩、`lastSelectedDaemonId`、每个 Daemon 的 `lastSelectedAgentId`。
 

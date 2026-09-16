@@ -1,6 +1,6 @@
 # Mobile delivery plan
 
-> 状态：Phase 0/1 的代码底座、分页 ConversationSnapshot/timeline/content DTO 和部分 Phase 2/3 UI 已落地，但所有 phase 的完整 exit criteria 均未满足；以下阶段仍是当前依赖顺序，不能据此宣称已公开测试或发布。
+> 状态：Phase 0/1 的代码底座、分页 ConversationSnapshot/timeline/content DTO、稳定 model/permission catalog、thread settings 和部分 Phase 2/3 UI 已落地，但所有 phase 的完整 exit criteria 均未满足；以下阶段仍是当前依赖顺序，不能据此宣称已公开测试或发布。
 
 ## 目标与范围
 
@@ -44,7 +44,7 @@
 
 - 实现 action center、approval/question schema、first-valid-wins 和 `already_resolved` 交互。
 - 实现 interrupt 的 pending/terminal 状态。
-- 实现 composer、catalog 选择、`expectedRevision`、`clientMessageId` 和 ambiguous-write reconciliation。
+- 完善 composer；计划模式、模型、思考等级、四种执行权限、`expectedRevision`、`clientMessageId` 和 ambiguous-write reconciliation 已有代码与 Widget 覆盖，仍需 Android 真机链路验收。
 - 实现相册/相机选择、图片预览、begin/chunk/commit、取消与失败重试。
 
 验收：两台 Mobile + Desktop 的 action race、turn.start response 丢失、interrupt/completion race、revision conflict、48 MiB/1 MiB 分块边界和跨 instance attachment 安全测试通过；抓包、Relay DB/log、Mobile log 不出现明文。

@@ -64,6 +64,173 @@ type mobilePage[T any] struct {
 	NextCursor string `json:"nextCursor,omitempty"`
 }
 
+type mobileReasoningEffort struct {
+	ID          string `json:"id"`
+	Description string `json:"description,omitempty"`
+}
+
+type mobileModelCatalogItem struct {
+	ID                     string                  `json:"id"`
+	Name                   string                  `json:"name"`
+	Description            string                  `json:"description,omitempty"`
+	Default                bool                    `json:"default"`
+	Selectable             bool                    `json:"selectable"`
+	DefaultReasoningEffort string                  `json:"defaultReasoningEffort"`
+	ReasoningEfforts       []mobileReasoningEffort `json:"reasoningEfforts"`
+}
+
+type mobileModelCatalog struct {
+	Items []mobileModelCatalogItem `json:"items"`
+}
+
+type mobilePermissionMode struct {
+	ID          string `json:"id"`
+	Available   bool   `json:"available"`
+	Reason      string `json:"reason,omitempty"`
+	Dangerous   bool   `json:"dangerous,omitempty"`
+	Profile     string `json:"-"`
+	SandboxMode string `json:"-"`
+	Approval    string `json:"-"`
+	Reviewer    string `json:"-"`
+}
+
+type mobilePermissionCatalog struct {
+	Items []mobilePermissionMode `json:"items"`
+}
+
+type mobileConversationSettings struct {
+	Mode             string `json:"mode"`
+	ModelID          string `json:"modelId"`
+	ReasoningEffort  string `json:"reasoningEffort"`
+	PermissionModeID string `json:"permissionModeId"`
+}
+
+func normalizeMobileModelCatalog(raw json.RawMessage) (mobileModelCatalog, error) {
+	var source struct {
+		Data []struct {
+			ID                     string `json:"id"`
+			Model                  string `json:"model"`
+			DisplayName            string `json:"displayName"`
+			Description            string `json:"description"`
+			Hidden                 bool   `json:"hidden"`
+			IsDefault              bool   `json:"isDefault"`
+			DefaultReasoningEffort string `json:"defaultReasoningEffort"`
+			Supported              []struct {
+				ReasoningEffort string `json:"reasoningEffort"`
+				Description     string `json:"description"`
+			} `json:"supportedReasoningEfforts"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &source); err != nil {
+		return mobileModelCatalog{}, fmt.Errorf("decode model/list: %w", err)
+	}
+	result := mobileModelCatalog{Items: make([]mobileModelCatalogItem, 0, len(source.Data))}
+	for _, item := range source.Data {
+		id := firstNonempty(item.ID, item.Model)
+		if id == "" {
+			return mobileModelCatalog{}, errors.New("model/list item has no id")
+		}
+		name := firstNonempty(item.DisplayName, item.Model, item.ID)
+		efforts := make([]mobileReasoningEffort, 0, len(item.Supported))
+		for _, effort := range item.Supported {
+			if effort.ReasoningEffort != "" {
+				efforts = append(efforts, mobileReasoningEffort{ID: effort.ReasoningEffort, Description: effort.Description})
+			}
+		}
+		result.Items = append(result.Items, mobileModelCatalogItem{
+			ID: id, Name: name, Description: item.Description, Default: item.IsDefault,
+			Selectable: !item.Hidden, DefaultReasoningEffort: item.DefaultReasoningEffort, ReasoningEfforts: efforts,
+		})
+	}
+	return result, nil
+}
+
+func permissionModeDefinitions() []mobilePermissionMode {
+	return []mobilePermissionMode{
+		{ID: "default", Profile: ":workspace", SandboxMode: "workspace-write", Approval: "on-request", Reviewer: "user"},
+		{ID: "autoReview", Profile: ":workspace", SandboxMode: "workspace-write", Approval: "on-request", Reviewer: "auto_review"},
+		{ID: "readOnly", Profile: ":read-only", SandboxMode: "read-only", Approval: "on-request", Reviewer: "user"},
+		{ID: "fullAccess", Profile: ":danger-full-access", SandboxMode: "danger-full-access", Approval: "never", Reviewer: "user", Dangerous: true},
+	}
+}
+
+func containsString(values []string, wanted string) bool {
+	if values == nil {
+		return true
+	}
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeMobilePermissionCatalog(profileRaw, requirementsRaw json.RawMessage, modelIDs ...string) (mobilePermissionCatalog, error) {
+	var profiles struct {
+		Data []struct {
+			ID      string `json:"id"`
+			Allowed bool   `json:"allowed"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(profileRaw, &profiles); err != nil {
+		return mobilePermissionCatalog{}, fmt.Errorf("decode permissionProfile/list: %w", err)
+	}
+	profileAllowed := make(map[string]bool, len(profiles.Data))
+	for _, profile := range profiles.Data {
+		profileAllowed[profile.ID] = profile.Allowed
+	}
+	var requirements struct {
+		Requirements *struct {
+			AllowedApprovalPolicies   []string        `json:"allowedApprovalPolicies"`
+			AllowedApprovalsReviewers []string        `json:"allowedApprovalsReviewers"`
+			AllowedPermissionProfiles map[string]bool `json:"allowedPermissionProfiles"`
+			AllowedSandboxModes       []string        `json:"allowedSandboxModes"`
+			AutoReview                *struct {
+				RequiredOnModels []string `json:"requiredOnModels"`
+			} `json:"autoReview"`
+		} `json:"requirements"`
+	}
+	if len(requirementsRaw) > 0 && json.Unmarshal(requirementsRaw, &requirements) != nil {
+		return mobilePermissionCatalog{}, errors.New("decode configRequirements/read")
+	}
+	items := permissionModeDefinitions()
+	modelID := ""
+	if len(modelIDs) > 0 {
+		modelID = modelIDs[0]
+	}
+	for index := range items {
+		item := &items[index]
+		available, known := profileAllowed[item.Profile]
+		if !known || !available {
+			item.Available = false
+			item.Reason = "permission_profile_unavailable"
+			continue
+		}
+		item.Available = true
+		if requirements.Requirements == nil {
+			continue
+		}
+		req := requirements.Requirements
+		autoReviewRequired := false
+		if req.AutoReview != nil && req.AutoReview.RequiredOnModels != nil {
+			autoReviewRequired = modelID != "" && containsString(req.AutoReview.RequiredOnModels, modelID)
+		}
+		if autoReviewRequired && item.ID != "autoReview" {
+			item.Available, item.Reason = false, "auto_review_required"
+		} else if req.AllowedPermissionProfiles != nil && !req.AllowedPermissionProfiles[item.Profile] {
+			item.Available, item.Reason = false, "permission_profile_restricted"
+		} else if !containsString(req.AllowedApprovalPolicies, item.Approval) {
+			item.Available, item.Reason = false, "approval_policy_restricted"
+		} else if !containsString(req.AllowedApprovalsReviewers, item.Reviewer) {
+			item.Available, item.Reason = false, "reviewer_restricted"
+		} else if !containsString(req.AllowedSandboxModes, item.SandboxMode) {
+			item.Available, item.Reason = false, "sandbox_mode_restricted"
+		}
+	}
+	return mobilePermissionCatalog{Items: items}, nil
+}
+
 func (m *Manager) mobileAgents() []mobileAgentSummary {
 	snapshots := m.instanceSnapshots()
 	result := make([]mobileAgentSummary, 0, len(snapshots))
@@ -591,10 +758,148 @@ type mobilePlanConfirmation struct {
 
 type mobileConversationSnapshot struct {
 	Conversation     mobileConversationMetadata `json:"conversation"`
+	Settings         mobileConversationSettings `json:"settings"`
 	Revision         int64                      `json:"revision"`
 	Sequence         int64                      `json:"sequence"`
 	Timeline         mobileTimelinePage         `json:"timeline"`
 	PlanConfirmation *mobilePlanConfirmation    `json:"planConfirmation,omitempty"`
+}
+
+func projectedMobileSettings(settings threadCollaborationSettings) mobileConversationSettings {
+	mode := settings.Mode
+	if mode == "" {
+		mode = "default"
+	}
+	permissionMode := settings.PermissionModeID
+	if permissionMode == "" {
+		permissionMode = "default"
+	}
+	return mobileConversationSettings{
+		Mode: mode, ModelID: settings.Model, ReasoningEffort: settings.ReasoningEffort, PermissionModeID: permissionMode,
+	}
+}
+
+func (m *Manager) mobileCatalogModels(instance mobileProviderCaller) (mobileModelCatalog, error) {
+	raw, err := instance.Call(m.ctx, "model/list", json.RawMessage(`{}`))
+	if err != nil {
+		return mobileModelCatalog{}, &mobileContractError{code: "provider_error", message: err.Error()}
+	}
+	catalog, err := normalizeMobileModelCatalog(raw)
+	if err != nil {
+		return mobileModelCatalog{}, &mobileContractError{code: "invalid_provider_response", message: err.Error()}
+	}
+	return catalog, nil
+}
+
+func (m *Manager) mobileCatalogPermissions(instance mobileProviderCaller, modelID string) (mobilePermissionCatalog, error) {
+	profileRaw, err := instance.Call(m.ctx, "permissionProfile/list", json.RawMessage(`{}`))
+	if err != nil {
+		return mobilePermissionCatalog{}, &mobileContractError{code: "provider_error", message: err.Error()}
+	}
+	requirementsRaw, err := instance.Call(m.ctx, "configRequirements/read", json.RawMessage(`{}`))
+	if err != nil {
+		return mobilePermissionCatalog{}, &mobileContractError{code: "provider_error", message: err.Error()}
+	}
+	catalog, err := normalizeMobilePermissionCatalog(profileRaw, requirementsRaw, modelID)
+	if err != nil {
+		return mobilePermissionCatalog{}, &mobileContractError{code: "invalid_provider_response", message: err.Error()}
+	}
+	return catalog, nil
+}
+
+func (m *Manager) providerThreadSettings(instance mobileProviderCaller, requested mobileConversationSettings, currentModelID string) (map[string]any, threadCollaborationSettings, error) {
+	if requested.Mode != "default" && requested.Mode != "plan" {
+		return nil, threadCollaborationSettings{}, &mobileContractError{code: "invalid_selection", message: "mode must be default or plan"}
+	}
+	models, err := m.mobileCatalogModels(instance)
+	if err != nil {
+		return nil, threadCollaborationSettings{}, err
+	}
+	var selectedModel *mobileModelCatalogItem
+	for index := range models.Items {
+		if models.Items[index].ID == requested.ModelID {
+			selectedModel = &models.Items[index]
+			break
+		}
+	}
+	if selectedModel == nil || requested.ModelID == "" {
+		return nil, threadCollaborationSettings{}, &mobileContractError{code: "invalid_selection", message: "unknown model"}
+	}
+	if !selectedModel.Selectable && selectedModel.ID != currentModelID {
+		return nil, threadCollaborationSettings{}, &mobileContractError{code: "selection_unavailable", message: "model is not selectable"}
+	}
+	effortAllowed := false
+	for _, effort := range selectedModel.ReasoningEfforts {
+		if effort.ID == requested.ReasoningEffort {
+			effortAllowed = true
+			break
+		}
+	}
+	if !effortAllowed {
+		return nil, threadCollaborationSettings{}, &mobileContractError{code: "invalid_selection", message: "reasoning effort is not supported by the model"}
+	}
+	permissions, err := m.mobileCatalogPermissions(instance, requested.ModelID)
+	if err != nil {
+		return nil, threadCollaborationSettings{}, err
+	}
+	var selectedPermission *mobilePermissionMode
+	for index := range permissions.Items {
+		if permissions.Items[index].ID == requested.PermissionModeID {
+			selectedPermission = &permissions.Items[index]
+			break
+		}
+	}
+	if selectedPermission == nil {
+		return nil, threadCollaborationSettings{}, &mobileContractError{code: "invalid_selection", message: "unknown permission mode"}
+	}
+	if !selectedPermission.Available {
+		return nil, threadCollaborationSettings{}, &mobileContractError{code: "selection_unavailable", message: firstNonempty(selectedPermission.Reason, "permission mode is unavailable")}
+	}
+	modeSettings := map[string]any{"model": requested.ModelID, "developer_instructions": nil, "reasoning_effort": requested.ReasoningEffort}
+	provider := map[string]any{
+		"collaborationMode": map[string]any{"mode": requested.Mode, "settings": modeSettings},
+		"model":             requested.ModelID, "effort": requested.ReasoningEffort,
+		"permissions": selectedPermission.Profile, "approvalPolicy": selectedPermission.Approval,
+		"approvalsReviewer": selectedPermission.Reviewer,
+	}
+	projected := threadCollaborationSettings{
+		Mode: requested.Mode, Model: requested.ModelID, ReasoningEffort: requested.ReasoningEffort,
+		PermissionModeID: selectedPermission.ID, PermissionProfile: selectedPermission.Profile,
+		ApprovalPolicy: selectedPermission.Approval, ApprovalsReviewer: selectedPermission.Reviewer,
+	}
+	return provider, projected, nil
+}
+
+func (m *Manager) mobileConversationSettingsUpdate(instance *Instance, params json.RawMessage) (mobileConversationSettings, error) {
+	var request struct {
+		ThreadID         string                     `json:"threadId"`
+		ExpectedRevision *int64                     `json:"expectedRevision"`
+		Settings         mobileConversationSettings `json:"settings"`
+	}
+	if json.Unmarshal(params, &request) != nil || request.ThreadID == "" || request.ExpectedRevision == nil {
+		return mobileConversationSettings{}, &mobileContractError{code: "invalid_selection", message: "threadId, expectedRevision and settings are required"}
+	}
+	if !instance.CanStartTurn(request.ThreadID) {
+		return mobileConversationSettings{}, &mobileContractError{code: "conversation_busy", message: "the conversation is active or waiting for an action"}
+	}
+	if err := instance.CheckExpectedRevision(params); err != nil {
+		return mobileConversationSettings{}, &mobileContractError{code: "revision_conflict", message: err.Error()}
+	}
+	current, _ := instance.collaborationSettings(request.ThreadID)
+	provider, projected, err := m.providerThreadSettings(instance, request.Settings, current.Model)
+	if err != nil {
+		return mobileConversationSettings{}, err
+	}
+	provider["threadId"] = request.ThreadID
+	providerParams, _ := json.Marshal(provider)
+	if _, err = instance.callWithoutSettingsProjection(m.ctx, "thread/settings/update", providerParams); err != nil {
+		return mobileConversationSettings{}, &mobileContractError{code: "provider_error", message: err.Error()}
+	}
+	if current.Model != "" {
+		projected.TurnID, projected.Succeeded = current.TurnID, current.Succeeded
+	}
+	instance.commitThreadSettings(providerParams)
+	return projectedMobileSettings(projected), nil
 }
 
 type mobileContentRef struct {
@@ -1114,7 +1419,8 @@ func (m *Manager) conversationSnapshot(instance *Instance, agentID string, param
 		return mobileConversationSnapshot{}, err
 	}
 	revision, sequence := instance.ConversationVersion(request.ThreadID)
-	snapshot := mobileConversationSnapshot{Conversation: metadata, Revision: revision, Sequence: sequence, Timeline: page}
+	settings, _ := instance.collaborationSettings(request.ThreadID)
+	snapshot := mobileConversationSnapshot{Conversation: metadata, Settings: projectedMobileSettings(settings), Revision: revision, Sequence: sequence, Timeline: page}
 	snapshot.PlanConfirmation = planConfirmationFor(instance, request.ThreadID, metadata, page, revision)
 	return snapshot, nil
 }
@@ -1212,11 +1518,21 @@ func planTurnStartParams(threadID, decision, text string, settings threadCollabo
 	if settings.ReasoningEffort != "" {
 		modeSettings["reasoning_effort"] = settings.ReasoningEffort
 	}
-	return map[string]any{
+	params := map[string]any{
 		"threadId":          threadID,
 		"input":             []map[string]any{{"type": "text", "text": text}},
 		"collaborationMode": map[string]any{"mode": mode, "settings": modeSettings},
 	}
+	if settings.PermissionProfile != "" {
+		params["permissions"] = settings.PermissionProfile
+	}
+	if settings.ApprovalPolicy != "" {
+		params["approvalPolicy"] = settings.ApprovalPolicy
+	}
+	if settings.ApprovalsReviewer != "" {
+		params["approvalsReviewer"] = settings.ApprovalsReviewer
+	}
+	return params
 }
 
 func (m *Manager) mobileConversationRead(instance *Instance, params json.RawMessage) (mobileConversationSnapshot, error) {

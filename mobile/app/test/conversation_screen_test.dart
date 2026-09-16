@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:work_anywhere/app/theme.dart';
 import 'package:work_anywhere/core/core_gateway.dart';
 import 'package:work_anywhere/core/models.dart';
 import 'package:work_anywhere/features/conversation/conversation_screen.dart';
@@ -14,21 +15,32 @@ import 'package:work_anywhere/features/workspace/workspace_controller.dart';
 import 'package:work_anywhere/l10n/generated/app_localizations.dart';
 
 class _FakeGateway extends CoreGateway {
-  _FakeGateway(this.handler, {Stream<Map<String, dynamic>>? events})
-    : _events = events ?? const Stream.empty();
+  _FakeGateway(
+    this.handler, {
+    Stream<Map<String, dynamic>>? events,
+    this.catalogs,
+  }) : _events = events ?? const Stream.empty();
   final Future<Map<String, dynamic>> Function(
     String method,
     Map<String, dynamic> params,
   )
   handler;
   final Stream<Map<String, dynamic>> _events;
+  final Map<String, Map<String, dynamic>>? catalogs;
 
   @override
   Future<Map<String, dynamic>> call(
     String method,
     Map<String, dynamic> params, {
     int timeoutMilliseconds = 30000,
-  }) => handler(method, params);
+  }) {
+    if (method.startsWith('catalog.')) {
+      final catalog = catalogs?[method];
+      if (catalog != null) return Future.value({'result': catalog});
+      return Future.error(CoreFault('catalog_unavailable', 'not configured'));
+    }
+    return handler(method, params);
+  }
 
   @override
   Stream<Map<String, dynamic>> get events => _events;
@@ -124,6 +136,44 @@ Map<String, dynamic> _item(String id) => {
       'truncated': false,
     },
   ],
+};
+
+final _settingsCatalogs = <String, Map<String, dynamic>>{
+  'catalog.models': {
+    'items': [
+      {
+        'id': 'model-a',
+        'name': 'GPT A',
+        'description': 'Primary model',
+        'default': true,
+        'selectable': true,
+        'defaultReasoningEffort': 'high',
+        'reasoningEfforts': [
+          {'id': 'low', 'description': 'Fast'},
+          {'id': 'high', 'description': 'Deep'},
+        ],
+      },
+      {
+        'id': 'model-b',
+        'name': 'GPT B',
+        'description': 'Alternative model',
+        'default': false,
+        'selectable': true,
+        'defaultReasoningEffort': 'medium',
+        'reasoningEfforts': [
+          {'id': 'medium', 'description': 'Balanced'},
+        ],
+      },
+    ],
+  },
+  'catalog.permissionProfiles': {
+    'items': [
+      {'id': 'default', 'available': true},
+      {'id': 'autoReview', 'available': true},
+      {'id': 'readOnly', 'available': true},
+      {'id': 'fullAccess', 'available': true, 'dangerous': true},
+    ],
+  },
 };
 
 void main() {
@@ -1024,10 +1074,207 @@ void main() {
     expect(find.byType(TextField), findsOneWidget);
     expect(find.byIcon(Icons.add_rounded), findsOneWidget);
     expect(find.byIcon(Icons.stop_rounded), findsOneWidget);
-    final addButtonRect = tester.getRect(find.byIcon(Icons.add_rounded));
-    final composerTextRect = tester.getRect(find.byType(TextField));
-    expect(addButtonRect.center.dy, closeTo(composerTextRect.center.dy, 1));
+    expect(tester.widget<TextField>(find.byType(TextField)).enabled, isFalse);
     expect(find.text('任务运行中 · 停止'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets(
+    'draft sends selected plan model effort and full access settings',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      Map<String, dynamic>? turnParams;
+      final gateway = _FakeGateway((method, params) async {
+        switch (method) {
+          case 'conversation.create':
+            return {
+              'result': {'id': 'thread-settings'},
+            };
+          case 'turn.start':
+            turnParams = Map<String, dynamic>.from(params);
+            return {'result': const {}};
+          case 'conversation.read':
+            return {
+              'result': {
+                'conversation': {
+                  'id': 'thread-settings',
+                  'title': 'Settings',
+                  'running': true,
+                },
+                'settings': turnParams?['settings'],
+                'timeline': {'items': const []},
+              },
+            };
+          case 'action.list':
+            return {'result': const <dynamic>[]};
+          default:
+            return {'result': const {}};
+        }
+      }, catalogs: _settingsCatalogs);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            coreGatewayProvider.overrideWithValue(gateway),
+            workspaceProvider.overrideWith(_FakeWorkspaceController.new),
+          ],
+          child: MaterialApp(
+            theme: buildLightTheme(),
+            locale: const Locale('zh', 'CN'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: const ConversationScreen(
+              conversationId: null,
+              projectId: 'project-1',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('添加'));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<BottomSheet>(find.byType(BottomSheet)).backgroundColor,
+        Colors.white,
+      );
+      await tester.tap(find.text('计划模式'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('权限'));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<BottomSheet>(find.byType(BottomSheet)).backgroundColor,
+        Colors.white,
+      );
+      expect(find.text('默认权限'), findsOneWidget);
+      expect(find.text('自动审核'), findsOneWidget);
+      expect(find.text('只读'), findsOneWidget);
+      expect(find.text('完全访问权限'), findsOneWidget);
+      await tester.tap(find.text('完全访问权限'));
+      await tester.pumpAndSettle();
+      expect(find.text('允许完全访问计算机？'), findsOneWidget);
+      await tester.tap(find.text('允许完全访问'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.textContaining('GPT A'));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<BottomSheet>(find.byType(BottomSheet)).backgroundColor,
+        Colors.white,
+      );
+      await tester.tap(find.text('模型'));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<BottomSheet>(find.byType(BottomSheet)).backgroundColor,
+        Colors.white,
+      );
+      await tester.tap(find.text('GPT B'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), 'Use selected settings');
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await tester.runAsync(() async {
+        for (var index = 0; index < 50 && turnParams == null; index++) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      });
+      await tester.pump();
+
+      final settings = turnParams?['settings'] as Map<String, dynamic>?;
+      expect(settings, {
+        'mode': 'plan',
+        'modelId': 'model-b',
+        'reasoningEffort': 'medium',
+        'permissionModeId': 'fullAccess',
+      });
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets('existing conversation persists plan mode before updating UI', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    Map<String, dynamic> settings = {
+      'mode': 'default',
+      'modelId': 'model-a',
+      'reasoningEffort': 'high',
+      'permissionModeId': 'default',
+    };
+    Map<String, dynamic>? updateParams;
+    final events = StreamController<Map<String, dynamic>>.broadcast();
+    addTearDown(events.close);
+    final gateway = _FakeGateway(
+      (method, params) async {
+        switch (method) {
+          case 'conversation.read':
+            return {
+              'result': {
+                'conversation': {
+                  'id': 'thread-existing-settings',
+                  'title': 'Settings',
+                  'running': false,
+                },
+                'settings': settings,
+                'revision': 4,
+                'timeline': {'items': const []},
+              },
+            };
+          case 'conversation.settings.update':
+            updateParams = Map<String, dynamic>.from(params);
+            settings = Map<String, dynamic>.from(
+              params['settings'] as Map<String, dynamic>,
+            );
+            return {'result': settings};
+          case 'action.list':
+            return {'result': const <dynamic>[]};
+          case 'conversation.subscribe':
+            return {'result': const {}};
+          default:
+            return {'result': const {}};
+        }
+      },
+      catalogs: _settingsCatalogs,
+      events: events.stream,
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          coreGatewayProvider.overrideWithValue(gateway),
+          workspaceProvider.overrideWith(_FakeWorkspaceController.new),
+        ],
+        child: const MaterialApp(
+          locale: Locale('zh', 'CN'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: ConversationScreen(conversationId: 'thread-existing-settings'),
+        ),
+      ),
+    );
+    for (var index = 0; index < 8; index++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+
+    await tester.tap(find.byTooltip('添加'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('计划模式'));
+    await tester.runAsync(() async {
+      for (var index = 0; index < 50 && updateParams == null; index++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+    });
+    await tester.pump();
+
+    expect(updateParams?['threadId'], 'thread-existing-settings');
+    expect(updateParams?['expectedRevision'], 4);
+    expect(
+      (updateParams?['settings'] as Map<String, dynamic>?)?['mode'],
+      'plan',
+    );
+    expect(find.textContaining('计划 · GPT A'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
 
@@ -1065,9 +1312,9 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byTooltip('添加附件'));
+    await tester.tap(find.byTooltip('添加'));
     await _finishFileIo(tester);
-    await tester.tap(find.byTooltip('添加附件'));
+    await tester.tap(find.byTooltip('添加'));
     await _finishFileIo(tester);
 
     expect(picker.requestedLimits, [10, 8]);
@@ -1077,7 +1324,7 @@ void main() {
       find.descendant(of: strip, matching: find.byType(Image)),
       findsAtLeastNWidgets(4),
     );
-    await tester.tap(find.byTooltip('添加附件'));
+    await tester.tap(find.byTooltip('添加'));
     await tester.pump();
     expect(find.text('一次最多选择 10 张图片'), findsOneWidget);
     expect(picker.requestedLimits, [10, 8]);
@@ -1168,7 +1415,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byTooltip('添加附件'));
+    await tester.tap(find.byTooltip('添加'));
     await _finishFileIo(tester);
     await tester.enterText(find.byType(TextField), 'Keep this draft');
     await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
@@ -1263,7 +1510,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byTooltip('添加附件'));
+    await tester.tap(find.byTooltip('添加'));
     await _finishFileIo(tester);
     await tester.enterText(find.byType(TextField), 'Analyze these screenshots');
     await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
@@ -1332,7 +1579,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byTooltip('添加附件'));
+    await tester.tap(find.byTooltip('添加'));
     await _finishFileIo(tester);
 
     expect(find.text('单张图片和图片总大小均不能超过 48 MiB'), findsOneWidget);

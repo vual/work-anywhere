@@ -298,6 +298,105 @@ class AppLocalizationsEn extends AppLocalizations {
   String get addAttachment => 'Add attachment';
 
   @override
+  String get addMenu => 'Add';
+
+  @override
+  String get uploadPhoto => 'Upload photo';
+
+  @override
+  String get planMode => 'Plan mode';
+
+  @override
+  String get planModeActive => 'Plan mode on';
+
+  @override
+  String get permissions => 'Permissions';
+
+  @override
+  String get permissionDefault => 'Default permissions';
+
+  @override
+  String get permissionDefaultDescription =>
+      'Run commands in the workspace sandbox';
+
+  @override
+  String get permissionAutoReview => 'Auto review';
+
+  @override
+  String get permissionAutoReviewDescription =>
+      'Automatically review elevation requests';
+
+  @override
+  String get permissionReadOnly => 'Read only';
+
+  @override
+  String get permissionReadOnlyDescription =>
+      'File edits and commands require approval';
+
+  @override
+  String get permissionFullAccess => 'Full access';
+
+  @override
+  String get permissionFullAccessDescription =>
+      'Full access to this computer (higher risk)';
+
+  @override
+  String get permissionUnavailable =>
+      'Unavailable under the current Desktop policy';
+
+  @override
+  String get fullAccessTitle => 'Allow full computer access?';
+
+  @override
+  String get fullAccessBody =>
+      'This lets Codex run commands without approval outside the workspace sandbox. Only continue if you trust this task.';
+
+  @override
+  String get confirmFullAccess => 'Allow full access';
+
+  @override
+  String get model => 'Model';
+
+  @override
+  String get otherModels => 'Other models';
+
+  @override
+  String get reasoningEffort => 'Thinking level';
+
+  @override
+  String get settingsUnavailable =>
+      'Model and permission settings could not be loaded. Basic sending is still available.';
+
+  @override
+  String get retrySettings => 'Retry settings';
+
+  @override
+  String settingsUpdateFailed(String error) {
+    return 'Could not update conversation settings: $error';
+  }
+
+  @override
+  String get settingSmart => 'Smart';
+
+  @override
+  String get settingLow => 'Low';
+
+  @override
+  String get settingMedium => 'Medium';
+
+  @override
+  String get settingHigh => 'High';
+
+  @override
+  String get settingXhigh => 'Extra high';
+
+  @override
+  String get settingMax => 'Max';
+
+  @override
+  String get settingUltra => 'Ultra';
+
+  @override
   String imageSelectionLimit(int count) {
     return 'Select up to $count images per message';
   }

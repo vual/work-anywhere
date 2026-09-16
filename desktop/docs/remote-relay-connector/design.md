@@ -42,14 +42,14 @@ Desktop 解密并验证 desktop-control-json-v1 后，仅允许：
 - system.status, instance.list/get
 - agent.list, project.list
 - conversation.list/read/timeline.list/content.read/subscribe/create
-- turn.start/interrupt
+- turn.start/interrupt、plan.respond、conversation.settings.update
 - action.list/resolve
 - catalog.models/permissionProfiles
 - attachment.begin/chunk/commit/abort
 
 每个方法映射到 pairing scope，再调用与本机 CLI 相同的 daemon manager。未知方法、system.shutdown、traffic、UI、install/uninstall 和 force-stop fail closed。system.status 响应会移除 remote 字段，避免向 Mobile 回显其他 pairing metadata。
 
-现有 Desktop 不变量仍由 manager/supervisor 执行：目标 thread idle 才开始新 Turn、clientMessageId/expectedRevision、action first-valid-wins、App Server/session 权威等。同一 Agent 的其他 thread 活跃时仍可向空闲 thread 开始 Turn。Relay ACK 不代表业务完成。Mobile 时间线响应在加密前已受 512 KiB 上限保护，从而为 Relay 的 1 MiB ciphertext 上限保留余量。
+现有 Desktop 不变量仍由 manager/supervisor 执行：目标 thread idle 才开始新 Turn 或修改设置、clientMessageId/expectedRevision、action first-valid-wins、App Server/session 权威等。`conversation.settings.update` 与 `plan.respond` 都复用 `turn.start` scope。同一 Agent 的其他 thread 活跃时仍可向空闲 thread 开始 Turn。Relay ACK 不代表业务完成。Mobile 时间线响应在加密前已受 512 KiB 上限保护，从而为 Relay 的 1 MiB ciphertext 上限保留余量。
 
 ## Events, push, and reconnect
 

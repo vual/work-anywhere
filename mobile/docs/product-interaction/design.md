@@ -159,7 +159,11 @@ Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项�
 
 ### Composer
 
-仅当 `online + idle + turn.start scope + no blocking action` 时可发送；Desktop 的 idle 判定只针对当前 thread，同一 Agent 的其他 thread 运行中不应禁用当前会话。Composer 是 SafeArea 内单个悬浮圆角容器，整合附件、输入框和发送/停止按钮；附件加号、输入文字和发送按钮在同一行垂直居中。相册一次或分次最多选择 10 张图片，按选择顺序去重并追加；已选图片在输入框内部以单行缩略图展示，每张可单独移除，超出屏幕宽度后横向滑动。没有文字且没有附件时发送按钮禁用，输入文字或选中附件后启用。
+仅当 `online + idle + turn.start scope + no blocking action + no plan confirmation + no settings update` 时可发送或修改会话设置；Desktop 的 idle 判定只针对当前 thread，同一 Agent 的其他 thread 运行中不应禁用当前会话。Composer 是 SafeArea 内单个悬浮圆角容器：输入框在上方，底行依次为加号、手掌权限、右对齐的“模型简称 · 思考等级”和发送/停止按钮，所有触控目标至少 48dp。相册一次或分次最多选择 10 张图片，按选择顺序去重并追加；已选图片在输入框内部以单行缩略图展示，每张可单独移除，超出屏幕宽度后横向滑动。没有文字且没有附件时发送按钮禁用，输入文字或选中附件后启用。
+
+加号打开窄屏自适应 bottom sheet，包含“上传照片”和“计划模式”；计划模式选中时显示 check，Composer 的紧凑状态同时带“计划”标识。手掌按钮打开四种稳定权限：默认权限、自动审核、只读、完全访问权限。Desktop 策略不允许的项禁用并显示原因；完全访问权限选择后必须二次确认风险。点击模型/等级状态先打开所选模型支持的思考等级列表，“模型”行进入带说明和选中标记的模型列表；前三个可选模型优先展示，其余从“其他模型”进入。更换模型时保留仍受支持的等级，否则回落到模型默认等级；已废弃但当前 thread 正在使用的模型只作为不可重新选择的当前值显示。
+
+设置按 thread 持续，已有 thread 每次修改调用 `conversation.settings.update`，成功后刷新 snapshot 确认；草稿只在当前进程内保存，首次发送随 `turn.start` 一次提交。离线、运行中、等待 action、计划确认面板显示中或设置写入中时禁用设置和发送。恢复连接后重新读取 catalog 与 snapshot。catalog 缺少权限或加载失败时隐藏模型/权限/计划入口，显示可重试提示，但保留文字和图片发送；加号在该降级状态直接进入图片选择。弹层允许内容滚动并限制最大宽度，以适配窄屏和 200% 字体。不展示 provider 插件列表或速度选择。
 
 ### 计划确认
 
@@ -167,7 +171,7 @@ Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项�
 
 跳过标识以 `daemonId + threadId + planItemId` 写入本地偏好，只保存标识符，不保存计划正文或修改意见。同一 Plan item 在刷新、重连和重新进入时不再弹出，新 Plan item 仍会触发。Action 始终优先；Action 解决后重新同步决定是否显示。Android 返回键先由系统关闭键盘，不把返回解释成跳过。
 
-- running：保留文本输入框和附件添加入口，仅将右侧发送圆按钮切换为圆形“停止”按钮；若 Provider 支持 steer 且 Desktop 将来开放，再另行设计，不把输入内容默认为排队。
+- running：保留 Composer 外形并将发送圆按钮切换为圆形“停止”按钮，输入、附件和设置入口禁用；若 Provider 支持 steer 且 Desktop 将来开放，再另行设计，不把输入内容默认为排队。
 - awaiting action：composer 收起，突出“先处理待办”。
 - offline/syncing/revision conflict：保留草稿于当前进程内，发送按钮禁用并给出原因。
 - text + image：发送前显示缩略图和移除入口；单张与整条消息的图片总大小均不得超过 48 MiB。上传阶段锁定附件编辑并按选择顺序上传，任一图片失败则不提交 Turn，保留整条草稿供用户处理或重试。

@@ -70,6 +70,9 @@ ThemeData buildDarkTheme() => _theme(
 );
 
 ThemeData _theme(Brightness brightness, Color surface, Color ink, Color soft) {
+  final floatingSurface = brightness == Brightness.dark
+      ? const Color(0xFF202124)
+      : Colors.white;
   final scheme = ColorScheme.fromSeed(
     seedColor: wawBlue,
     brightness: brightness,
@@ -104,8 +107,13 @@ ThemeData _theme(Brightness brightness, Color surface, Color ink, Color soft) {
       contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
     ),
     bottomSheetTheme: BottomSheetThemeData(
-      backgroundColor: Colors.transparent,
+      backgroundColor: floatingSurface,
+      modalBackgroundColor: floatingSurface,
       surfaceTintColor: Colors.transparent,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      clipBehavior: Clip.antiAlias,
     ),
   );
 }
