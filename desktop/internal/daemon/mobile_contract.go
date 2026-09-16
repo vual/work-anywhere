@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -138,14 +139,22 @@ type mobileProjectCursor struct {
 }
 
 type mobileProviderProject struct {
-	ID   string
-	Name string
+	ID    string
+	Name  string
+	Roots []string
+}
+
+type mobileProviderEnvironment struct {
+	CWD                   string   `json:"cwd"`
+	RuntimeWorkspaceRoots []string `json:"runtimeWorkspaceRoots"`
 }
 
 type mobileProviderConversation struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"projectId"`
-	UpdatedAt int64  `json:"updatedAt"`
+	ID           string                      `json:"id"`
+	ProjectID    string                      `json:"projectId"`
+	CWD          string                      `json:"cwd"`
+	Environments []mobileProviderEnvironment `json:"environments"`
+	UpdatedAt    int64                       `json:"updatedAt"`
 }
 
 // mobileProjectList derives project recency from the latest conversation rather
@@ -180,13 +189,21 @@ func (m *Manager) mobileProjectListWithCaller(instance *Instance, caller mobileP
 		return mobilePage[mobileProjectSummary]{}, err
 	}
 
+	projectIDs := make(map[string]struct{}, len(projects))
+	for _, project := range projects {
+		projectIDs[project.ID] = struct{}{}
+	}
 	latestByProject := make(map[string]int64, len(projects))
 	for _, conversation := range conversations {
-		if conversation.ProjectID == "" {
+		projectID := conversation.ProjectID
+		if _, exists := projectIDs[projectID]; !exists {
+			projectID = mobileConversationProjectID(conversation, projects)
+		}
+		if projectID == "" {
 			continue
 		}
-		if latest, exists := latestByProject[conversation.ProjectID]; !exists || conversation.UpdatedAt > latest {
-			latestByProject[conversation.ProjectID] = conversation.UpdatedAt
+		if latest, exists := latestByProject[projectID]; !exists || conversation.UpdatedAt > latest {
+			latestByProject[projectID] = conversation.UpdatedAt
 		}
 	}
 
@@ -249,8 +266,11 @@ func fetchMobileProjects(ctx context.Context, instance mobileProviderCaller) ([]
 		}
 		var response struct {
 			Data []struct {
-				ID   string `json:"id"`
-				Name string `json:"name"`
+				ID    string `json:"id"`
+				Name  string `json:"name"`
+				Roots []struct {
+					Path string `json:"path"`
+				} `json:"roots"`
 			} `json:"data"`
 			NextCursor *string `json:"nextCursor"`
 		}
@@ -261,7 +281,13 @@ func fetchMobileProjects(ctx context.Context, instance mobileProviderCaller) ([]
 			if item.ID == "" {
 				return nil, errors.New("project/list item has no id")
 			}
-			projects = append(projects, mobileProviderProject{ID: item.ID, Name: item.Name})
+			roots := make([]string, 0, len(item.Roots))
+			for _, root := range item.Roots {
+				if strings.TrimSpace(root.Path) != "" {
+					roots = append(roots, root.Path)
+				}
+			}
+			projects = append(projects, mobileProviderProject{ID: item.ID, Name: item.Name, Roots: roots})
 		}
 		if response.NextCursor == nil || *response.NextCursor == "" {
 			return projects, nil
@@ -314,6 +340,65 @@ func fetchMobileProjectConversations(ctx context.Context, instance mobileProvide
 		seenCursors[cursor] = struct{}{}
 	}
 	return nil, errors.New("thread/list exceeded pagination limit")
+}
+
+func mobileConversationProjectID(conversation mobileProviderConversation, projects []mobileProviderProject) string {
+	paths := make([]string, 0, 1+len(conversation.Environments))
+	if strings.TrimSpace(conversation.CWD) != "" {
+		paths = append(paths, conversation.CWD)
+	}
+	for _, environment := range conversation.Environments {
+		if strings.TrimSpace(environment.CWD) != "" {
+			paths = append(paths, environment.CWD)
+		}
+	}
+	if projectID := mobileProjectIDForPaths(paths, projects); projectID != "" {
+		return projectID
+	}
+
+	paths = paths[:0]
+	for _, environment := range conversation.Environments {
+		paths = append(paths, environment.RuntimeWorkspaceRoots...)
+	}
+	return mobileProjectIDForPaths(paths, projects)
+}
+
+func mobileProjectIDForPaths(paths []string, projects []mobileProviderProject) string {
+	bestProjectID := ""
+	bestRootLength := -1
+	for _, project := range projects {
+		for _, root := range project.Roots {
+			for _, candidate := range paths {
+				if !mobilePathWithinRoot(candidate, root) {
+					continue
+				}
+				rootLength := len(filepath.Clean(strings.TrimSpace(root)))
+				if rootLength > bestRootLength {
+					bestProjectID = project.ID
+					bestRootLength = rootLength
+				}
+			}
+		}
+	}
+	return bestProjectID
+}
+
+func mobilePathWithinRoot(candidate, root string) bool {
+	candidate = strings.TrimSpace(candidate)
+	root = strings.TrimSpace(root)
+	if candidate == "" || root == "" {
+		return false
+	}
+	candidate = filepath.Clean(candidate)
+	root = filepath.Clean(root)
+	if strings.EqualFold(candidate, root) {
+		return true
+	}
+	relative, err := filepath.Rel(root, candidate)
+	if err != nil || relative == "." || filepath.IsAbs(relative) {
+		return false
+	}
+	return relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 func mobileProjectAfterCursor(item mobileProjectSummary, cursor mobileProjectCursor) bool {

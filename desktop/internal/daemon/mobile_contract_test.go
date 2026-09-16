@@ -593,6 +593,25 @@ func TestMobileProjectListUsesLatestConversationTime(t *testing.T) {
 	}
 }
 
+func TestMobileProjectListFallsBackToConversationCWD(t *testing.T) {
+	caller := &projectRecencyCaller{
+		projects:      json.RawMessage(`{"data":[{"id":"p-main","name":"Main","roots":[{"path":"D:/CodeSpace/work-anywhere"}]},{"id":"p-mobile","name":"Mobile","roots":[{"path":"D:/CodeSpace/work-anywhere/mobile"}]},{"id":"p-other","name":"Other","roots":[{"path":"D:/CodeSpace/other"}]}]}`),
+		conversations: json.RawMessage(`{"data":[{"id":"t-main","projectId":null,"cwd":"D:/CodeSpace/work-anywhere","updatedAt":100},{"id":"t-mobile","projectId":null,"cwd":"D:/CodeSpace/work-anywhere/mobile/app","updatedAt":300},{"id":"t-other","projectId":null,"environments":[{"environmentId":"local","cwd":"D:/CodeSpace/other"}],"updatedAt":200},{"id":"t-unmatched","projectId":null,"cwd":"D:/Temp/unmatched","updatedAt":999}]}`),
+	}
+	manager := &Manager{ctx: context.Background()}
+	instance := &Instance{descriptor: protocol.InstanceDescriptor{ID: "agent-1"}}
+	page, err := manager.mobileProjectListWithCaller(instance, caller, json.RawMessage(`{"limit":10}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 3 || page.Items[0].ID != "p-mobile" || page.Items[1].ID != "p-other" || page.Items[2].ID != "p-main" {
+		t.Fatalf("projects were not matched and ordered by conversation cwd: %#v", page.Items)
+	}
+	if page.Items[0].UpdatedAt != 300 || page.Items[1].UpdatedAt != 200 || page.Items[2].UpdatedAt != 100 {
+		t.Fatalf("cwd-matched project timestamps were incorrect: %#v", page.Items)
+	}
+}
+
 func TestMobileControlTargetTranslatesPublicParameters(t *testing.T) {
 	instance := &Instance{descriptor: protocol.InstanceDescriptor{ID: "agent-1"}}
 	manager := &Manager{instances: map[string]*Instance{"agent-1": instance}}
