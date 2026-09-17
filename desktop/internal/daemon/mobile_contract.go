@@ -678,10 +678,18 @@ func normalizeConversationList(agentID string, raw json.RawMessage) (mobilePage[
 	if source.NextCursor != nil {
 		page.NextCursor = *source.NextCursor
 	}
+	seen := make(map[string]struct{}, len(source.Data))
 	for _, item := range source.Data {
 		if item.ID == "" {
 			return mobilePage[mobileConversationSummary]{}, errors.New("thread/list item has no id")
 		}
+		// A provider may repeat a thread while refreshing or crossing a
+		// pagination boundary. The thread ID is the stable identity exposed to
+		// Mobile, so never emit the same conversation twice in one page.
+		if _, exists := seen[item.ID]; exists {
+			continue
+		}
+		seen[item.ID] = struct{}{}
 		title := strings.TrimSpace(item.Name)
 		if title == "" {
 			title = firstLine(item.Preview)

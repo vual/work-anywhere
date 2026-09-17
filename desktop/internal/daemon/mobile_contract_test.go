@@ -862,7 +862,7 @@ func TestMobileControlTargetTranslatesPublicParameters(t *testing.T) {
 }
 
 func TestNormalizeConversationList(t *testing.T) {
-	page, err := normalizeConversationList("agent-1", json.RawMessage(`{"data":[{"id":"t1","projectId":"p1","name":null,"preview":"First line\nSecond line","status":{"active":{"activeFlags":["waitingOnApproval"]}},"createdAt":1,"updatedAt":2}]}`))
+	page, err := normalizeConversationList("agent-1", json.RawMessage(`{"data":[{"id":"t1","projectId":"p1","name":null,"preview":"First line\nSecond line","status":{"active":{"activeFlags":["waitingOnApproval"]}},"createdAt":1,"updatedAt":2},{"id":"t1","projectId":"p1","name":"Duplicate","preview":"ignored","status":"idle","createdAt":1,"updatedAt":2}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}

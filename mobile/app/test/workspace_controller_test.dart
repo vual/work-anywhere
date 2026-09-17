@@ -137,6 +137,31 @@ void main() {
     expect(result.conversations.single.id, 'conversation-agent-ready');
   });
 
+  test('duplicate conversation IDs are shown only once', () async {
+    final gateway = _FakeCoreGateway(
+      connectedOnStatus: true,
+      agents: const [
+        {
+          'id': 'agent-ready',
+          'name': 'Ready Codex',
+          'kind': 'codex',
+          'status': 'ready',
+        },
+      ],
+      duplicateConversations: true,
+    );
+    final container = ProviderContainer(
+      overrides: [coreGatewayProvider.overrideWithValue(gateway)],
+    );
+    addTearDown(container.dispose);
+
+    final result = await container.read(workspaceProvider.future);
+
+    expect(result.conversations.map((item) => item.id), [
+      'conversation-agent-ready',
+    ]);
+  });
+
   test(
     'late failure from a previous agent does not replace the current agent',
     () async {
@@ -199,6 +224,7 @@ class _FakeCoreGateway extends CoreGateway {
     this.agents = const [],
     this.failedAgentIds = const {},
     this.delayedFailureAgentId,
+    this.duplicateConversations = false,
   });
 
   final bool pairFails;
@@ -208,6 +234,7 @@ class _FakeCoreGateway extends CoreGateway {
   final List<Map<String, dynamic>> agents;
   final Set<String> failedAgentIds;
   final String? delayedFailureAgentId;
+  final bool duplicateConversations;
   Completer<Map<String, dynamic>>? _delayedContent;
   bool persisted = false;
 
@@ -277,19 +304,18 @@ class _FakeCoreGateway extends CoreGateway {
       };
     }
     if (method == 'conversation.list') {
+      final item = {
+        'id': 'conversation-$agentId',
+        'agentId': agentId,
+        'projectId': 'project-$agentId',
+        'title': 'Conversation for $agentId',
+        'status': 'idle',
+        'running': false,
+        'updatedAt': 1,
+      };
       return {
         'result': {
-          'items': [
-            {
-              'id': 'conversation-$agentId',
-              'agentId': agentId,
-              'projectId': 'project-$agentId',
-              'title': 'Conversation for $agentId',
-              'status': 'idle',
-              'running': false,
-              'updatedAt': 1,
-            },
-          ],
+          'items': duplicateConversations ? [item, item] : [item],
         },
       };
     }

@@ -81,6 +81,18 @@ class ConversationSummary {
       );
 }
 
+List<ConversationSummary> conversationSummariesFromResult(
+  Map<String, dynamic> result,
+) {
+  final summaries = <ConversationSummary>[];
+  final seenIds = <String>{};
+  for (final item in ((result['items'] as List<dynamic>?) ?? const [])) {
+    final summary = ConversationSummary.fromJson(item as Map<String, dynamic>);
+    if (seenIds.add(summary.id)) summaries.add(summary);
+  }
+  return List.unmodifiable(summaries);
+}
+
 class QueuedSubmission {
   const QueuedSubmission({
     required this.id,

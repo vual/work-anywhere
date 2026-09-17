@@ -48,11 +48,10 @@ class _ProjectScreenState extends ConsumerState<ProjectScreen> {
         },
       );
       final result = response['result'] as Map<String, dynamic>? ?? const {};
-      final next = ((result['items'] as List<dynamic>?) ?? const [])
-          .cast<Map<String, dynamic>>()
-          .map(ConversationSummary.fromJson);
+      final next = conversationSummariesFromResult(result);
       setState(() {
-        _items.addAll(next);
+        final existingIds = _items.map((item) => item.id).toSet();
+        _items.addAll(next.where((item) => existingIds.add(item.id)));
         _cursor = result['nextCursor'] as String?;
       });
     } catch (error) {

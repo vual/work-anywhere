@@ -303,10 +303,7 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
     return List.unmodifiable(projects);
   }
   List<ConversationSummary> _conversations(Map<String, dynamic> result) =>
-      ((result['items'] as List<dynamic>?) ?? const [])
-          .cast<Map<String, dynamic>>()
-          .map(ConversationSummary.fromJson)
-          .toList(growable: false);
+      conversationSummariesFromResult(result);
 }
 
 extension _FirstOrNull<T> on Iterable<T> {
