@@ -156,3 +156,5 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+.codex-remote-attachments
+.work-anywhere-remote-attachments
