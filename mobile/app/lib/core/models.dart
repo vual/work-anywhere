@@ -7,7 +7,7 @@ class DaemonSummary {
     required this.phase,
   });
   final String id;
-  final String name;
+  final String? name;
   final ConnectionPhase phase;
 }
 

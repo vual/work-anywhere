@@ -72,6 +72,7 @@ type QRPayload struct {
 	DaemonEd25519  string `json:"daemonEd25519"`
 	DaemonX25519   string `json:"daemonX25519"`
 	CapabilityHash string `json:"capabilityHash"`
+	ComputerName   string `json:"computerName,omitempty"`
 	ExpiresAtMS    int64  `json:"expiresAtMs"`
 }
 

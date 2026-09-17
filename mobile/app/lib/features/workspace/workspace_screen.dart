@@ -249,7 +249,7 @@ class _TopBar extends StatelessWidget {
                   child: Semantics(
                     button: true,
                     label: context.l10n.daemonSwitchLabel(
-                      daemon.name,
+                      daemon.name ?? context.l10n.computer,
                       _statusLabel(context, daemon.phase),
                     ),
                     child: InkWell(
@@ -274,20 +274,12 @@ class _TopBar extends StatelessWidget {
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   Text(
-                                    daemon.name,
+                                    daemon.name ?? context.l10n.computer,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: const TextStyle(
                                       fontSize: 15,
                                       fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                  Text(
-                                    _statusLabel(context, daemon.phase),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: WawCompact.metadata.copyWith(
-                                      color: Colors.grey,
                                     ),
                                   ),
                                 ],
@@ -328,7 +320,7 @@ class _TopBar extends StatelessWidget {
             for (final item in items)
               ListTile(
                 leading: _StatusDot(item.phase),
-                title: Text(item.name),
+                title: Text(item.name ?? context.l10n.computer),
                 subtitle: Text(_statusLabel(context, item.phase)),
                 trailing: item.id == data.selectedDaemonId
                     ? const Icon(Icons.check_rounded)

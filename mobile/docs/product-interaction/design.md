@@ -58,11 +58,11 @@ Android 页面采用 edge-to-edge，顶部系统状态栏保持透明并叠加�
 
 底部没有导航栏；搜索框固定在工作台内容底部，但不承担页面切换或一级导航职责。
 
-顶栏需要适配窄屏和动态字体：品牌名允许单行省略，Daemon selector 使用可收缩的有限宽度，名称和连接状态允许省略但必须保留完整无障碍朗读。顶栏采用左侧固定 App icon、中间独立活跃任务区、右侧固定 Daemon selector 的三段布局；Daemon selector 的右边缘始终与页面内容右边缘对齐，任务提示不得覆盖 selector 或被 selector 遮挡。窄屏且存在运行中对话时，提示优先保留 loading icon，并在可用宽度内显示可省略的运行数量；完整语义由无障碍标签和详情页提供。
+顶栏需要适配窄屏和动态字体：品牌名允许单行省略，Daemon selector 使用可收缩的有限宽度，电脑名允许视觉省略但必须保留完整无障碍朗读。顶栏采用左侧固定 App icon、中间独立活跃任务区、右侧固定 Daemon selector 的三段布局；Daemon selector 的右边缘始终与页面内容右边缘对齐，任务提示不得覆盖 selector 或被 selector 遮挡。窄屏且存在运行中对话时，提示优先保留 loading icon，并在可用宽度内显示可省略的运行数量；完整语义由无障碍标签和详情页提供。
 
 ### Daemon selector
 
-工作台顶栏右侧显示当前 Daemon 的本地别名和状态 icon。默认恢复上次成功选择的 Daemon；该记录已不存在或已 revoke 时选择第一条可用 pairing，没有可用 pairing 时回到添加配对页。左侧始终显示 Work Anywhere App icon；不额外显示品牌名。
+工作台顶栏右侧显示当前 daemon 所在电脑的主机名和状态 icon。主机名由配对二维码的 `computerName` 提供，仅在配对成功后读取一次并保存；后续连接恢复、刷新和状态探测不重新读取或覆盖该名称，以便管理电脑功能后续修改名称。顶栏视觉上只显示状态点、电脑名和下拉箭头，不显示“在线”或“安全连接”文字。没有已保存名称时使用本地化的通用“电脑”文案。默认恢复上次成功选择的 Daemon；该记录已不存在或已 revoke 时选择第一条可用 pairing，没有可用 pairing 时回到添加配对页。左侧始终显示 Work Anywhere App icon；不额外显示品牌名。
 
 顶栏中间使用条件式任务提示：存在待处理 action 时优先显示“n 个待处理”，否则存在运行中对话时显示蓝色 loading icon 和“n 个运行中”；点击进入对应的第一条对话。没有活跃任务时不保留空提示控件，左侧只保留 App icon。
 
@@ -76,7 +76,7 @@ Bottom sheet 使用不透明的页面表面和顶部圆角，必须完整遮住�
 | `online` | 绿色实心点 | 当前探测在线且安全会话可用 |
 | `offline/disconnected` | 灰色实心点 | 当前不可达或尚未连接 |
 
-图形旁同时显示“连接中 / 在线 / 离线”，屏幕阅读器读取同一状态，不能只依赖颜色。会话页标题下方复用实时 transport 状态；收到 disconnected/closed/revoked、`peer_offline` 或同步读确认离线时立即由绿色“安全连接”切换为灰色“离线”并禁用写操作，成功恢复读或 online event 后再恢复绿色。选中的 Daemon 有 check mark。切换后立即递增 selection generation，清空旧 Daemon 的可见内容并显示 skeleton；新 Daemon 完成同步前所有写操作关闭。未选中的 Daemon 在 App 前台以有界短连接依次探测，列表状态带最后检查时间，不把历史在线状态冒充实时状态。
+下拉项图形旁同时显示“连接中 / 在线 / 离线”，屏幕阅读器读取同一状态，不能只依赖颜色；顶栏状态点也必须通过无障碍 label 暴露状态。会话页标题下方复用实时 transport 状态；收到 disconnected/closed/revoked、`peer_offline` 或同步读确认离线时立即由绿色“安全连接”切换为灰色“离线”并禁用写操作，成功恢复读或 online event 后再恢复绿色。选中的 Daemon 有 check mark。切换后立即递增 selection generation，清空旧 Daemon 的可见内容并显示 skeleton；新 Daemon 完成同步前所有写操作关闭。未选中的 Daemon 在 App 前台以有界短连接依次探测，列表状态带最后检查时间，不把历史在线状态冒充实时状态。
 
 ### Agent selector
 

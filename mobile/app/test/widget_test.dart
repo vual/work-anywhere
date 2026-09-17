@@ -163,6 +163,7 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.text('1 个运行中'), findsOneWidget);
+    expect(find.text('在线 · 安全连接'), findsNothing);
 
     final daemonRect = tester.getRect(
       find.byKey(const Key('workspace-daemon-selector')),

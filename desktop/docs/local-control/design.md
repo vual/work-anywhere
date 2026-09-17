@@ -23,6 +23,8 @@ daemon 将控制方法路由到实例 supervisor；Codex driver/能力描述用�
 当前固定控制方法：
 
 - 系统：`system.status`, `system.ui_url`, `system.control.pause`, `system.control.resume`, `system.shutdown`
+
+`system.status` 返回 daemon 运行电脑的 `computerName`（来自主机名）以及版本、进程、运行时长、实例和控制状态；Remote 转发给 Mobile 时仍移除 `remote` 字段。
 - 实例：`instance.list`, `instance.get`, `instance.restart`
 - Mobile navigation：`agent.list`, `project.list`（要求 `mobile-control-v1`）
 - 会话：`conversation.list`, `conversation.read`, `conversation.timeline.list`, `conversation.content.read`, `conversation.content.resolve`, `conversation.subscribe`, `conversation.create`, `conversation.settings.update`, `conversation.queue.add/update/delete/start`

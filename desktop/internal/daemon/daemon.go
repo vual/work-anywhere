@@ -318,7 +318,8 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 	}
 	switch request.Method {
 	case "system.status":
-		response.Result = map[string]any{"version": m.version, "pid": os.Getpid(), "uptimeSeconds": int64(time.Since(m.startedAt).Seconds()), "controlPaused": m.controlPaused.Load(), "instances": m.instanceSnapshots(), "remote": m.remote.Status()}
+		computerName, _ := os.Hostname()
+		response.Result = map[string]any{"version": m.version, "pid": os.Getpid(), "computerName": computerName, "uptimeSeconds": int64(time.Since(m.startedAt).Seconds()), "controlPaused": m.controlPaused.Load(), "instances": m.instanceSnapshots(), "remote": m.remote.Status()}
 	case "system.ui_url":
 		response.Result = map[string]string{"url": m.admin.OneTimeURL()}
 	case "system.control.pause":

@@ -118,13 +118,13 @@ func TestNormalizeRelayURLAllowsPrivateIPDevelopment(t *testing.T) {
 }
 
 func TestQRRoundTripAndScopeAllowlist(t *testing.T) {
-	payload := QRPayload{RelayURL: "https://relay.example", PairingID: "fb6a9823-2632-49ab-a2e7-3df33890c179", Secret: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", DaemonDeviceID: "bbab77cb-2e66-48bc-b72b-b817a4c3f3ab", ExpiresAtMS: time.Now().Add(time.Minute).UnixMilli()}
+	payload := QRPayload{RelayURL: "https://relay.example", PairingID: "fb6a9823-2632-49ab-a2e7-3df33890c179", Secret: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", DaemonDeviceID: "bbab77cb-2e66-48bc-b72b-b817a4c3f3ab", ComputerName: "DESKTOP-TEST", ExpiresAtMS: time.Now().Add(time.Minute).UnixMilli()}
 	uri, err := payload.URI()
 	if err != nil {
 		t.Fatal(err)
 	}
 	restored, secret, err := ParseQR(uri)
-	if err != nil || restored.PairingID != payload.PairingID || len(secret) != 32 {
+	if err != nil || restored.PairingID != payload.PairingID || restored.ComputerName != payload.ComputerName || len(secret) != 32 {
 		t.Fatalf("QR roundtrip failed: restored=%+v err=%v", restored, err)
 	}
 	if !scopeAllows([]string{"turn.start"}, "turn.start") ||

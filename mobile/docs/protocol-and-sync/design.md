@@ -96,7 +96,7 @@ online
 
 进入 `syncing` 后顺序执行：
 
-1. 对上次选中的 Daemon建立安全会话并调用 `system.status` / `agent.list`；恢复该 Daemon 上次选中的 Agent，记录不存在时使用返回列表中的第一个 Agent，不根据 ready/error 状态自动改选其他 Agent。
+1. 配对二维码携带 daemon 运行电脑的 `computerName`（由 Desktop 使用主机名生成）；首次配对成功后 Mobile 从配对结果读取并保存为 Daemon display name。后续恢复、刷新和未选中 Daemon 的状态探测不再为显示名调用 `system.status`，也不覆盖本地已修改的名称。随后调用 `agent.list`，恢复该 Daemon 上次选中的 Agent，记录不存在时使用返回列表中的第一个 Agent，不根据 ready/error 状态自动改选其他 Agent。
 2. 独立保留完整 Agent 列表与当前选择，再对选中 Agent 并发调用 `project.list(limit=10)`、`conversation.list(limit=20)` 与 `action.list`。`navigationKind=bots` 时把 project call 替换为 `bot.list`；Codex-first V1 不进入该分支。当前 Agent 的项目或对话同步失败时，只清空该 Agent 的内容并显示局部重试状态，Agent selector 必须继续保留；切换 Agent 时立即更新选择并独立同步新 Agent，前一个 Agent 的迟到结果或失败不得覆盖当前 Agent。
 3. 点击项目后调用 `conversation.list(projectId, limit=15)`；“显示更多”只使用 response next cursor，不用 offset 猜页。
 4. 搜索时分别调用 `project.list(query, limit, cursor)` 与 `conversation.list(query, limit, cursor)`，搜索服务端全集而不是当前 10/20 条内存列表。
@@ -121,7 +121,7 @@ App 前台对未选中 Daemon 以有界短连接依次执行 status probe，更�
 
 `conversation.subscribe` 保留为恢复用的 cursor/snapshot 接口；Android 正常路径由 Relay unsolicited event 主动推送 metadata-only event，Go Core 通过 EventSink/EventChannel 转交 Flutter。Desktop 先在 100 ms 内按 instance/thread 合并普通流式失效提示，并分别保留 action 与 terminal 类别；endpoint 只转发 `type=event`，无 sink 时按到达顺序保留最近 1000 条，迟到/未知 response 不进入事件流。连接生命周期另发 `type=transport` 的 `online/disconnected/revoked/closed`。Flutter 在 disconnected、stream error/done 时立即把会话页连接点改为离线、禁用发送并启动 catch-up，每 2 秒轮询；online 或成功恢复读时恢复安全连接状态，停止轮询并再 catch-up 一次，revoked/closed 停止恢复。Flutter 对收到的 event burst 再做约 150 ms 合并刷新，旧 snapshot 不覆盖新 sequence，刷新最新页时保留用户已加载的旧页。当前尚未完成 iOS Go Core/事件宿主接入的平台直接使用恢复路径。事件和轮询都不携带 provider 正文；当客户端游标过旧或待追赶事件超过 Desktop 的有界窗口时，服务端返回 `snapshot=true`。
 
-- `DaemonSummary`：由本地 pairing + live probe 组合的 id、display name、connection state、checked time；
+- `DaemonSummary`：由本地 pairing + live probe 组合的 id、配对时读取的 daemon 运行电脑 `computerName` 或后续本地管理名称、connection state、checked time；名称不可用时使用本地化通用文案，不把固定产品文案冒充主机名；
 - `AgentSummary`：agent id、provider (`codex` 等)、display name、state、supported、navigation kind、capabilities、active turn/pending action count、last error；
 - `ProjectSummary`：稳定 project id、name、conversation/running counts、updated time；
 - `BotSummary`：为 Hermes 预留的稳定 bot id/name/state/capabilities，Codex 不返回；

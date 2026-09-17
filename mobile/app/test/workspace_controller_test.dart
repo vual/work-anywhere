@@ -33,6 +33,23 @@ void main() {
     },
   );
 
+  test('pairing stores the daemon computer name once', () async {
+    final gateway = _FakeCoreGateway();
+    final container = ProviderContainer(
+      overrides: [coreGatewayProvider.overrideWithValue(gateway)],
+    );
+    addTearDown(container.dispose);
+
+    await container.read(workspaceProvider.future);
+    await container.read(workspaceProvider.notifier).pair('waw://pair?test');
+
+    final result = container.read(workspaceProvider).requireValue;
+    expect(result.daemons.single.name, 'DESKTOP-TEST');
+    expect(gateway.systemStatusCalls, 0);
+    final preferences = await SharedPreferences.getInstance();
+    expect(preferences.getString('lastDaemonName:daemon-1'), 'DESKTOP-TEST');
+  });
+
   test('approved pair survives an initial workspace sync failure', () async {
     final gateway = _FakeCoreGateway(syncFails: true);
     final container = ProviderContainer(
@@ -237,6 +254,7 @@ class _FakeCoreGateway extends CoreGateway {
   final bool duplicateConversations;
   Completer<Map<String, dynamic>>? _delayedContent;
   bool persisted = false;
+  int systemStatusCalls = 0;
 
   void failDelayedContent() => _delayedContent?.completeError(
     CoreFault('call_failed', 'delayed content sync failed'),
@@ -263,7 +281,11 @@ class _FakeCoreGateway extends CoreGateway {
     if (pairFails) throw CoreFault('pair_failed', 'unreachable');
     return {
       'ok': true,
-      'result': {'connected': true, 'daemonId': 'daemon-1'},
+      'result': {
+        'connected': true,
+        'daemonId': 'daemon-1',
+        'computerName': 'DESKTOP-TEST',
+      },
     };
   }
 
@@ -281,6 +303,12 @@ class _FakeCoreGateway extends CoreGateway {
     if (syncFails) throw CoreFault('call_failed', 'sync failed');
     if (method == 'agent.list') {
       return {'result': agents};
+    }
+    if (method == 'system.status') {
+      systemStatusCalls++;
+      return {
+        'result': {'computerName': 'DESKTOP-TEST'},
+      };
     }
     final agentId = params['agentId'] as String?;
     if (agentId != null && failedAgentIds.contains(agentId)) {

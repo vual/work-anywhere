@@ -34,6 +34,7 @@ type QRPayload struct {
 	DaemonEd25519  string `json:"daemonEd25519"`
 	DaemonX25519   string `json:"daemonX25519"`
 	CapabilityHash string `json:"capabilityHash"`
+	ComputerName   string `json:"computerName,omitempty"`
 	ExpiresAtMS    int64  `json:"expiresAtMs"`
 }
 
@@ -77,19 +78,21 @@ const sessionHandshakeTimeout = 30 * time.Second
 func (e *CallError) Error() string { return e.Message }
 
 type Status struct {
-	Connected bool              `json:"connected"`
-	PairingID string            `json:"pairingId,omitempty"`
-	DeviceID  string            `json:"deviceId,omitempty"`
-	DaemonID  string            `json:"daemonId,omitempty"`
-	Scopes    []string          `json:"scopes,omitempty"`
-	LastError string            `json:"lastError,omitempty"`
-	Events    []json.RawMessage `json:"events"`
+	Connected    bool              `json:"connected"`
+	PairingID    string            `json:"pairingId,omitempty"`
+	DeviceID     string            `json:"deviceId,omitempty"`
+	DaemonID     string            `json:"daemonId,omitempty"`
+	ComputerName string            `json:"computerName,omitempty"`
+	Scopes       []string          `json:"scopes,omitempty"`
+	LastError    string            `json:"lastError,omitempty"`
+	Events       []json.RawMessage `json:"events"`
 }
 
 type CredentialSet struct {
 	RelayURL         string   `json:"relayUrl"`
 	PairingID        string   `json:"pairingId"`
 	DaemonDeviceID   string   `json:"daemonDeviceId"`
+	ComputerName     string   `json:"computerName,omitempty"`
 	MobileDeviceID   string   `json:"mobileDeviceId"`
 	Ed25519Private   []byte   `json:"ed25519Private"`
 	X25519Private    []byte   `json:"x25519Private"`
@@ -248,7 +251,7 @@ func (c *Client) Pair(ctx context.Context, uri string) error {
 	if result.GrantExpiresAtMs < time.Now().UnixMilli() || !ed25519.Verify(ed25519.PublicKey(daemonEd), grantInput, result.GrantSignature) {
 		return errors.New("pairing grant signature is invalid")
 	}
-	credential := CredentialSet{RelayURL: qr.RelayURL, PairingID: pairingID.String(), DaemonDeviceID: daemonID.String(), MobileDeviceID: mobileID.String(), Ed25519Private: append([]byte(nil), edPrivate...), X25519Private: append([]byte(nil), xKey.Private...), X25519Public: append([]byte(nil), xKey.Public...), DaemonX25519: append([]byte(nil), daemonX...), DaemonCapability: append([]byte(nil), daemonCapability...), MobileCapability: append([]byte(nil), mobileCapability[:]...), Scopes: append([]string(nil), result.Scopes...)}
+	credential := CredentialSet{RelayURL: qr.RelayURL, PairingID: pairingID.String(), DaemonDeviceID: daemonID.String(), ComputerName: qr.ComputerName, MobileDeviceID: mobileID.String(), Ed25519Private: append([]byte(nil), edPrivate...), X25519Private: append([]byte(nil), xKey.Private...), X25519Public: append([]byte(nil), xKey.Public...), DaemonX25519: append([]byte(nil), daemonX...), DaemonCapability: append([]byte(nil), daemonCapability...), MobileCapability: append([]byte(nil), mobileCapability[:]...), Scopes: append([]string(nil), result.Scopes...)}
 	c.storeCredential(credential, pairingID, daemonID, mobileID)
 	defer wipeCredential(&credential)
 	return c.reconnect(ctx)
@@ -629,6 +632,7 @@ func cloneCredential(value CredentialSet) CredentialSet {
 		RelayURL:         value.RelayURL,
 		PairingID:        value.PairingID,
 		DaemonDeviceID:   value.DaemonDeviceID,
+		ComputerName:     value.ComputerName,
 		MobileDeviceID:   value.MobileDeviceID,
 		Ed25519Private:   append([]byte(nil), value.Ed25519Private...),
 		X25519Private:    append([]byte(nil), value.X25519Private...),
@@ -643,7 +647,7 @@ func cloneCredential(value CredentialSet) CredentialSet {
 func (c *Client) Status() Status {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	status := Status{Connected: c.connected, LastError: c.lastError, Scopes: append([]string(nil), c.scopes...), Events: append([]json.RawMessage(nil), c.events...)}
+	status := Status{Connected: c.connected, LastError: c.lastError, ComputerName: c.credential.ComputerName, Scopes: append([]string(nil), c.scopes...), Events: append([]json.RawMessage(nil), c.events...)}
 	if c.pairingID != uuid.Nil {
 		status.PairingID, status.DeviceID, status.DaemonID = c.pairingID.String(), c.deviceID.String(), c.daemonID.String()
 	}

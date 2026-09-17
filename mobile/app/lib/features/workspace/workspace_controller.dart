@@ -99,7 +99,7 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
             daemons: [
               DaemonSummary(
                 id: daemonId,
-                name: 'My PC',
+                name: preferences.getString('lastDaemonName:$daemonId'),
                 phase: ConnectionPhase.offline,
               ),
             ],
@@ -109,7 +109,13 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
         return const WorkspaceState(needsPairing: true);
       }
       final daemonId = status['daemonId'] as String? ?? 'daemon';
-      return await _loadOrKeepPairing(_connectedState(daemonId));
+      final preferences = await SharedPreferences.getInstance();
+      return await _loadOrKeepPairing(
+        _connectedState(
+          daemonId,
+          preferences.getString('lastDaemonName:$daemonId'),
+        ),
+      );
     } catch (_) {
       return const WorkspaceState(needsPairing: true);
     }
@@ -118,13 +124,19 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
   Future<void> pair(String uri) async {
     final previous = state.value ?? const WorkspaceState(needsPairing: true);
     Map<String, dynamic> status;
+    String? computerName;
     try {
       final envelope = await _gateway.pair(uri.trim());
       status = envelope['result'] as Map<String, dynamic>? ?? envelope;
       final daemonId = status['daemonId'] as String? ?? 'daemon';
+      final pairedName = (status['computerName'] as String?)?.trim();
+      computerName = pairedName;
       final preferences = await SharedPreferences.getInstance();
       await preferences.setString('lastDaemonId', daemonId);
       await _gateway.persistCredentials();
+      if (pairedName != null && pairedName.isNotEmpty) {
+        await preferences.setString('lastDaemonName:$daemonId', pairedName);
+      }
     } catch (_) {
       var retained = false;
       try {
@@ -142,7 +154,7 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
               daemons: [
                 DaemonSummary(
                   id: daemonId,
-                  name: 'My PC',
+                  name: preferences.getString('lastDaemonName:$daemonId'),
                   phase: ConnectionPhase.offline,
                 ),
               ],
@@ -161,16 +173,29 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
     }
 
     final daemonId = status['daemonId'] as String? ?? 'daemon';
-    state = AsyncData(await _loadOrKeepPairing(_connectedState(daemonId)));
+    final preferences = await SharedPreferences.getInstance();
+    state = AsyncData(
+      await _loadOrKeepPairing(
+        _connectedState(
+          daemonId,
+          computerName ?? preferences.getString('lastDaemonName:$daemonId'),
+        ),
+      ),
+    );
   }
 
-  WorkspaceState _connectedState(String daemonId) => WorkspaceState(
-    needsPairing: false,
-    daemons: [
-      DaemonSummary(id: daemonId, name: 'My PC', phase: ConnectionPhase.online),
-    ],
-    selectedDaemonId: daemonId,
-  );
+  WorkspaceState _connectedState(String daemonId, [String? name]) =>
+      WorkspaceState(
+        needsPairing: false,
+        daemons: [
+          DaemonSummary(
+            id: daemonId,
+            name: name,
+            phase: ConnectionPhase.online,
+          ),
+        ],
+        selectedDaemonId: daemonId,
+      );
 
   Future<WorkspaceState> _loadOrKeepPairing(WorkspaceState base) async {
     try {
@@ -181,6 +206,7 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
   }
 
   Future<WorkspaceState> _load(WorkspaceState base) async {
+    final preferences = await SharedPreferences.getInstance();
     final agentsResponse = await _gateway.call('agent.list', const {});
     final agentItems =
         ((agentsResponse['result'] as List<dynamic>?) ?? const [])
@@ -194,7 +220,6 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
         conversations: const [],
       );
     }
-    final preferences = await SharedPreferences.getInstance();
     final stored = preferences.getString('lastAgent:${base.selectedDaemonId}');
     final selected = agentItems.any((item) => item.id == stored)
         ? stored!
@@ -302,6 +327,7 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
     });
     return List.unmodifiable(projects);
   }
+
   List<ConversationSummary> _conversations(Map<String, dynamic> result) =>
       conversationSummariesFromResult(result);
 }

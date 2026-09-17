@@ -269,7 +269,8 @@ func (s *Service) StartPairing(ttl time.Duration) (PairAttempt, error) {
 		return PairAttempt{}, err
 	}
 	expires := time.Now().Add(ttl)
-	qr := QRPayload{RelayURL: state.RelayURL, PairingID: pairingID.String(), Secret: base64.RawURLEncoding.EncodeToString(secret), DaemonDeviceID: state.DeviceID, DaemonEd25519: base64.RawURLEncoding.EncodeToString(state.Ed25519Public), DaemonX25519: base64.RawURLEncoding.EncodeToString(state.X25519Public), CapabilityHash: base64.RawURLEncoding.EncodeToString(state.CapabilityHash), ExpiresAtMS: expires.UnixMilli()}
+	computerName, _ := os.Hostname()
+	qr := QRPayload{RelayURL: state.RelayURL, PairingID: pairingID.String(), Secret: base64.RawURLEncoding.EncodeToString(secret), DaemonDeviceID: state.DeviceID, DaemonEd25519: base64.RawURLEncoding.EncodeToString(state.Ed25519Public), DaemonX25519: base64.RawURLEncoding.EncodeToString(state.X25519Public), CapabilityHash: base64.RawURLEncoding.EncodeToString(state.CapabilityHash), ComputerName: computerName, ExpiresAtMS: expires.UnixMilli()}
 	uri, err := qr.URI()
 	if err != nil {
 		return PairAttempt{}, err
