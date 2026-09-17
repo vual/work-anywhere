@@ -534,20 +534,34 @@ func mobileProjectIDForPaths(paths []string, projects []mobileProviderProject) s
 	bestProjectID := ""
 	bestRootLength := -1
 	for _, project := range projects {
-		for _, root := range project.Roots {
-			for _, candidate := range paths {
-				if !mobilePathWithinRoot(candidate, root) {
-					continue
-				}
-				rootLength := len(filepath.Clean(strings.TrimSpace(root)))
-				if rootLength > bestRootLength {
-					bestProjectID = project.ID
-					bestRootLength = rootLength
-				}
+		root := mobileProjectMainRoot(project)
+		if root == "" {
+			continue
+		}
+		for _, candidate := range paths {
+			if !mobilePathWithinRoot(candidate, root) {
+				continue
+			}
+			rootLength := len(filepath.Clean(strings.TrimSpace(root)))
+			if rootLength > bestRootLength {
+				bestProjectID = project.ID
+				bestRootLength = rootLength
 			}
 		}
 	}
 	return bestProjectID
+}
+
+// The provider Project DTO has no separate primary-root marker. Its roots are
+// ordered, so the first non-empty root is the project's main directory; later
+// roots are additional working roots and must not claim another project's cwd.
+func mobileProjectMainRoot(project mobileProviderProject) string {
+	for _, root := range project.Roots {
+		if root = strings.TrimSpace(root); root != "" {
+			return root
+		}
+	}
+	return ""
 }
 
 func mobilePathWithinRoot(candidate, root string) bool {

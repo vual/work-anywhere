@@ -842,6 +842,22 @@ func TestMobileProjectListFallsBackToConversationCWD(t *testing.T) {
 	}
 }
 
+func TestMobileProjectListUsesOnlyProjectMainRoot(t *testing.T) {
+	caller := &projectRecencyCaller{
+		projects:      json.RawMessage(`{"data":[{"id":"p-skills","name":"lasen-skills","roots":[{"path":"D:/CodeSpace/lasen-skills"},{"path":"D:/CodeSpace/lasen/lasen-ui"}]},{"id":"p-ui","name":"lasen-ui","roots":[{"path":"D:/CodeSpace/lasen/lasen-ui"}]}]}`),
+		conversations: json.RawMessage(`{"data":[{"id":"t-ui","projectId":null,"cwd":"D:/CodeSpace/lasen/lasen-ui","updatedAt":300}]}`),
+	}
+	manager := &Manager{ctx: context.Background()}
+	instance := &Instance{descriptor: protocol.InstanceDescriptor{ID: "agent-1"}}
+	page, err := manager.mobileProjectListWithCaller(instance, caller, json.RawMessage(`{"limit":10}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0].ID != "p-ui" {
+		t.Fatalf("conversation was claimed by a secondary project root: %#v", page.Items)
+	}
+}
+
 func TestMobileControlTargetTranslatesPublicParameters(t *testing.T) {
 	instance := &Instance{descriptor: protocol.InstanceDescriptor{ID: "agent-1"}}
 	manager := &Manager{instances: map[string]*Instance{"agent-1": instance}}

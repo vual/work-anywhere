@@ -48,7 +48,7 @@ conversation.subscribe(agentId, threadId, cursor)
 plan.respond(agentId, threadId, planItemId, expectedRevision, decision, text)
 ```
 
-`agent.list` 的 Codex adapter 可由现有 `instance.list` 投影；Mobile contract 下的 `project.list` 由 Desktop 根据 provider 项目和完整 thread metadata 聚合，只返回有对话的项目，并以项目最近一条对话的 `updatedAt desc, projectId desc` 排序。Desktop 优先使用 thread `projectId` 关联项目；该字段缺失、为空或无效时，根据 thread cwd/environment workspace roots 匹配最长的 provider 项目根目录。`ProjectSummary.updatedAt` 表示该最近对话时间；cursor 以更新时间和项目 ID 锚定，不能因并列时间重复或漏项。不能由 Mobile 对最近 20 条记录按路径字符串猜测项目。`conversation.list` 的 `projectId`、`query`、`limit` 和 cursor 由 Desktop 执行，排序固定为 `updatedAt desc, id desc`，同一 cursor 下不能因并列时间重复或漏项。Desktop 归一化 `thread/list` 时以及 Mobile 展示分页结果时都以会话 ID 作为唯一键；同一会话在 provider 刷新或分页边界重复返回时只保留一条。同名但 ID 不同的会话仍分别展示。
+`agent.list` 的 Codex adapter 可由现有 `instance.list` 投影；Mobile contract 下的 `project.list` 由 Desktop 根据 provider 项目和完整 thread metadata 聚合，只返回有对话的项目，并以项目最近一条对话的 `updatedAt desc, projectId desc` 排序。Desktop 优先使用 thread `projectId` 关联项目；该字段缺失、为空或无效时，根据 thread cwd/environment workspace roots 匹配 provider 项目的主目录。Codex 当前的 Project DTO 没有单独的主目录标记，Desktop 将 `roots` 中第一项非空路径视为主目录，后续 roots 仅作为附加工作目录，不参与项目归属匹配。`ProjectSummary.updatedAt` 表示该最近对话时间；cursor 以更新时间和项目 ID 锚定，不能因并列时间重复或漏项。不能由 Mobile 对最近 20 条记录按路径字符串猜测项目。`conversation.list` 的 `projectId`、`query`、`limit` 和 cursor 由 Desktop 执行，排序固定为 `updatedAt desc, id desc`，同一 cursor 下不能因并列时间重复或漏项。Desktop 归一化 `thread/list` 时以及 Mobile 展示分页结果时都以会话 ID 作为唯一键；同一会话在 provider 刷新或分页边界重复返回时只保留一条。同名但 ID 不同的会话仍分别展示。
 
 Agent 声明 `navigationKind = projects | bots | none`。Codex 为 `projects`；Hermes 未来为 `bots`，并在实现时增加同属 `conversation.read` scope 的 `bot.list`。未适配的 Claude Code、OpenCode、Pi 等可以由 `agent.list` 返回 discovery metadata，但 `supported=false`，Mobile 不调用项目/对话写接口。
 
