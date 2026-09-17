@@ -387,6 +387,13 @@ func TestMobileConversationSettingsUpdateCommitsOnlyAfterProviderSuccess(t *test
 		t.Fatalf("successful provider response was not committed: %#v", committed)
 	}
 
+	instance.activeTurns["thread-1"] = "turn-running"
+	runningRequest := json.RawMessage(`{"threadId":"thread-1","expectedRevision":3,"settings":{"mode":"plan","modelId":"model-a","reasoningEffort":"high","permissionModeId":"autoReview"}}`)
+	if _, err = instance.manager.mobileConversationSettingsUpdate(instance, runningRequest); err != nil {
+		t.Fatalf("settings update should be accepted for a running turn: %v", err)
+	}
+	delete(instance.activeTurns, "thread-1")
+
 	failUpdate.Store(true)
 	request = json.RawMessage(`{"threadId":"thread-1","expectedRevision":3,"settings":{"mode":"default","modelId":"model-a","reasoningEffort":"high","permissionModeId":"readOnly"}}`)
 	if _, err = instance.manager.mobileConversationSettingsUpdate(instance, request); err == nil {

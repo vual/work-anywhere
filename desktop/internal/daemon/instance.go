@@ -1147,6 +1147,23 @@ func (i *Instance) CanSubmitQueue(threadID string) bool {
 	return true
 }
 
+// CanUpdateSettings allows changing settings for subsequent turns while a
+// thread is active, but keeps the transport and blocking-action gate used by
+// other conversation writes.
+func (i *Instance) CanUpdateSettings(threadID string) bool {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.stdin == nil || threadID == "" || i.state == "starting" || i.state == "waiting_initialize" || i.state == "stopped" || i.state == "error" || i.state == "upgrade_pending" {
+		return false
+	}
+	for _, action := range i.actions {
+		if action.ConversationID == "" || action.ConversationID == threadID {
+			return false
+		}
+	}
+	return true
+}
+
 func (i *Instance) updateActivityStateLocked() {
 	if i.state == "starting" || i.state == "waiting_initialize" || i.state == "stopped" || i.state == "error" || i.state == "upgrade_pending" {
 		return

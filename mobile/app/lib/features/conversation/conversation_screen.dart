@@ -675,7 +675,6 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         !_catalogLoading &&
         !_catalogFailed &&
         _connectionOnline &&
-        (state?.metadata?['running'] != true) &&
         (state?.actions.isEmpty ?? true) &&
         !_showPlanConfirmation(state ?? const ConversationState());
   }
@@ -1915,44 +1914,50 @@ class _ComposerPanelState extends State<_ComposerPanel> {
     ),
   );
 
-  Widget _addButton(BuildContext context) => IconButton(
-    constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-    onPressed: widget.enabled && !widget.selectingImages ? widget.onAdd : null,
-    tooltip: context.l10n.addMenu,
-    icon: const Icon(Icons.add_rounded, size: 28),
+  Widget _addButton(BuildContext context) => SizedBox(
+    width: 48,
+    height: 48,
+    child: Center(
+      child: IconButton(
+        constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+        padding: EdgeInsets.zero,
+        iconSize: 24,
+        onPressed: widget.enabled && !widget.selectingImages
+            ? widget.onAdd
+            : null,
+        tooltip: context.l10n.addMenu,
+        icon: const Icon(Icons.add_rounded),
+      ),
+    ),
   );
 
   Widget _actionButton(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(4, 2, 8, 4),
-    child: IconButton.filled(
-      onPressed: !widget.online || widget.submitting
-          ? null
-          : widget.canSend
+    padding: const EdgeInsets.fromLTRB(4, 2, 8, 2),
+    child: _CompactActionButton(
+      enabled:
+          widget.online &&
+          !widget.submitting &&
+          (widget.canSend || widget.running),
+      tooltip: widget.running && !widget.canSend
+          ? context.l10n.stop
+          : context.l10n.send,
+      color: widget.running && !widget.canSend ? Colors.black : wawBlue,
+      onPressed: widget.canSend
           ? widget.onSend
           : widget.running
           ? widget.onInterrupt
           : null,
-      tooltip: widget.running && !widget.canSend
-          ? context.l10n.stop
-          : context.l10n.send,
-      style: IconButton.styleFrom(
-        minimumSize: const Size.square(48),
-        backgroundColor: widget.running && !widget.canSend
-            ? Colors.black
-            : wawBlue,
-        foregroundColor: Colors.white,
-      ),
-      icon: widget.submitting
+      child: widget.submitting
           ? const SizedBox.square(
-              dimension: 18,
+              dimension: 14,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
                 color: Colors.white,
               ),
             )
           : widget.running && !widget.canSend
-          ? const Icon(Icons.stop_rounded)
-          : const Icon(Icons.arrow_upward_rounded),
+          ? const Icon(Icons.stop_rounded, size: 18)
+          : const Icon(Icons.arrow_upward_rounded, size: 18),
     ),
   );
 
@@ -2024,7 +2029,7 @@ class _ComposerPanelState extends State<_ComposerPanel> {
                                 )
                               : Text(
                                   '${widget.settings?.mode == 'plan' ? '${context.l10n.plan} · ' : ''}'
-                                  '${widget.model?.name ?? ''} · '
+                                  '${_composerModelLabel(widget.model?.name)} · '
                                   '${_composerEffortLabel(context, widget.settings?.reasoningEffort ?? '')}',
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -2036,6 +2041,62 @@ class _ComposerPanelState extends State<_ComposerPanel> {
                 ),
               ],
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _composerModelLabel(String? name) {
+  final value = name?.trim() ?? '';
+  return value.replaceFirst(RegExp(r'^GPT-', caseSensitive: false), '');
+}
+
+class _CompactActionButton extends StatelessWidget {
+  const _CompactActionButton({
+    required this.enabled,
+    required this.tooltip,
+    required this.color,
+    required this.onPressed,
+    required this.child,
+  });
+
+  final bool enabled;
+  final String tooltip;
+  final Color color;
+  final VoidCallback? onPressed;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final background = enabled ? color : Theme.of(context).disabledColor;
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      label: tooltip,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: enabled ? onPressed : null,
+        child: SizedBox(
+          width: 48,
+          height: 48,
+          child: Center(
+            child: Tooltip(
+              message: tooltip,
+              child: IconButton.filled(
+                onPressed: enabled ? onPressed : null,
+                tooltip: tooltip,
+                style: IconButton.styleFrom(
+                  minimumSize: const Size.square(32),
+                  maximumSize: const Size.square(32),
+                  padding: EdgeInsets.zero,
+                  backgroundColor: background,
+                  foregroundColor: Colors.white,
+                ),
+                icon: child,
+              ),
+            ),
           ),
         ),
       ),

@@ -143,7 +143,7 @@ final _settingsCatalogs = <String, Map<String, dynamic>>{
     'items': [
       {
         'id': 'model-a',
-        'name': 'GPT A',
+        'name': 'GPT-5.6 Luna',
         'description': 'Primary model',
         'default': true,
         'selectable': true,
@@ -155,7 +155,7 @@ final _settingsCatalogs = <String, Map<String, dynamic>>{
       },
       {
         'id': 'model-b',
-        'name': 'GPT B',
+        'name': 'GPT-5.5',
         'description': 'Alternative model',
         'default': false,
         'selectable': true,
@@ -1266,7 +1266,7 @@ void main() {
         findsNothing,
       );
       expect(find.byTooltip('权限'), findsNothing);
-      expect(find.textContaining('GPT A'), findsNothing);
+      expect(find.textContaining('5.6 Luna'), findsNothing);
 
       await tester.tap(find.byType(TextField));
       await tester.pumpAndSettle();
@@ -1275,13 +1275,14 @@ void main() {
         findsOneWidget,
       );
       expect(find.byTooltip('权限'), findsOneWidget);
-      expect(find.textContaining('GPT A'), findsOneWidget);
+      expect(find.textContaining('5.6 Luna'), findsOneWidget);
+      expect(find.textContaining('GPT-5.6'), findsNothing);
 
       FocusManager.instance.primaryFocus?.unfocus();
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('composer-collapsed')), findsOneWidget);
       expect(find.byTooltip('权限'), findsNothing);
-      expect(find.textContaining('GPT A'), findsNothing);
+      expect(find.textContaining('5.6 Luna'), findsNothing);
 
       await tester.tap(find.byTooltip('添加'));
       await tester.pumpAndSettle();
@@ -1313,7 +1314,7 @@ void main() {
 
       await tester.tap(find.byType(TextField));
       await tester.pumpAndSettle();
-      await tester.tap(find.textContaining('GPT A'));
+      await tester.tap(find.textContaining('5.6 Luna'));
       await tester.pumpAndSettle();
       expect(
         tester.widget<BottomSheet>(find.byType(BottomSheet)).backgroundColor,
@@ -1325,7 +1326,7 @@ void main() {
         tester.widget<BottomSheet>(find.byType(BottomSheet)).backgroundColor,
         Colors.white,
       );
-      await tester.tap(find.text('GPT B'));
+      await tester.tap(find.text('GPT-5.5'));
       await tester.pumpAndSettle();
 
       await tester.enterText(find.byType(TextField), 'Use selected settings');
@@ -1432,7 +1433,90 @@ void main() {
     );
     await tester.tap(find.byType(TextField));
     await tester.pumpAndSettle();
-    expect(find.textContaining('计划 · GPT A'), findsOneWidget);
+    expect(find.textContaining('计划 · 5.6 Luna'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('running conversation keeps settings controls enabled', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final events = StreamController<Map<String, dynamic>>.broadcast();
+    addTearDown(events.close);
+    var settings = <String, dynamic>{
+      'mode': 'default',
+      'modelId': 'model-a',
+      'reasoningEffort': 'high',
+      'permissionModeId': 'default',
+    };
+    Map<String, dynamic>? updateParams;
+    final gateway = _FakeGateway(
+      (method, params) async {
+        switch (method) {
+          case 'conversation.read':
+            return {
+              'result': {
+                'conversation': {
+                  'id': 'thread-running-settings',
+                  'title': 'Running settings',
+                  'running': true,
+                },
+                'settings': settings,
+                'revision': 9,
+                'timeline': {'items': const []},
+              },
+            };
+          case 'conversation.settings.update':
+            updateParams = Map<String, dynamic>.from(params);
+            settings = Map<String, dynamic>.from(
+              params['settings'] as Map<String, dynamic>,
+            );
+            return {'result': settings};
+          case 'action.list':
+            return {'result': const <dynamic>[]};
+          case 'conversation.subscribe':
+            return {'result': const {}};
+          default:
+            return {'result': const {}};
+        }
+      },
+      catalogs: _settingsCatalogs,
+      events: events.stream,
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          coreGatewayProvider.overrideWithValue(gateway),
+          workspaceProvider.overrideWith(_FakeWorkspaceController.new),
+        ],
+        child: const MaterialApp(
+          locale: Locale('zh', 'CN'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: ConversationScreen(conversationId: 'thread-running-settings'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(TextField));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('权限'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('只读'));
+    await tester.runAsync(() async {
+      for (var index = 0; index < 50 && updateParams == null; index++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+    });
+    await tester.pump();
+
+    expect(updateParams?['threadId'], 'thread-running-settings');
+    expect(
+      (updateParams?['settings'] as Map<String, dynamic>?)?['permissionModeId'],
+      'readOnly',
+    );
     await tester.pumpWidget(const SizedBox());
   });
 

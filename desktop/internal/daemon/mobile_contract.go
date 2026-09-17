@@ -990,8 +990,8 @@ func (m *Manager) mobileConversationSettingsUpdate(instance *Instance, params js
 	if json.Unmarshal(params, &request) != nil || request.ThreadID == "" || request.ExpectedRevision == nil {
 		return mobileConversationSettings{}, &mobileContractError{code: "invalid_selection", message: "threadId, expectedRevision and settings are required"}
 	}
-	if !instance.CanStartTurn(request.ThreadID) {
-		return mobileConversationSettings{}, &mobileContractError{code: "conversation_busy", message: "the conversation is active or waiting for an action"}
+	if !instance.CanUpdateSettings(request.ThreadID) {
+		return mobileConversationSettings{}, &mobileContractError{code: "conversation_busy", message: "the conversation is unavailable or waiting for an action"}
 	}
 	if err := instance.CheckExpectedRevision(params); err != nil {
 		return mobileConversationSettings{}, &mobileContractError{code: "revision_conflict", message: err.Error()}
