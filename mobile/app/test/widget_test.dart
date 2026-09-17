@@ -74,7 +74,7 @@ void main() {
     expect(find.text('Work Any Where'), findsNothing);
   });
 
-  testWidgets('daemon selector sheet is opaque above workspace controls', (
+  testWidgets('daemon selector opens an anchored menu below the selector', (
     tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(360, 800));
@@ -104,19 +104,15 @@ void main() {
       ),
     );
 
-    await tester.tap(
-      find.byKey(const Key('workspace-daemon-selector')),
-    );
+    await tester.tap(find.byKey(const Key('workspace-daemon-selector')));
     await tester.pumpAndSettle();
 
-    final modalSheet = tester.widget<BottomSheet>(
-      find.ancestor(
-        of: find.text('管理电脑'),
-        matching: find.byType(BottomSheet),
-      ),
+    expect(find.byType(MenuItemButton), findsNWidgets(3));
+    final selector = tester.getRect(
+      find.byKey(const Key('workspace-daemon-selector')),
     );
-    expect(modalSheet.backgroundColor, Colors.white);
-    expect(modalSheet.clipBehavior, Clip.antiAlias);
+    final menu = tester.getRect(find.byType(MenuItemButton).first);
+    expect(menu.top, greaterThanOrEqualTo(selector.bottom));
     expect(tester.takeException(), isNull);
   });
 
@@ -243,5 +239,34 @@ void main() {
     expect(tester.widget<Text>(find.text('项目')).style?.fontSize, 18);
     expect(find.text('最近 10 个'), findsNothing);
     expect(find.text('最近 20 个'), findsNothing);
+  });
+
+  testWidgets('workspace explains when every computer is disabled', (
+    tester,
+  ) async {
+    const data = WorkspaceState(
+      needsPairing: false,
+      daemons: [
+        DaemonSummary(
+          id: 'daemon-1',
+          name: 'Offline PC',
+          phase: ConnectionPhase.disabled,
+          enabled: false,
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MaterialApp(
+          locale: Locale('zh', 'CN'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: WorkspaceScreen(data: data),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('没有启用的电脑'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

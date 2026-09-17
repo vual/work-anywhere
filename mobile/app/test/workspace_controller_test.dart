@@ -179,6 +179,26 @@ void main() {
     ]);
   });
 
+  test('failed computer selection restores UI and preference', () async {
+    SharedPreferences.setMockInitialValues({'lastDaemonId': 'daemon-a'});
+    final gateway = _FailingSelectionGateway();
+    final container = ProviderContainer(
+      overrides: [coreGatewayProvider.overrideWithValue(gateway)],
+    );
+    addTearDown(container.dispose);
+
+    final initial = await container.read(workspaceProvider.future);
+    expect(initial.selectedDaemonId, 'daemon-a');
+
+    await container.read(workspaceProvider.notifier).selectDaemon('daemon-b');
+
+    final result = container.read(workspaceProvider).requireValue;
+    expect(result.selectedDaemonId, 'daemon-a');
+    expect(result.syncFailed, isTrue);
+    final preferences = await SharedPreferences.getInstance();
+    expect(preferences.getString('lastDaemonId'), 'daemon-a');
+  });
+
   test(
     'late failure from a previous agent does not replace the current agent',
     () async {
@@ -230,6 +250,54 @@ void main() {
       expect(result.conversations.single.id, 'conversation-agent-ready');
     },
   );
+}
+
+class _FailingSelectionGateway extends CoreGateway {
+  Map<String, dynamic> get _status => {
+    'ok': true,
+    'result': {
+      'connected': false,
+      'activeDaemonId': 'daemon-a',
+      'generation': 4,
+      'pairings': [
+        {
+          'daemonId': 'daemon-a',
+          'displayName': 'A',
+          'relayUrl': 'https://relay.example.com',
+          'enabled': true,
+          'order': 0,
+          'phase': 'offline',
+        },
+        {
+          'daemonId': 'daemon-b',
+          'displayName': 'B',
+          'relayUrl': 'https://relay.example.com',
+          'enabled': true,
+          'order': 1,
+          'phase': 'offline',
+        },
+      ],
+    },
+  };
+
+  @override
+  Future<Map<String, dynamic>> status() async => _status;
+
+  @override
+  Future<Map<String, dynamic>> selectPairing(String daemonId) async =>
+      throw CoreFault('credential_store_failed', 'storage failed');
+
+  @override
+  Future<Map<String, dynamic>> probePairing(String daemonId) async => _status;
+
+  @override
+  Future<Map<String, dynamic>> call(
+    String method,
+    Map<String, dynamic> params, {
+    int timeoutMilliseconds = 30000,
+  }) async => method == 'agent.list'
+      ? {'result': <dynamic>[]}
+      : {'result': <String, dynamic>{}};
 }
 
 class _FakeCoreGateway extends CoreGateway {

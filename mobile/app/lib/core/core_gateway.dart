@@ -65,6 +65,27 @@ class CoreGateway {
     return _decodeReply(reply);
   }
 
+  Future<Map<String, dynamic>> selectPairing(String daemonId) async =>
+      _decodeReply(await _api.selectPairing(daemonId));
+
+  Future<Map<String, dynamic>> setPairingEnabled(
+    String daemonId,
+    bool enabled,
+  ) async => _decodeReply(await _api.setPairingEnabled(daemonId, enabled));
+
+  Future<Map<String, dynamic>> updatePairing(
+    String daemonId,
+    String displayName,
+    String relayUrl,
+  ) async =>
+      _decodeReply(await _api.updatePairing(daemonId, displayName, relayUrl));
+
+  Future<Map<String, dynamic>> reorderPairings(List<String> daemonIds) async =>
+      _decodeReply(await _api.reorderPairings(daemonIds));
+
+  Future<Map<String, dynamic>> probePairing(String daemonId) async =>
+      _decodeReply(await _api.probePairing(daemonId));
+
   Future<void> persistCredentials() async =>
       _decodeReply(await _api.persistCredentials());
 

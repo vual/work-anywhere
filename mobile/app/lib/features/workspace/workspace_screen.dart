@@ -54,84 +54,111 @@ class WorkspaceScreen extends ConsumerWidget {
           child: CustomScrollView(
             slivers: [
               SliverToBoxAdapter(child: _TopBar(data: data)),
-              if (data.syncFailed)
-                SliverToBoxAdapter(
-                  child: _SyncFailure(
-                    onRetry: () =>
-                        ref.read(workspaceProvider.notifier).refresh(),
-                  ),
-                ),
-              SliverToBoxAdapter(child: _AgentRail(data: data)),
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(
-                  WawCompact.horizontalPadding,
-                  16,
-                  WawCompact.horizontalPadding,
-                  0,
-                ),
-                sliver: SliverToBoxAdapter(
-                  child: _SectionTitle(
-                    title: query.isEmpty
-                        ? context.l10n.projects
-                        : context.l10n.projectSearchResults,
-                    trailing: query.isEmpty
-                        ? null
-                        : context.l10n.resultCount(projects.length),
-                  ),
-                ),
-              ),
-              if (projects.isEmpty)
-                SliverToBoxAdapter(
-                  child: _Empty(label: context.l10n.noProjects),
-                )
-              else
-                SliverList.builder(
-                  itemCount: projects.length,
-                  itemBuilder: (context, index) =>
-                      _ProjectRow(project: projects[index]),
-                ),
-              if (query.isEmpty && data.projectCursor != null)
-                SliverToBoxAdapter(
-                  child: TextButton(
-                    onPressed: () =>
-                        ref.read(workspaceProvider.notifier).loadMoreProjects(),
-                    child: Text(context.l10n.expandProjects),
-                  ),
-                ),
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(
-                  WawCompact.horizontalPadding,
-                  18,
-                  WawCompact.horizontalPadding,
-                  0,
-                ),
-                sliver: SliverToBoxAdapter(
-                  child: _SectionTitle(
-                    title: query.isEmpty
-                        ? context.l10n.recent
-                        : context.l10n.conversationSearchResults,
-                    trailing: query.isEmpty
-                        ? null
-                        : context.l10n.resultCount(conversations.length),
-                  ),
-                ),
-              ),
-              if (conversations.isEmpty)
-                SliverToBoxAdapter(
-                  child: _Empty(label: context.l10n.noConversations),
-                )
-              else
-                SliverList.builder(
-                  itemCount: conversations.length,
-                  itemBuilder: (context, index) => _ConversationRow(
-                    conversation: conversations[index],
-                    projectName: _projectName(
-                      data,
-                      conversations[index].projectId,
+              if (!data.hasEnabledDaemons)
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(28),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(context.l10n.noEnabledComputers),
+                          const SizedBox(height: 16),
+                          FilledButton(
+                            onPressed: () => context.push('/computers'),
+                            child: Text(context.l10n.manageComputers),
+                          ),
+                          TextButton(
+                            onPressed: () => context.push('/pair'),
+                            child: Text(context.l10n.addComputer),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
-              const SliverToBoxAdapter(child: SizedBox(height: 88)),
+              if (data.hasEnabledDaemons) ...[
+                if (data.syncFailed)
+                  SliverToBoxAdapter(
+                    child: _SyncFailure(
+                      onRetry: () =>
+                          ref.read(workspaceProvider.notifier).refresh(),
+                    ),
+                  ),
+                SliverToBoxAdapter(child: _AgentRail(data: data)),
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(
+                    WawCompact.horizontalPadding,
+                    16,
+                    WawCompact.horizontalPadding,
+                    0,
+                  ),
+                  sliver: SliverToBoxAdapter(
+                    child: _SectionTitle(
+                      title: query.isEmpty
+                          ? context.l10n.projects
+                          : context.l10n.projectSearchResults,
+                      trailing: query.isEmpty
+                          ? null
+                          : context.l10n.resultCount(projects.length),
+                    ),
+                  ),
+                ),
+                if (projects.isEmpty)
+                  SliverToBoxAdapter(
+                    child: _Empty(label: context.l10n.noProjects),
+                  )
+                else
+                  SliverList.builder(
+                    itemCount: projects.length,
+                    itemBuilder: (context, index) =>
+                        _ProjectRow(project: projects[index]),
+                  ),
+                if (query.isEmpty && data.projectCursor != null)
+                  SliverToBoxAdapter(
+                    child: TextButton(
+                      onPressed: () => ref
+                          .read(workspaceProvider.notifier)
+                          .loadMoreProjects(),
+                      child: Text(context.l10n.expandProjects),
+                    ),
+                  ),
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(
+                    WawCompact.horizontalPadding,
+                    18,
+                    WawCompact.horizontalPadding,
+                    0,
+                  ),
+                  sliver: SliverToBoxAdapter(
+                    child: _SectionTitle(
+                      title: query.isEmpty
+                          ? context.l10n.recent
+                          : context.l10n.conversationSearchResults,
+                      trailing: query.isEmpty
+                          ? null
+                          : context.l10n.resultCount(conversations.length),
+                    ),
+                  ),
+                ),
+                if (conversations.isEmpty)
+                  SliverToBoxAdapter(
+                    child: _Empty(label: context.l10n.noConversations),
+                  )
+                else
+                  SliverList.builder(
+                    itemCount: conversations.length,
+                    itemBuilder: (context, index) => _ConversationRow(
+                      conversation: conversations[index],
+                      projectName: _projectName(
+                        data,
+                        conversations[index].projectId,
+                      ),
+                    ),
+                  ),
+                const SliverToBoxAdapter(child: SizedBox(height: 88)),
+              ],
             ],
           ),
         ),
@@ -161,13 +188,23 @@ class WorkspaceScreen extends ConsumerWidget {
   }
 }
 
-class _TopBar extends StatelessWidget {
+class _TopBar extends ConsumerWidget {
   const _TopBar({required this.data});
   final WorkspaceState data;
 
   @override
-  Widget build(BuildContext context) {
-    final daemon = data.daemons.first;
+  Widget build(BuildContext context, WidgetRef ref) {
+    final daemon =
+        data.daemons
+            .where((item) => item.id == data.selectedDaemonId)
+            .firstOrNull ??
+        data.daemons.where((item) => item.enabled).firstOrNull ??
+        const DaemonSummary(
+          id: '',
+          name: null,
+          phase: ConnectionPhase.disabled,
+          enabled: false,
+        );
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         WawCompact.horizontalPadding,
@@ -246,51 +283,110 @@ class _TopBar extends StatelessWidget {
                 SizedBox(
                   key: const Key('workspace-daemon-selector'),
                   width: selectorWidth,
-                  child: Semantics(
-                    button: true,
-                    label: context.l10n.daemonSwitchLabel(
-                      daemon.name ?? context.l10n.computer,
-                      _statusLabel(context, daemon.phase),
+                  child: MenuAnchor(
+                    alignmentOffset: const Offset(0, 8),
+                    style: MenuStyle(
+                      backgroundColor: WidgetStatePropertyAll(
+                        Theme.of(context).floatingSurface,
+                      ),
+                      surfaceTintColor: const WidgetStatePropertyAll(
+                        Colors.transparent,
+                      ),
+                      elevation: const WidgetStatePropertyAll(12),
+                      maximumSize: WidgetStatePropertyAll(
+                        Size(
+                          selectorWidth + 64,
+                          MediaQuery.sizeOf(context).height * .62,
+                        ),
+                      ),
+                      shape: WidgetStatePropertyAll(
+                        RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                      ),
                     ),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(28),
-                      onTap: () => _showDaemons(context, data.daemons),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 8,
+                    menuChildren: [
+                      for (final item in data.daemons.where(
+                        (item) => item.enabled,
+                      ))
+                        MenuItemButton(
+                          leadingIcon: _StatusDot(item.phase),
+                          trailingIcon: item.id == data.selectedDaemonId
+                              ? const Icon(Icons.check_rounded)
+                              : null,
+                          onPressed: () => ref
+                              .read(workspaceProvider.notifier)
+                              .selectDaemon(item.id),
+                          child: SizedBox(
+                            width: selectorWidth - 28,
+                            child: Text(
+                              '${item.name ?? context.l10n.computer} · ${_statusLabel(context, item.phase)}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
                         ),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).cardColor,
-                          borderRadius: BorderRadius.circular(28),
-                        ),
-                        child: Row(
-                          children: [
-                            _StatusDot(daemon.phase),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    daemon.name ?? context.l10n.computer,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w700,
+                      if (data.daemons.any((item) => item.enabled))
+                        const Divider(),
+                      MenuItemButton(
+                        leadingIcon: const Icon(Icons.add_link_rounded),
+                        onPressed: () => context.push('/pair'),
+                        child: Text(context.l10n.addComputer),
+                      ),
+                      MenuItemButton(
+                        leadingIcon: const Icon(Icons.settings_outlined),
+                        onPressed: () => context.push('/computers'),
+                        child: Text(context.l10n.manageComputers),
+                      ),
+                    ],
+                    builder: (context, controller, child) => Semantics(
+                      button: true,
+                      label: context.l10n.daemonSwitchLabel(
+                        daemon.name ?? context.l10n.computer,
+                        _statusLabel(context, daemon.phase),
+                      ),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(28),
+                        onTap: () => controller.isOpen
+                            ? controller.close()
+                            : controller.open(),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).cardColor,
+                            borderRadius: BorderRadius.circular(28),
+                          ),
+                          child: Row(
+                            children: [
+                              _StatusDot(daemon.phase),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      daemon.name ?? context.l10n.computer,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w700,
+                                      ),
                                     ),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 10),
-                            const Icon(
-                              Icons.keyboard_arrow_down_rounded,
-                              size: 18,
-                            ),
-                          ],
+                              const SizedBox(width: 10),
+                              const Icon(
+                                Icons.keyboard_arrow_down_rounded,
+                                size: 18,
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -300,44 +396,6 @@ class _TopBar extends StatelessWidget {
             ),
           );
         },
-      ),
-    );
-  }
-
-  void _showDaemons(BuildContext context, List<DaemonSummary> items) {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Theme.of(context).floatingSurface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      clipBehavior: Clip.antiAlias,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (final item in items)
-              ListTile(
-                leading: _StatusDot(item.phase),
-                title: Text(item.name ?? context.l10n.computer),
-                subtitle: Text(_statusLabel(context, item.phase)),
-                trailing: item.id == data.selectedDaemonId
-                    ? const Icon(Icons.check_rounded)
-                    : null,
-              ),
-            const Divider(),
-            ListTile(
-              leading: const Icon(Icons.add_rounded),
-              title: Text(context.l10n.addComputer),
-              onTap: () => context.push('/pair'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.settings_outlined),
-              title: Text(context.l10n.manageComputers),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -568,4 +626,5 @@ String _statusLabel(BuildContext context, ConnectionPhase phase) =>
       ConnectionPhase.connecting => context.l10n.connecting,
       ConnectionPhase.online => context.l10n.secureOnline,
       ConnectionPhase.offline => context.l10n.offline,
+      ConnectionPhase.disabled => context.l10n.disabled,
     };

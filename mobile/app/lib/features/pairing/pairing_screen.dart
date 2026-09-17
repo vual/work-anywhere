@@ -45,7 +45,16 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
       _show(context.l10n.pairFailed);
       return;
     }
-    if (mounted) context.go('/');
+    if (mounted) {
+      final returnTo = GoRouterState.of(context)
+          .uri
+          .queryParameters['returnTo'];
+      if (returnTo == 'computers' && context.canPop()) {
+        context.pop();
+      } else {
+        context.go(returnTo == 'computers' ? '/computers' : '/');
+      }
+    }
   }
 
   void _show(String value) =>

@@ -265,6 +265,11 @@ private open class MobileCorePigeonCodec : StandardMessageCodec() {
 interface MobileCoreApi {
   suspend fun pair(uri: String): CoreReply
   suspend fun restoreStored(): CoreReply
+  suspend fun selectPairing(daemonId: String): CoreReply
+  suspend fun setPairingEnabled(daemonId: String, enabled: Boolean): CoreReply
+  suspend fun updatePairing(daemonId: String, displayName: String, relayUrl: String): CoreReply
+  suspend fun reorderPairings(daemonIds: List<String>): CoreReply
+  suspend fun probePairing(daemonId: String): CoreReply
   fun persistCredentials(): CoreReply
   fun deleteStoredCredentials(): CoreReply
   suspend fun call(method: String, paramsJson: String, timeoutMilliseconds: Long): CoreReply
@@ -306,6 +311,104 @@ interface MobileCoreApi {
             CoroutineScope(Dispatchers.Main).launch {
               val wrapped: List<Any?> = try {
                 listOf(api.restoreStored())
+              } catch (exception: Throwable) {
+                MobileCorePigeonUtils.wrapError(exception)
+              }
+              reply.reply(wrapped)
+            }
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.work_anywhere.MobileCoreApi.selectPairing$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { message, reply ->
+            val args = message as List<Any?>
+            val daemonIdArg = args[0] as String
+            CoroutineScope(Dispatchers.Main).launch {
+              val wrapped: List<Any?> = try {
+                listOf(api.selectPairing(daemonIdArg))
+              } catch (exception: Throwable) {
+                MobileCorePigeonUtils.wrapError(exception)
+              }
+              reply.reply(wrapped)
+            }
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.work_anywhere.MobileCoreApi.setPairingEnabled$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { message, reply ->
+            val args = message as List<Any?>
+            val daemonIdArg = args[0] as String
+            val enabledArg = args[1] as Boolean
+            CoroutineScope(Dispatchers.Main).launch {
+              val wrapped: List<Any?> = try {
+                listOf(api.setPairingEnabled(daemonIdArg, enabledArg))
+              } catch (exception: Throwable) {
+                MobileCorePigeonUtils.wrapError(exception)
+              }
+              reply.reply(wrapped)
+            }
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.work_anywhere.MobileCoreApi.updatePairing$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { message, reply ->
+            val args = message as List<Any?>
+            val daemonIdArg = args[0] as String
+            val displayNameArg = args[1] as String
+            val relayUrlArg = args[2] as String
+            CoroutineScope(Dispatchers.Main).launch {
+              val wrapped: List<Any?> = try {
+                listOf(api.updatePairing(daemonIdArg, displayNameArg, relayUrlArg))
+              } catch (exception: Throwable) {
+                MobileCorePigeonUtils.wrapError(exception)
+              }
+              reply.reply(wrapped)
+            }
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.work_anywhere.MobileCoreApi.reorderPairings$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { message, reply ->
+            val args = message as List<Any?>
+            val daemonIdsArg = args[0] as List<String>
+            CoroutineScope(Dispatchers.Main).launch {
+              val wrapped: List<Any?> = try {
+                listOf(api.reorderPairings(daemonIdsArg))
+              } catch (exception: Throwable) {
+                MobileCorePigeonUtils.wrapError(exception)
+              }
+              reply.reply(wrapped)
+            }
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.work_anywhere.MobileCoreApi.probePairing$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { message, reply ->
+            val args = message as List<Any?>
+            val daemonIdArg = args[0] as String
+            CoroutineScope(Dispatchers.Main).launch {
+              val wrapped: List<Any?> = try {
+                listOf(api.probePairing(daemonIdArg))
               } catch (exception: Throwable) {
                 MobileCorePigeonUtils.wrapError(exception)
               }

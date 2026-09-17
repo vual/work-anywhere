@@ -15,6 +15,21 @@ abstract class MobileCoreApi {
   @async
   CoreReply restoreStored();
 
+  @async
+  CoreReply selectPairing(String daemonId);
+
+  @async
+  CoreReply setPairingEnabled(String daemonId, bool enabled);
+
+  @async
+  CoreReply updatePairing(String daemonId, String displayName, String relayUrl);
+
+  @async
+  CoreReply reorderPairings(List<String> daemonIds);
+
+  @async
+  CoreReply probePairing(String daemonId);
+
   CoreReply persistCredentials();
 
   CoreReply deleteStoredCredentials();

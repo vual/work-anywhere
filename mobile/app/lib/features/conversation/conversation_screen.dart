@@ -120,6 +120,12 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         gateway: ref.read(coreGatewayProvider),
         agentId: agentId,
         threadId: conversationId,
+        daemonId: workspace.selectedDaemonId,
+        selectionGeneration: workspace.eventGeneration,
+        daemonIdProvider: () =>
+            ref.read(workspaceProvider).value?.selectedDaemonId,
+        selectionGenerationProvider: () =>
+            ref.read(workspaceProvider).value?.eventGeneration,
       )..addListener(_changed);
       setState(() => _controller = controller);
       controller.load().then((_) {
@@ -374,6 +380,12 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       gateway: ref.read(coreGatewayProvider),
       agentId: agentId,
       threadId: conversationId,
+      daemonId: ref.read(workspaceProvider).value?.selectedDaemonId,
+      selectionGeneration: ref.read(workspaceProvider).value?.eventGeneration,
+      daemonIdProvider: () =>
+          ref.read(workspaceProvider).value?.selectedDaemonId,
+      selectionGenerationProvider: () =>
+          ref.read(workspaceProvider).value?.eventGeneration,
     )..addListener(_changed);
     if (mounted) setState(() => _controller = controller);
     controller.startLiveSync();
@@ -1263,6 +1275,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         ConnectionPhase.connecting => context.l10n.connecting,
         ConnectionPhase.online => context.l10n.online,
         ConnectionPhase.offline => context.l10n.offline,
+        ConnectionPhase.disabled => context.l10n.disabled,
       };
 
   Future<void> _resolve(Map<String, dynamic> action, bool approved) async {

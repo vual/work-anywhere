@@ -21,6 +21,7 @@ class WorkspaceState {
     this.conversations = const [],
     this.selectedDaemonId,
     this.selectedAgentId,
+    this.eventGeneration,
     this.projectCursor,
     this.searchQuery = '',
     this.syncFailed = false,
@@ -33,6 +34,7 @@ class WorkspaceState {
   final List<ConversationSummary> conversations;
   final String? selectedDaemonId;
   final String? selectedAgentId;
+  final int? eventGeneration;
   final String? projectCursor;
   final String searchQuery;
   final bool syncFailed;
@@ -40,6 +42,7 @@ class WorkspaceState {
   AgentSummary? get selectedAgent =>
       agents.where((item) => item.id == selectedAgentId).firstOrNull;
   int get runningCount => conversations.where((item) => item.running).length;
+  bool get hasEnabledDaemons => daemons.any((item) => item.enabled);
 
   WorkspaceState copyWith({
     bool? needsPairing,
@@ -47,8 +50,9 @@ class WorkspaceState {
     List<AgentSummary>? agents,
     List<ProjectSummary>? projects,
     List<ConversationSummary>? conversations,
-    String? selectedDaemonId,
-    String? selectedAgentId,
+    Object? selectedDaemonId = _keepValue,
+    Object? selectedAgentId = _keepValue,
+    Object? eventGeneration = _keepValue,
     Object? projectCursor = _keepValue,
     String? searchQuery,
     bool? syncFailed,
@@ -58,8 +62,15 @@ class WorkspaceState {
     agents: agents ?? this.agents,
     projects: projects ?? this.projects,
     conversations: conversations ?? this.conversations,
-    selectedDaemonId: selectedDaemonId ?? this.selectedDaemonId,
-    selectedAgentId: selectedAgentId ?? this.selectedAgentId,
+    selectedDaemonId: identical(selectedDaemonId, _keepValue)
+        ? this.selectedDaemonId
+        : selectedDaemonId as String?,
+    selectedAgentId: identical(selectedAgentId, _keepValue)
+        ? this.selectedAgentId
+        : selectedAgentId as String?,
+    eventGeneration: identical(eventGeneration, _keepValue)
+        ? this.eventGeneration
+        : eventGeneration as int?,
     projectCursor: identical(projectCursor, _keepValue)
         ? this.projectCursor
         : projectCursor as String?,
@@ -80,7 +91,7 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
       var status =
           statusEnvelope['result'] as Map<String, dynamic>? ?? statusEnvelope;
       CoreFault? restoreFault;
-      if (status['connected'] != true) {
+      if (_catalog(status).isEmpty && status['connected'] != true) {
         try {
           statusEnvelope = await _gateway.restoreStored();
           status =
@@ -89,6 +100,23 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
         } on CoreFault catch (error) {
           restoreFault = error;
         }
+      }
+      final storedDaemons = _catalog(status);
+      if (storedDaemons.isNotEmpty) {
+        final preferences = await SharedPreferences.getInstance();
+        final selectedId = _selectedEnabledId(
+          storedDaemons,
+          preferences.getString('lastDaemonId') ?? status['activeDaemonId'],
+        );
+        final base = WorkspaceState(
+          needsPairing: false,
+          daemons: storedDaemons,
+          selectedDaemonId: selectedId,
+          eventGeneration: (status['generation'] as num?)?.toInt(),
+        );
+        var loaded = await _loadOrKeepPairing(base);
+        loaded = await _probeOthers(loaded);
+        return loaded;
       }
       if (status['connected'] != true) {
         final preferences = await SharedPreferences.getInstance();
@@ -104,6 +132,7 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
               ),
             ],
             selectedDaemonId: daemonId,
+            eventGeneration: (status['generation'] as num?)?.toInt(),
           );
         }
         return const WorkspaceState(needsPairing: true);
@@ -114,6 +143,7 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
         _connectedState(
           daemonId,
           preferences.getString('lastDaemonName:$daemonId'),
+          (status['generation'] as num?)?.toInt(),
         ),
       );
     } catch (_) {
@@ -143,22 +173,28 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
         final statusEnvelope = await _gateway.status();
         final retainedStatus =
             statusEnvelope['result'] as Map<String, dynamic>? ?? statusEnvelope;
-        final daemonId = retainedStatus['daemonId'] as String?;
+        final daemonId =
+            retainedStatus['daemonId'] as String? ??
+            retainedStatus['activeDaemonId'] as String?;
         if (daemonId != null) {
           await _gateway.persistCredentials();
           final preferences = await SharedPreferences.getInstance();
           await preferences.setString('lastDaemonId', daemonId);
+          final catalog = _catalog(retainedStatus);
           state = AsyncData(
             WorkspaceState(
               needsPairing: false,
-              daemons: [
-                DaemonSummary(
-                  id: daemonId,
-                  name: preferences.getString('lastDaemonName:$daemonId'),
-                  phase: ConnectionPhase.offline,
-                ),
-              ],
+              daemons: catalog.isEmpty
+                  ? [
+                      DaemonSummary(
+                        id: daemonId,
+                        name: preferences.getString('lastDaemonName:$daemonId'),
+                        phase: ConnectionPhase.offline,
+                      ),
+                    ]
+                  : catalog,
               selectedDaemonId: daemonId,
+              eventGeneration: (retainedStatus['generation'] as num?)?.toInt(),
               syncFailed: true,
             ),
           );
@@ -172,30 +208,43 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
       rethrow;
     }
 
-    final daemonId = status['daemonId'] as String? ?? 'daemon';
+    final daemonId =
+        status['daemonId'] as String? ??
+        status['activeDaemonId'] as String? ??
+        'daemon';
     final preferences = await SharedPreferences.getInstance();
+    final daemons = _catalog(status);
     state = AsyncData(
       await _loadOrKeepPairing(
-        _connectedState(
-          daemonId,
-          computerName ?? preferences.getString('lastDaemonName:$daemonId'),
-        ),
+        daemons.isEmpty
+            ? _connectedState(
+                daemonId,
+                computerName ??
+                    preferences.getString('lastDaemonName:$daemonId'),
+                (status['generation'] as num?)?.toInt(),
+              )
+            : WorkspaceState(
+                needsPairing: false,
+                daemons: daemons,
+                selectedDaemonId: daemonId,
+                eventGeneration: (status['generation'] as num?)?.toInt(),
+              ),
       ),
     );
   }
 
-  WorkspaceState _connectedState(String daemonId, [String? name]) =>
-      WorkspaceState(
-        needsPairing: false,
-        daemons: [
-          DaemonSummary(
-            id: daemonId,
-            name: name,
-            phase: ConnectionPhase.online,
-          ),
-        ],
-        selectedDaemonId: daemonId,
-      );
+  WorkspaceState _connectedState(
+    String daemonId, [
+    String? name,
+    int? eventGeneration,
+  ]) => WorkspaceState(
+    needsPairing: false,
+    daemons: [
+      DaemonSummary(id: daemonId, name: name, phase: ConnectionPhase.online),
+    ],
+    selectedDaemonId: daemonId,
+    eventGeneration: eventGeneration,
+  );
 
   Future<WorkspaceState> _loadOrKeepPairing(WorkspaceState base) async {
     try {
@@ -203,6 +252,165 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
     } catch (_) {
       return base.copyWith(syncFailed: true);
     }
+  }
+
+  Future<WorkspaceState> _probeOthers(WorkspaceState base) async {
+    var current = base;
+    for (final daemon in base.daemons.where(
+      (item) => item.enabled && item.id != base.selectedDaemonId,
+    )) {
+      try {
+        final envelope = await _gateway.probePairing(daemon.id);
+        final result = envelope['result'] as Map<String, dynamic>? ?? envelope;
+        current = _mergeCatalog(current: current, result: result);
+      } catch (_) {
+        // Probe failures are represented by the daemon's offline phase.
+      }
+    }
+    return current;
+  }
+
+  Future<void> selectDaemon(String id) async {
+    final current = state.value;
+    final daemon = current?.daemons.where((item) => item.id == id).firstOrNull;
+    if (current == null ||
+        daemon == null ||
+        !daemon.enabled ||
+        current.selectedDaemonId == id) {
+      return;
+    }
+    final preferences = await SharedPreferences.getInstance();
+    final generation = ++_selectionGeneration;
+    state = AsyncData(
+      current.copyWith(
+        selectedDaemonId: id,
+        selectedAgentId: null,
+        agents: const [],
+        projects: const [],
+        conversations: const [],
+        projectCursor: null,
+        syncFailed: false,
+        daemons: current.daemons
+            .map(
+              (item) => item.id == id
+                  ? item.copyWith(phase: ConnectionPhase.connecting)
+                  : item,
+            )
+            .toList(growable: false),
+      ),
+    );
+    try {
+      final envelope = await _gateway.selectPairing(id);
+      final result = envelope['result'] as Map<String, dynamic>? ?? envelope;
+      final loaded = await _loadOrKeepPairing(
+        _withCatalog(
+          current: state.requireValue,
+          result: result,
+          selectedId: id,
+        ),
+      );
+      if (generation == _selectionGeneration) {
+        state = AsyncData(loaded);
+        try {
+          await preferences.setString('lastDaemonId', id);
+        } catch (_) {
+          // Selection is already committed by the native catalog. Failure to
+          // update this convenience preference must not desynchronize the UI.
+        }
+      }
+    } catch (_) {
+      if (generation == _selectionGeneration) {
+        state = AsyncData(current.copyWith(syncFailed: true));
+      }
+    }
+  }
+
+  Future<void> setDaemonEnabled(String id, bool enabled) async {
+    final current = state.value;
+    if (current == null) return;
+    final previous = current;
+    state = AsyncData(
+      current.copyWith(
+        daemons: current.daemons
+            .map(
+              (item) => item.id == id
+                  ? item.copyWith(
+                      enabled: enabled,
+                      phase: enabled
+                          ? ConnectionPhase.connecting
+                          : ConnectionPhase.disabled,
+                    )
+                  : item,
+            )
+            .toList(growable: false),
+      ),
+    );
+    try {
+      final envelope = await _gateway.setPairingEnabled(id, enabled);
+      final result = envelope['result'] as Map<String, dynamic>? ?? envelope;
+      final catalog = _catalog(result);
+      state = AsyncData(
+        _withCatalog(
+          current: state.requireValue,
+          result: result,
+          selectedId: result['activeDaemonId'] as String?,
+        ),
+      );
+      if (catalog.isNotEmpty && result['activeDaemonId'] != null) {
+        await _loadOrKeepPairing(state.requireValue)
+            .then((loaded) => state = AsyncData(loaded));
+      }
+    } catch (_) {
+      state = AsyncData(previous);
+      rethrow;
+    }
+  }
+
+  Future<void> reorderDaemons(int oldIndex, int newIndex) async {
+    final current = state.value;
+    if (current == null) return;
+    final reordered = [...current.daemons];
+    final item = reordered.removeAt(oldIndex);
+    reordered.insert(newIndex, item);
+    state = AsyncData(current.copyWith(daemons: reordered));
+    try {
+      final envelope = await _gateway.reorderPairings(
+        reordered.map((item) => item.id).toList(),
+      );
+      final result = envelope['result'] as Map<String, dynamic>? ?? envelope;
+      state = AsyncData(
+        _withCatalog(current: state.requireValue, result: result),
+      );
+    } catch (_) {
+      state = AsyncData(current);
+      rethrow;
+    }
+  }
+
+  Future<DaemonSummary?> updateDaemon(
+    String id,
+    String name,
+    String relayUrl,
+  ) async {
+    final envelope = await _gateway.updatePairing(id, name, relayUrl);
+    final result = envelope['result'] as Map<String, dynamic>? ?? envelope;
+    state = AsyncData(
+      _withCatalog(current: state.requireValue, result: result),
+    );
+    if (state.requireValue.selectedDaemonId == id) {
+      state = AsyncData(await _loadOrKeepPairing(state.requireValue));
+    }
+    return state.requireValue.daemons
+        .where((item) => item.id == id)
+        .firstOrNull;
+  }
+
+  Future<void> probeDaemon(String id) async {
+    final envelope = await _gateway.probePairing(id);
+    final result = envelope['result'] as Map<String, dynamic>? ?? envelope;
+    state = AsyncData(
+      _withCatalog(current: state.requireValue, result: result),
+    );
   }
 
   Future<WorkspaceState> _load(WorkspaceState base) async {
@@ -334,4 +542,68 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
 
 extension _FirstOrNull<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;
+}
+
+List<DaemonSummary> _catalog(Map<String, dynamic> value) {
+  final items = value['pairings'];
+  if (items is List) {
+    return items
+        .whereType<Map<String, dynamic>>()
+        .map(DaemonSummary.fromJson)
+        .toList(growable: false)
+      ..sort((a, b) => a.order.compareTo(b.order));
+  }
+  final daemonId = value['daemonId'] as String?;
+  if (daemonId == null) return const [];
+  return [
+    DaemonSummary(
+      id: daemonId,
+      name: value['computerName'] as String?,
+      phase: connectionPhaseFromString(
+        value['connected'] == true ? 'online' : 'offline',
+      ),
+    ),
+  ];
+}
+
+String? _selectedEnabledId(List<DaemonSummary> items, String? preferred) {
+  if (preferred != null &&
+      items.any((item) => item.id == preferred && item.enabled)) {
+    return preferred;
+  }
+  return items.where((item) => item.enabled).firstOrNull?.id;
+}
+
+WorkspaceState _mergeCatalog({
+  required WorkspaceState current,
+  required Map<String, dynamic> result,
+}) {
+  final daemons = _catalog(result);
+  return daemons.isEmpty ? current : current.copyWith(daemons: daemons);
+}
+
+WorkspaceState _withCatalog({
+  required WorkspaceState current,
+  required Map<String, dynamic> result,
+  String? selectedId,
+}) {
+  final daemons = _catalog(result);
+  final resolved = selectedId ?? result['activeDaemonId'] as String?;
+  final selected =
+      resolved != null &&
+          daemons.any((item) => item.id == resolved && item.enabled)
+      ? resolved
+      : _selectedEnabledId(daemons, current.selectedDaemonId);
+  return current.copyWith(
+    daemons: daemons.isEmpty ? current.daemons : daemons,
+    selectedDaemonId: selected,
+    eventGeneration:
+        (result['generation'] as num?)?.toInt() ?? current.eventGeneration,
+    selectedAgentId: null,
+    agents: const [],
+    projects: const [],
+    conversations: const [],
+    projectCursor: null,
+    syncFailed: false,
+  );
 }

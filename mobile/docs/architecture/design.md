@@ -38,9 +38,9 @@ Flutter 适合共享 UI 与业务逻辑，同时保留 Swift/Kotlin 平台接入
 
 ## 内部 binding 接口
 
-当前 Flutter 通过 Pigeon `MobileCoreApi` 发出 `pair`、`restoreStored`、credential 持久化/删除、通用 versioned control `call`、`status` 和 `close`；业务 method/DTO 位于 `mobile-control-v1` envelope 内。Android host 把 Go Core 的 `EventSink` 接到 `work_anywhere/mobile_events` EventChannel，主动发送 daemon event 和 transport state；iOS 事件宿主尚未实现。
+当前 Flutter 通过 Pigeon `MobileCoreApi` 发出 `pair`、`restoreStored`、多 pairing 的选择/启停/排序/Relay 更新/短探测、credential catalog 持久化/删除、通用 versioned control `call`、`status` 和 `close`；业务 method/DTO 位于 `mobile-control-v1` envelope 内。Android host 把 Go Core 的 `EventSink` 接到 `work_anywhere/mobile_events` EventChannel，主动发送 daemon event 和 transport state；iOS 事件宿主尚未实现。
 
-Host 把 command 转给 gomobile facade；Go core 的 event sink 只返回两类 JSON envelope：metadata-only `type=event` 与连接生命周期 `type=transport`。endpoint 不把迟到 response 当事件，未注册 sink 时仅在内存保留最近 1000 条 daemon event。Dart controller 合并 event burst，并用 snapshot sequence 丢弃迟到结果。网络任务永不在 platform main thread 同步等待。
+Host 把 command 转给 gomobile facade；Go core 的 event sink 只返回两类 JSON envelope：metadata-only `type=event` 与连接生命周期 `type=transport`，两者都携带当前 `daemonId + selection generation`。endpoint 不把迟到 response 当事件，未注册 sink 时仅在内存保留最近 1000 条 daemon event；Android 主线程转发后，Dart controller 仍按当前电脑和 generation 二次过滤，再合并 event burst 并用 snapshot sequence 丢弃迟到结果。网络任务永不在 platform main thread 同步等待。
 
 Go core 向 host 反向请求的窄接口只有：`SecretStore.load/save/delete`、应用私有文件读取和脱敏诊断 sink；host-only API 包含 `registerPushToken`，provider token 不经过 Flutter。Key bytes、完整配对 URI、provider token、ciphertext 和 control raw body 不可进入 `CoreStateEvent`。Core/Flutter API 与 Relay wire、Desktop control 是三个独立版本域，任何一层升级都要单独协商和测试。
 
@@ -48,7 +48,7 @@ Go core 向 host 反向请求的窄接口只有：`SecretStore.load/save/delete`
 
 V1 持久化范围刻意保持最小：
 
-- Android `PairingCredentialSet`：Mobile/pairing/daemon ID、Ed25519/X25519 private keys、双方 capability、scope 与 Relay origin；由 Keystore AES-GCM wrapping 后进入 app-private SharedPreferences。多 pairing record 与 Android backup exclusion 尚未实现。
+- Android 多 pairing catalog：每条记录包含 pairing/daemon ID、Ed25519/X25519 private keys、双方 capability、scope、Relay origin、本地名称、启用状态和顺序；由 Keystore AES-GCM wrapping 后进入 app-private SharedPreferences。旧单配对 ciphertext 会在首次恢复时迁移为 v2 catalog。
 - 会话 mode/model/reasoning/permission 设置由 Desktop 按 thread 加密持久化并随 snapshot 返回；Flutter 不写入 SharedPreferences。尚未创建 thread 的设置只存在当前会话页内存，首次 Turn 一次提交。
 - iOS `DeviceIdentityBundle`/`PairingRecord` 的 Keychain `ThisDeviceOnly` 存储尚未实现。
 - 非敏感偏好：主题、通知提示状态、隐私遮罩、`lastSelectedDaemonId`、每个 Daemon 的 `lastSelectedAgentId`。
@@ -72,7 +72,7 @@ View ── intent ──► ViewModel ── use case ──► Repository
                                                └─ PushIntentService (system notification entry)
 ```
 
-一个 Go `PairingRuntime` 对应一条 daemon—Mobile pairing，拥有独立连接状态、Noise session、request ID namespace、cursor map 和 in-flight request map。endpoint 客户端为每个 runtime 维护单一重连门闩；并发请求共享一次重连尝试，失败后使用 500 ms 起、最大 30 s 的指数冷却，避免断线轮询把 Relay 连接限流放大。选中的 Daemon 保持前台连接；其余 pairing 由 coordinator 以有界短连接依次探测并缓存 `connecting/online/offline + checkedAt`，探测完成即关闭。切换 Daemon 时关闭旧常驻 session、递增 selection generation 并激活新 runtime，避免无上限 socket/battery 消耗和迟到事件串台。
+一个 Go `PairingRuntime` 对应一条 daemon—Mobile pairing，拥有独立连接状态、Noise session、request ID namespace、cursor map 和 in-flight request map。endpoint 客户端为每个 runtime 维护单一重连门闩；并发请求共享一次重连尝试，失败后使用 500 ms 起、最大 30 s 的指数冷却，避免断线轮询把 Relay 连接限流放大。选中的 Daemon 保持前台连接；其余 pairing 由 coordinator 以最长 15 秒的有界短连接依次探测并缓存 `connecting/online/offline + checkedAt`，探测完成即关闭。切换或禁用 Daemon 时只断开旧常驻 session 并保留 catalog credential；只有 runtime 被替换、Core 最终关闭或未来显式解除配对时才擦除 credential。切换同时递增 selection generation 并激活新 runtime，避免无上限 socket/battery 消耗和迟到事件串台。
 
 Repository 中的权威划分：
 

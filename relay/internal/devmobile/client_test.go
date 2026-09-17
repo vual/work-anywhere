@@ -170,6 +170,26 @@ func TestRestoreRetainsCredentialAndIdentityAfterRateLimit(t *testing.T) {
 	}
 }
 
+func TestDisconnectRetainsCredentialButCloseWipesIt(t *testing.T) {
+	credential := testCredential("https://relay.example.com")
+	raw, err := json.Marshal(credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := New()
+	if err = client.LoadCredentials(raw); err != nil {
+		t.Fatal(err)
+	}
+	client.Disconnect()
+	if _, err = client.ExportCredentials(); err != nil {
+		t.Fatalf("disconnect wiped pairing credential: %v", err)
+	}
+	client.Close()
+	if _, err = client.ExportCredentials(); err == nil {
+		t.Fatal("close retained pairing credential")
+	}
+}
+
 func TestSessionHandshakeFromFrameRejectsRouteAndIgnoresStaleSession(t *testing.T) {
 	pairingID := uuid.New()
 	daemonID := uuid.New()

@@ -265,6 +265,11 @@ class MobileCorePigeonCodec: FlutterStandardMessageCodec, @unchecked Sendable {
 protocol MobileCoreApi {
   func pair(uri: String) async throws -> CoreReply
   func restoreStored() async throws -> CoreReply
+  func selectPairing(daemonId: String) async throws -> CoreReply
+  func setPairingEnabled(daemonId: String, enabled: Bool) async throws -> CoreReply
+  func updatePairing(daemonId: String, displayName: String, relayUrl: String) async throws -> CoreReply
+  func reorderPairings(daemonIds: [String]) async throws -> CoreReply
+  func probePairing(daemonId: String) async throws -> CoreReply
   func persistCredentials() throws -> CoreReply
   func deleteStoredCredentials() throws -> CoreReply
   func call(method: String, paramsJson: String, timeoutMilliseconds: Int64) async throws -> CoreReply
@@ -309,6 +314,94 @@ class MobileCoreApiSetup {
       }
     } else {
       restoreStoredChannel.setMessageHandler(nil)
+    }
+    let selectPairingChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.work_anywhere.MobileCoreApi.selectPairing\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
+    if let api = api {
+      selectPairingChannel.setMessageHandler { message, reply in
+        let args = message as! [Any?]
+        let daemonIdArg = args[0] as! String
+        Task { @MainActor in
+          do {
+            let result = try await api.selectPairing(daemonId: daemonIdArg)
+            reply(wrapResult(result))
+          } catch {
+            reply(wrapError(error))
+          }
+        }
+      }
+    } else {
+      selectPairingChannel.setMessageHandler(nil)
+    }
+    let setPairingEnabledChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.work_anywhere.MobileCoreApi.setPairingEnabled\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
+    if let api = api {
+      setPairingEnabledChannel.setMessageHandler { message, reply in
+        let args = message as! [Any?]
+        let daemonIdArg = args[0] as! String
+        let enabledArg = args[1] as! Bool
+        Task { @MainActor in
+          do {
+            let result = try await api.setPairingEnabled(daemonId: daemonIdArg, enabled: enabledArg)
+            reply(wrapResult(result))
+          } catch {
+            reply(wrapError(error))
+          }
+        }
+      }
+    } else {
+      setPairingEnabledChannel.setMessageHandler(nil)
+    }
+    let updatePairingChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.work_anywhere.MobileCoreApi.updatePairing\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
+    if let api = api {
+      updatePairingChannel.setMessageHandler { message, reply in
+        let args = message as! [Any?]
+        let daemonIdArg = args[0] as! String
+        let displayNameArg = args[1] as! String
+        let relayUrlArg = args[2] as! String
+        Task { @MainActor in
+          do {
+            let result = try await api.updatePairing(daemonId: daemonIdArg, displayName: displayNameArg, relayUrl: relayUrlArg)
+            reply(wrapResult(result))
+          } catch {
+            reply(wrapError(error))
+          }
+        }
+      }
+    } else {
+      updatePairingChannel.setMessageHandler(nil)
+    }
+    let reorderPairingsChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.work_anywhere.MobileCoreApi.reorderPairings\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
+    if let api = api {
+      reorderPairingsChannel.setMessageHandler { message, reply in
+        let args = message as! [Any?]
+        let daemonIdsArg = args[0] as! [String]
+        Task { @MainActor in
+          do {
+            let result = try await api.reorderPairings(daemonIds: daemonIdsArg)
+            reply(wrapResult(result))
+          } catch {
+            reply(wrapError(error))
+          }
+        }
+      }
+    } else {
+      reorderPairingsChannel.setMessageHandler(nil)
+    }
+    let probePairingChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.work_anywhere.MobileCoreApi.probePairing\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
+    if let api = api {
+      probePairingChannel.setMessageHandler { message, reply in
+        let args = message as! [Any?]
+        let daemonIdArg = args[0] as! String
+        Task { @MainActor in
+          do {
+            let result = try await api.probePairing(daemonId: daemonIdArg)
+            reply(wrapResult(result))
+          } catch {
+            reply(wrapError(error))
+          }
+        }
+      }
+    } else {
+      probePairingChannel.setMessageHandler(nil)
     }
     let persistCredentialsChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.work_anywhere.MobileCoreApi.persistCredentials\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
     if let api = api {

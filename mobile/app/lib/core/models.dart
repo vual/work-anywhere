@@ -1,14 +1,76 @@
-enum ConnectionPhase { connecting, online, offline }
+enum ConnectionPhase { connecting, online, offline, disabled }
 
 class DaemonSummary {
   const DaemonSummary({
     required this.id,
     required this.name,
     required this.phase,
+    this.relayUrl = '',
+    this.enabled = true,
+    this.order = 0,
+    this.checkedAt,
+    this.lastError,
+    this.pairingId,
   });
   final String id;
   final String? name;
   final ConnectionPhase phase;
+  final String relayUrl;
+  final bool enabled;
+  final int order;
+  final int? checkedAt;
+  final String? lastError;
+  final String? pairingId;
+
+  factory DaemonSummary.fromJson(Map<String, dynamic> json) => DaemonSummary(
+    id: json['daemonId'] as String? ?? json['id'] as String? ?? 'daemon',
+    pairingId: json['pairingId'] as String?,
+    name: (json['displayName'] as String? ?? json['name'] as String?)?.trim(),
+    relayUrl: json['relayUrl'] as String? ?? '',
+    enabled: json['enabled'] as bool? ?? true,
+    order: (json['order'] as num?)?.toInt() ?? 0,
+    checkedAt: (json['checkedAt'] as num?)?.toInt(),
+    lastError: json['lastError'] as String?,
+    phase: connectionPhaseFromString(
+      json['phase'] as String?,
+      enabled: json['enabled'] as bool? ?? true,
+    ),
+  );
+
+  DaemonSummary copyWith({
+    String? name,
+    String? relayUrl,
+    bool? enabled,
+    int? order,
+    int? checkedAt,
+    String? lastError,
+    ConnectionPhase? phase,
+  }) => DaemonSummary(
+    id: id,
+    pairingId: pairingId,
+    name: name ?? this.name,
+    relayUrl: relayUrl ?? this.relayUrl,
+    enabled: enabled ?? this.enabled,
+    order: order ?? this.order,
+    checkedAt: checkedAt ?? this.checkedAt,
+    lastError: lastError ?? this.lastError,
+    phase: phase ?? this.phase,
+  );
+}
+
+ConnectionPhase connectionPhaseFromString(
+  String? value, {
+  bool enabled = true,
+}) {
+  if (!enabled || value == 'disabled') return ConnectionPhase.disabled;
+  return switch (value) {
+    'connecting' ||
+    'authenticating' ||
+    'handshaking' ||
+    'syncing' => ConnectionPhase.connecting,
+    'online' => ConnectionPhase.online,
+    _ => ConnectionPhase.offline,
+  };
 }
 
 class AgentSummary {

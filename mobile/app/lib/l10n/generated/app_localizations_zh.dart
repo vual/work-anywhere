@@ -460,6 +460,54 @@ class AppLocalizationsZh extends AppLocalizations {
   String get computer => '电脑';
 
   @override
+  String get back => '返回';
+
+  @override
+  String get connectionSection => '连接';
+
+  @override
+  String get disabled => '已禁用';
+
+  @override
+  String get dragToReorder => '长按拖动手柄，然后拖动以重新排序';
+
+  @override
+  String get addComputerHint => '使用二维码与 ChatGPT 桌面版配对';
+
+  @override
+  String get editComputer => '编辑电脑';
+
+  @override
+  String get save => '保存';
+
+  @override
+  String get computerName => '电脑名称';
+
+  @override
+  String get relayAddress => 'Relay 地址';
+
+  @override
+  String get httpRelayWarning => 'HTTP 连接未加密，请仅在可信网络中使用';
+
+  @override
+  String get invalidComputerName => '电脑名称不能为空且不能超过 80 个字符';
+
+  @override
+  String get invalidRelayAddress => '请输入有效的 HTTP(S) Relay 地址';
+
+  @override
+  String get computerSaved => '电脑设置已保存';
+
+  @override
+  String get computerSavedOffline => '设置已保存，但连接失败';
+
+  @override
+  String get computerSaveFailed => '无法保存电脑设置';
+
+  @override
+  String get noEnabledComputers => '没有启用的电脑';
+
+  @override
   String get connected => '已连接';
 
   @override

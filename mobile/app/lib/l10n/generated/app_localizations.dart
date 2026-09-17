@@ -898,6 +898,102 @@ abstract class AppLocalizations {
   /// **'电脑'**
   String get computer;
 
+  /// No description provided for @back.
+  ///
+  /// In zh, this message translates to:
+  /// **'返回'**
+  String get back;
+
+  /// No description provided for @connectionSection.
+  ///
+  /// In zh, this message translates to:
+  /// **'连接'**
+  String get connectionSection;
+
+  /// No description provided for @disabled.
+  ///
+  /// In zh, this message translates to:
+  /// **'已禁用'**
+  String get disabled;
+
+  /// No description provided for @dragToReorder.
+  ///
+  /// In zh, this message translates to:
+  /// **'长按拖动手柄，然后拖动以重新排序'**
+  String get dragToReorder;
+
+  /// No description provided for @addComputerHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'使用二维码与 ChatGPT 桌面版配对'**
+  String get addComputerHint;
+
+  /// No description provided for @editComputer.
+  ///
+  /// In zh, this message translates to:
+  /// **'编辑电脑'**
+  String get editComputer;
+
+  /// No description provided for @save.
+  ///
+  /// In zh, this message translates to:
+  /// **'保存'**
+  String get save;
+
+  /// No description provided for @computerName.
+  ///
+  /// In zh, this message translates to:
+  /// **'电脑名称'**
+  String get computerName;
+
+  /// No description provided for @relayAddress.
+  ///
+  /// In zh, this message translates to:
+  /// **'Relay 地址'**
+  String get relayAddress;
+
+  /// No description provided for @httpRelayWarning.
+  ///
+  /// In zh, this message translates to:
+  /// **'HTTP 连接未加密，请仅在可信网络中使用'**
+  String get httpRelayWarning;
+
+  /// No description provided for @invalidComputerName.
+  ///
+  /// In zh, this message translates to:
+  /// **'电脑名称不能为空且不能超过 80 个字符'**
+  String get invalidComputerName;
+
+  /// No description provided for @invalidRelayAddress.
+  ///
+  /// In zh, this message translates to:
+  /// **'请输入有效的 HTTP(S) Relay 地址'**
+  String get invalidRelayAddress;
+
+  /// No description provided for @computerSaved.
+  ///
+  /// In zh, this message translates to:
+  /// **'电脑设置已保存'**
+  String get computerSaved;
+
+  /// No description provided for @computerSavedOffline.
+  ///
+  /// In zh, this message translates to:
+  /// **'设置已保存，但连接失败'**
+  String get computerSavedOffline;
+
+  /// No description provided for @computerSaveFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'无法保存电脑设置'**
+  String get computerSaveFailed;
+
+  /// No description provided for @noEnabledComputers.
+  ///
+  /// In zh, this message translates to:
+  /// **'没有启用的电脑'**
+  String get noEnabledComputers;
+
   /// No description provided for @connected.
   ///
   /// In zh, this message translates to:

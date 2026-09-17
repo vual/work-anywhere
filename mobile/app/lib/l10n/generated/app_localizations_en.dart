@@ -478,6 +478,58 @@ class AppLocalizationsEn extends AppLocalizations {
   String get computer => 'Computer';
 
   @override
+  String get back => 'Back';
+
+  @override
+  String get connectionSection => 'Connections';
+
+  @override
+  String get disabled => 'Disabled';
+
+  @override
+  String get dragToReorder => 'Long-press the handle, then drag to reorder';
+
+  @override
+  String get addComputerHint =>
+      'Pair with the ChatGPT desktop app using a QR code';
+
+  @override
+  String get editComputer => 'Edit computer';
+
+  @override
+  String get save => 'Save';
+
+  @override
+  String get computerName => 'Computer name';
+
+  @override
+  String get relayAddress => 'Relay address';
+
+  @override
+  String get httpRelayWarning =>
+      'HTTP is unencrypted; use it only on a trusted network';
+
+  @override
+  String get invalidComputerName =>
+      'Computer name is required and must be 80 characters or fewer';
+
+  @override
+  String get invalidRelayAddress => 'Enter a valid HTTP(S) Relay address';
+
+  @override
+  String get computerSaved => 'Computer settings saved';
+
+  @override
+  String get computerSavedOffline =>
+      'Settings saved, but the connection failed';
+
+  @override
+  String get computerSaveFailed => 'Unable to save computer settings';
+
+  @override
+  String get noEnabledComputers => 'No computers are enabled';
+
+  @override
   String get connected => 'Connected';
 
   @override

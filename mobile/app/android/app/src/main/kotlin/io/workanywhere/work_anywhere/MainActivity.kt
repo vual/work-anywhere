@@ -92,14 +92,45 @@ private class ReflectiveMobileCore(context: Context) : MobileCoreApi {
     override suspend fun restoreStored(): CoreReply = withContext(Dispatchers.IO) {
         val stored = credentials.load()
             ?: return@withContext failure("no_stored_pairing", "No pairing credentials are stored")
-        invoke("restore", arrayOf<Class<*>>(String::class.java), arrayOf<Any>(stored))
+        val before = exportCatalog()
+        val reply = invoke("restore", arrayOf<Class<*>>(String::class.java), arrayOf<Any>(stored))
+        persistAfter(reply, before.payload.takeIf { before.ok })
+    }
+
+    override suspend fun selectPairing(daemonId: String): CoreReply = withContext(Dispatchers.IO) {
+        mutate("selectPairing", arrayOf(String::class.java), arrayOf(daemonId))
+    }
+
+    override suspend fun setPairingEnabled(daemonId: String, enabled: Boolean): CoreReply = withContext(Dispatchers.IO) {
+        mutate("setPairingEnabled", arrayOf(String::class.java, java.lang.Boolean.TYPE), arrayOf(daemonId, enabled))
+    }
+
+    override suspend fun updatePairing(daemonId: String, displayName: String, relayUrl: String): CoreReply = withContext(Dispatchers.IO) {
+        mutate("updatePairing", arrayOf(String::class.java, String::class.java, String::class.java), arrayOf(daemonId, displayName, relayUrl))
+    }
+
+    override suspend fun reorderPairings(daemonIds: List<String>): CoreReply = withContext(Dispatchers.IO) {
+        mutate("reorderPairings", arrayOf(List::class.java), arrayOf(daemonIds))
+    }
+
+    override suspend fun probePairing(daemonId: String): CoreReply = withContext(Dispatchers.IO) {
+        val before = exportCatalog()
+        persistAfter(
+            invoke("probePairing", arrayOf(String::class.java), arrayOf(daemonId)),
+            before.payload.takeIf { before.ok },
+        )
     }
 
     override fun persistCredentials(): CoreReply {
-        val exported = invoke("exportCredentials", emptyArray<Class<*>>(), emptyArray<Any>())
+        return persistCatalog()
+    }
+
+    private fun persistCatalog(): CoreReply {
+        val exported = invoke("exportCatalog", emptyArray<Class<*>>(), emptyArray<Any>())
         if (!exported.ok) return exported
         return runCatching {
-            credentials.save(JSONObject(exported.payload).getString("result"))
+            check(exported.payload.isNotBlank()) { "Unable to export pairing catalog" }
+            check(credentials.save(exported.payload)) { "Unable to commit pairing catalog" }
             CoreReply(ok = true, payload = "{\"ok\":true}")
         }.getOrElse { failure("credential_store_failed", it.message ?: "Unable to store pairing credentials") }
     }
@@ -134,6 +165,35 @@ private class ReflectiveMobileCore(context: Context) : MobileCoreApi {
         }.getOrElse { failure("native_core_failed", it.cause?.message ?: it.message ?: "Native core call failed") }
     }
 
+    private fun mutate(name: String, types: Array<Class<*>>, arguments: Array<Any>): CoreReply {
+        val before = exportCatalog()
+        val reply = invoke(name, types, arguments)
+        return persistAfter(reply, before.payload.takeIf { before.ok })
+    }
+
+    private fun persistAfter(reply: CoreReply, rollbackCatalog: String? = null): CoreReply {
+        if (!coreSucceeded(reply)) return reply
+        val saved = persistCatalog()
+        if (saved.ok) return reply
+        if (rollbackCatalog != null) {
+            runCatching {
+                invoke("restore", arrayOf<Class<*>>(String::class.java), arrayOf<Any>(rollbackCatalog))
+            }
+        }
+        return saved
+    }
+
+    private fun coreSucceeded(reply: CoreReply): Boolean {
+        if (!reply.ok) return false
+        return runCatching {
+            val envelope = JSONObject(reply.payload)
+            envelope.optBoolean("ok", false)
+        }.getOrDefault(false)
+    }
+
+    private fun exportCatalog(): CoreReply =
+        invoke("exportCatalog", emptyArray<Class<*>>(), emptyArray<Any>())
+
     private fun failure(code: String, message: String): CoreReply {
         val payload = JSONObject()
             .put("error", JSONObject().put("code", code).put("message", message))
@@ -146,19 +206,25 @@ private class SecureCredentialStore(context: Context) {
     private val preferences = context.getSharedPreferences("waw_secure_pairing", Context.MODE_PRIVATE)
     private val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
 
-    fun save(value: String) {
+    fun save(value: String): Boolean {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, key())
         val ciphertext = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
-        preferences.edit()
-            .putString("iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
-            .putString("ciphertext", Base64.encodeToString(ciphertext, Base64.NO_WRAP))
-            .apply()
+        return preferences.edit()
+            .putString("catalog_iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
+            .putString("catalog_ciphertext", Base64.encodeToString(ciphertext, Base64.NO_WRAP))
+            .remove("iv")
+            .remove("ciphertext")
+            .commit()
     }
 
     fun load(): String? {
-        val iv = preferences.getString("iv", null) ?: return null
-        val ciphertext = preferences.getString("ciphertext", null) ?: return null
+        val iv = preferences.getString("catalog_iv", null)
+            ?: preferences.getString("iv", null)
+            ?: return null
+        val ciphertext = preferences.getString("catalog_ciphertext", null)
+            ?: preferences.getString("ciphertext", null)
+            ?: return null
         return runCatching {
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, Base64.decode(iv, Base64.NO_WRAP)))

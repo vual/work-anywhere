@@ -266,7 +266,10 @@ func (c *Client) ExportCredentials() ([]byte, error) {
 	return json.Marshal(c.credential)
 }
 
-func (c *Client) Restore(ctx context.Context, raw []byte) error {
+// LoadCredentials validates and installs a credential without opening a
+// network connection. It is used by the multi-pairing Mobile registry to
+// restore inactive pairings without creating extra long-lived sockets.
+func (c *Client) LoadCredentials(raw []byte) error {
 	var credential CredentialSet
 	if err := json.Unmarshal(raw, &credential); err != nil {
 		return errors.New("invalid stored pairing credentials")
@@ -278,8 +281,33 @@ func (c *Client) Restore(ctx context.Context, raw []byte) error {
 		return errors.New("stored pairing credentials are incomplete")
 	}
 	c.storeCredential(credential, pairingID, daemonID, mobileID)
-	defer wipeCredential(&credential)
+	wipeCredential(&credential)
+	return nil
+}
+
+func (c *Client) Restore(ctx context.Context, raw []byte) error {
+	if err := c.LoadCredentials(raw); err != nil {
+		return err
+	}
 	return c.reconnect(ctx)
+}
+
+// UpdateRelayURL changes the origin used by the next connection attempt and
+// invalidates the current transport. The caller is responsible for applying
+// its own origin validation before invoking this method.
+func (c *Client) UpdateRelayURL(relayURL string) {
+	c.mu.Lock()
+	if c.credential.RelayURL == relayURL {
+		c.mu.Unlock()
+		return
+	}
+	c.credential.RelayURL = relayURL
+	c.connectUntil, c.connectCode, c.connectBackoff = time.Time{}, "", 0
+	connection := c.conn
+	c.mu.Unlock()
+	if connection != nil {
+		c.disconnectConnection(connection, "relay_changed", "Relay origin changed")
+	}
 }
 
 func (c *Client) connect(parent context.Context, relayURL string, pairingID, daemonID, mobileID uuid.UUID, edPrivate ed25519.PrivateKey, xKey noise.DHKey, daemonX, daemonCapability, mobileCapability []byte, scopes []string) error {
@@ -590,7 +618,20 @@ func sessionHandshakeFromFrame(frame *relayv1.ServerFrame, openMessageID []byte,
 	return candidate, nil
 }
 
+// Disconnect closes the active transport while retaining the pairing
+// credential so the client can be selected and reconnected later.
+func (c *Client) Disconnect() {
+	c.shutdown(false)
+	c.emitTransport("disconnected", "")
+}
+
+// Close releases the transport and permanently wipes the pairing credential.
 func (c *Client) Close() {
+	c.shutdown(true)
+	c.emitTransport("closed", "")
+}
+
+func (c *Client) shutdown(wipe bool) {
 	c.mu.Lock()
 	if c.cancel != nil {
 		c.cancel()
@@ -605,7 +646,9 @@ func (c *Client) Close() {
 		c.secure = nil
 	}
 	c.connected = false
-	wipeCredential(&c.credential)
+	if wipe {
+		wipeCredential(&c.credential)
+	}
 	for id, waiter := range c.pending {
 		delete(c.pending, id)
 		close(waiter)
@@ -615,7 +658,6 @@ func (c *Client) Close() {
 		close(waiter)
 	}
 	c.mu.Unlock()
-	c.emitTransport("closed", "")
 }
 
 func wipeCredential(value *CredentialSet) {

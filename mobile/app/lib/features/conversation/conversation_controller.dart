@@ -46,11 +46,19 @@ class ConversationController extends ChangeNotifier {
     required this.gateway,
     required this.agentId,
     required this.threadId,
+    this.daemonId,
+    this.selectionGeneration,
+    this.daemonIdProvider,
+    this.selectionGenerationProvider,
   });
 
   final CoreGateway gateway;
   final String agentId;
   final String threadId;
+  final String? daemonId;
+  final int? selectionGeneration;
+  final String? Function()? daemonIdProvider;
+  final int? Function()? selectionGenerationProvider;
   ConversationState _state = const ConversationState();
   ConversationSettings? _settings;
   bool _disposed = false;
@@ -92,6 +100,21 @@ class ConversationController extends ChangeNotifier {
   }
 
   void _handleLiveEvent(Map<String, dynamic> event) {
+    final expectedDaemonId = daemonIdProvider?.call() ?? daemonId;
+    final expectedGeneration =
+        selectionGenerationProvider?.call() ?? selectionGeneration;
+    final eventDaemonId = event['daemonId'] as String?;
+    final eventGeneration = (event['generation'] as num?)?.toInt();
+    if (expectedGeneration != null) {
+      if (eventDaemonId != expectedDaemonId ||
+          eventGeneration != expectedGeneration) {
+        return;
+      }
+    } else if (expectedDaemonId != null &&
+        eventDaemonId != null &&
+        eventDaemonId != expectedDaemonId) {
+      return;
+    }
     if (event['type'] == 'transport') {
       switch (event['state'] as String? ?? '') {
         case 'online':

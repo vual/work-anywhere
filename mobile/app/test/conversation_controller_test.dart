@@ -108,6 +108,55 @@ void main() {
     controller.dispose();
   });
 
+  test('events from an old computer generation are ignored', () async {
+    final events = StreamController<Map<String, dynamic>>();
+    addTearDown(events.close);
+    var reads = 0;
+    final gateway = _FakeGateway((method, params) async {
+      if (method == 'action.list') return {'result': <dynamic>[]};
+      reads++;
+      return {
+        'result': {
+          'conversation': {'id': 't1'},
+          'sequence': reads,
+          'timeline': {'items': const []},
+        },
+      };
+    }, events: events.stream);
+    final controller = ConversationController(
+      gateway: gateway,
+      agentId: 'a1',
+      threadId: 't1',
+      daemonId: 'daemon-new',
+      selectionGeneration: 2,
+    );
+    await controller.load();
+    controller.startLiveSync();
+
+    events.add({
+      'type': 'event',
+      'daemonId': 'daemon-old',
+      'generation': 1,
+      'conversationId': 't1',
+      'sequence': 2,
+      'event': 'turn.completed',
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    expect(reads, 1);
+
+    events.add({
+      'type': 'event',
+      'daemonId': 'daemon-new',
+      'generation': 2,
+      'conversationId': 't1',
+      'sequence': 2,
+      'event': 'turn.completed',
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    expect(reads, 2);
+    controller.dispose();
+  });
+
   test('event bursts are debounced into one conversation refresh', () async {
     final events = StreamController<Map<String, dynamic>>();
     addTearDown(events.close);

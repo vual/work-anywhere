@@ -33,6 +33,7 @@
 ## Phase 2 — read-only task experience
 
 - 实现无底部导航的单工作台、上次 Daemon/Agent 恢复、顶栏右侧 Daemon 状态下拉、居中活跃任务提示、左侧 App icon 和下一行横向 Agent selector。
+- 已实现 Android 多电脑 catalog、锚定选择菜单、管理页排序/启停/名称与 Relay origin 编辑；仅当前电脑保持长期连接，其他启用电脑使用有界短探测。
 - 实现 Codex 最近项目 10 条与展开、跨项目最近对话 20 条、项目内最近对话 15 条与分页、项目/对话全集搜索和运行中蓝色 loading icon。
 - 实现项目/会话详情和 typed timeline renderer；Hermes Bot 仅完成 capability/unsupported 状态，不纳入 Codex-first 发布范围。
 - 实现 conversation snapshot/cursor、event reducer、gap/snapshot fallback、弱网退避和 selection generation。
