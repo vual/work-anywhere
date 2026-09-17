@@ -72,6 +72,7 @@ void main() {
       find.byType(FloatingActionButton),
     );
     expect(button.isExtended, isFalse);
+    expect(button.shape, isA<CircleBorder>());
     expect(button.tooltip, '新建对话');
     expect(find.byIcon(Icons.edit_outlined), findsOneWidget);
     expect(find.text('新建对话'), findsNothing);

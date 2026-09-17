@@ -181,6 +181,7 @@ class _ProjectScreenState extends ConsumerState<ProjectScreen> {
         tooltip: context.l10n.newConversation,
         backgroundColor: wawBlue,
         foregroundColor: Colors.white,
+        shape: const CircleBorder(),
         child: const Icon(Icons.edit_outlined),
       ),
     );
