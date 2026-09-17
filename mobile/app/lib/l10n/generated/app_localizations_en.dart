@@ -100,6 +100,14 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String pendingCount(int count) {
+    return '$count pending';
+  }
+
+  @override
+  String get needsAttention => 'Needs your attention';
+
+  @override
   String get loadWorkspaceFailed => 'Unable to load workspace';
 
   @override
@@ -287,6 +295,23 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get allow => 'Allow';
+
+  @override
+  String get answerQuestionsTitle => 'Your answer is needed';
+
+  @override
+  String get answer => 'Answer';
+
+  @override
+  String get answerHint => 'Enter an answer';
+
+  @override
+  String get openQuestions => 'Answer questions';
+
+  @override
+  String questionResponseFailed(String error) {
+    return 'Could not submit answers: $error';
+  }
 
   @override
   String get runningStop => 'Task running · Stop';

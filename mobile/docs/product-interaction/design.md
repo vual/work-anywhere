@@ -126,7 +126,7 @@ Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项�
 
 ### 最近对话
 
-项目/Bot 区域下方展示当前 Agent 最近 20 条对话，跨项目合并且不按项目分组，按最后更新时间倒序。对话使用与项目一致的约 54dp 紧凑扁平文本行，左侧单行标题、右侧相对时间；项目详情中的对话列表沿用相同行高。列表 DTO 不携带 preview，状态优先级为 `等待处理 > 运行中 > 正在停止 > 失败 > 空闲`。
+项目/Bot 区域下方展示当前 Agent 最近 20 条对话，跨项目合并且不按项目分组，按最后更新时间倒序。对话使用与项目一致的约 54dp 紧凑扁平文本行，左侧单行标题、右侧相对时间；项目详情中的对话列表沿用相同行高。列表 DTO 不携带 preview，状态优先级为 `等待处理 > 运行中 > 正在停止 > 失败 > 空闲`。`needsAttention=true` 时标题右侧显示橙色描边感叹号并提供“需要人工处理”的无障碍文本，取代运行中 loading 和相对时间；工作台顶栏同时优先显示“n 个待处理”。
 
 运行中的对话在卡片最右侧显示蓝色旋转 loading icon，并提供“运行中”的无障碍文本；它与 Daemon selector 的连接 loading 分属不同语义。点击任意对话进入会话详情。超过 20 条时工作台不继续分页，用户通过底部搜索访问更早对话；项目详情仍可独立分页。
 
@@ -186,14 +186,12 @@ Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项�
 
 ## 待处理 Action
 
-待处理 action 优先附着到对应对话：工作台/项目页的对话卡片显示待处理 badge，会话详情置顶 action card。工作台顶部仅在存在一个或多个 action 时显示紧凑待处理入口；点击后以临时 sheet 按创建时间展示当前 Daemon 的 action，不成为常驻导航页。卡片显示 Agent、项目、thread 标题、action kind、短说明和等待时长。
+待处理 action 优先附着到对应对话：Desktop 在 `ConversationSummary.needsAttention` 中投影与 thread 关联的未完成 action，工作台/项目页在标题右侧显示橙色描边感叹号；会话详情置顶 action card。工作台顶部存在一个或多个待处理对话时显示紧凑“n 个待处理”入口并优先进入第一条关联对话，不建立独立一级 action 页面。
 
-只有 `action.read` 时可查看但操作区显示只读原因；有 `action.resolve` 时打开处理 bottom sheet：
+- command/其他 approval：保持兼容的“允许 / 拒绝”操作，不进入问题弹窗。完整命令、文件、网络上下文与 provider 的全部审批选项仍属于尚未完成的 approval DTO，当前界面不能宣称提供永久授权。
+- `item/tool/requestUserInput`：进入会话后自动打开模态弹窗，同时保留置顶 action card 作为关闭弹窗后的再次入口。弹窗一次显示本 action 的全部问题；每题展示 header、问题、单选项与说明，并始终允许输入自定义答案。选择选项和自定义输入互斥，所有问题都有非空答案后底部“提交”按钮才启用；`isSecret` 问题使用遮蔽输入。
 
-- approval：完整展示命令/文件/网络等已规范化上下文，明确列出 provider 给出的每个选项；拒绝按钮保持 destructive 样式并二次确认。
-- question：按 schema 渲染单选、多选、文本和必填校验；用户答案在提交前可回看。
-
-提交后 sheet 保持打开并显示进度，直到 response/snapshot 确认。遇到 `already_resolved`，用中性结果“已在另一端处理”关闭操作区并刷新，不弹红色失败。action 失效、Turn 结束或 revoke 同样以权威同步结果清理。
+问题提交按 question id 组装 `answers[id].answers=[value]` 并只调用一次 `action.resolve`。成功后刷新会话与工作台，移除提醒；失败保留 action card 和用户可再次打开的入口，不自动重发。`already_resolved`、action 失效、Turn 结束或 revoke 最终都以权威同步结果清理。
 
 ## Daemon 管理与设置
 

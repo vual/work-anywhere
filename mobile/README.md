@@ -1,6 +1,6 @@
 # Work Anywhere Mobile
 
-> 状态：Android-first 实现已建立 Flutter 应用、Pigeon host、Go endpoint core、多电脑配对管理、工作台/项目/会话与受控写入代码路径；电脑管理支持锚定下拉切换、拖动排序、启用/禁用、名称与 Relay 地址编辑，并使用 Android Keystore 加密 catalog。会话详情使用稳定 timeline/catalog/settings/queue DTO、opaque cursor 分页和大内容按需读取。尚未完成 Android 全量真机 E2E、正式签名、完整 action DTO、iOS host、push、应用锁与发布验收，因此不能作为生产客户端发布。`relay/` 中的浏览器 `mobile-simulator` 仍只用于协议联调。
+> 状态：Android-first 实现已建立 Flutter 应用、Pigeon host、Go endpoint core、多电脑配对管理、工作台/项目/会话与受控写入代码路径；电脑管理支持锚定下拉切换、拖动排序、启用/禁用、名称与 Relay 地址编辑，并使用 Android Keystore 加密 catalog。会话详情使用稳定 timeline/catalog/settings/queue DTO、opaque cursor 分页和大内容按需读取；`request_user_input` 已使用稳定问题 DTO、多问题弹窗和待处理提醒，命令审批继续兼容允许/拒绝。尚未完成 Android 全量真机 E2E、正式签名、完整 approval DTO、iOS host、push、应用锁与发布验收，因此不能作为生产客户端发布。`relay/` 中的浏览器 `mobile-simulator` 仍只用于协议联调。
 
 Mobile 是 Work Anywhere 的 iOS/Android 客户端。它不连接 Codex 云端，也不保存云端账号；每次通过已授权的 Desktop daemon 读取任务状态、继续已有会话、处理审批/问题、发送图片和中断运行中的 Turn。
 
@@ -110,7 +110,7 @@ CI 的 `Mobile` workflow 执行 endpoint/Core tests、Pigeon no-diff、Flutter a
 - Relay wire、pairing、E2EE envelope 和 push frame 的唯一所有者是 [`relay/proto`](../relay/proto/waw/relay/v1/) 及 [Relay wire design](../relay/docs/wire-protocol/design.md)。Mobile 只提交生成代码，不复制 schema。
 - 密文内的业务方法由 [Desktop local control](../desktop/docs/local-control/design.md) 所有，Mobile 通过 pairing scopes 限制展示和操作。
 - Relay 不保存业务 ciphertext；Desktop/Codex session 是权威状态。Mobile 的内存 projection 可随时丢弃并重建。
-- Desktop 已提供 `mobile-control-v1`、`agent.list`、`project.list`、`conversation.create`、project/conversation summary、分页 timeline、大内容引用以及稳定 model/permission catalog 和 thread settings 更新；Desktop 管理页可生成真实 QR，Relay endpoint crypto 已成为公开复用包。完整 action DTO、server-side project search 和跨产物 golden vectors 仍是发布门槛。
+- Desktop 已提供 `mobile-control-v1`、`agent.list`、`project.list`、`conversation.create`、project/conversation summary、分页 timeline、大内容引用、稳定 model/permission catalog、thread settings 更新和 `request_user_input` 问题 DTO；Desktop 管理页可生成真实 QR，Relay endpoint crypto 已成为公开复用包。完整 approval DTO、server-side project search 和跨产物 golden vectors 仍是发布门槛。
 
 ## Delivery summary
 

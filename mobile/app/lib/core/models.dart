@@ -122,6 +122,7 @@ class ConversationSummary {
     required this.status,
     required this.running,
     required this.updatedAt,
+    this.needsAttention = false,
   });
   final String id;
   final String agentId;
@@ -130,6 +131,7 @@ class ConversationSummary {
   final String status;
   final bool running;
   final int updatedAt;
+  final bool needsAttention;
 
   factory ConversationSummary.fromJson(Map<String, dynamic> json) =>
       ConversationSummary(
@@ -140,6 +142,7 @@ class ConversationSummary {
         status: json['status'] as String? ?? 'unknown',
         running: json['running'] as bool? ?? false,
         updatedAt: json['updatedAt'] as int? ?? 0,
+        needsAttention: json['needsAttention'] as bool? ?? false,
       );
 }
 

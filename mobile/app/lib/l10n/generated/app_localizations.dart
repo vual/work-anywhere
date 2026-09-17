@@ -262,6 +262,18 @@ abstract class AppLocalizations {
   /// **'{count} 个运行中'**
   String runningCount(int count);
 
+  /// No description provided for @pendingCount.
+  ///
+  /// In zh, this message translates to:
+  /// **'{count} 个待处理'**
+  String pendingCount(int count);
+
+  /// No description provided for @needsAttention.
+  ///
+  /// In zh, this message translates to:
+  /// **'需要人工处理'**
+  String get needsAttention;
+
   /// No description provided for @loadWorkspaceFailed.
   ///
   /// In zh, this message translates to:
@@ -579,6 +591,36 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'允许'**
   String get allow;
+
+  /// No description provided for @answerQuestionsTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'需要你的回答'**
+  String get answerQuestionsTitle;
+
+  /// No description provided for @answer.
+  ///
+  /// In zh, this message translates to:
+  /// **'回答'**
+  String get answer;
+
+  /// No description provided for @answerHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'输入回答'**
+  String get answerHint;
+
+  /// No description provided for @openQuestions.
+  ///
+  /// In zh, this message translates to:
+  /// **'填写回答'**
+  String get openQuestions;
+
+  /// No description provided for @questionResponseFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'提交回答失败：{error}'**
+  String questionResponseFailed(String error);
 
   /// No description provided for @runningStop.
   ///

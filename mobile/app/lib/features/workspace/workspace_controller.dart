@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -42,6 +44,8 @@ class WorkspaceState {
   AgentSummary? get selectedAgent =>
       agents.where((item) => item.id == selectedAgentId).firstOrNull;
   int get runningCount => conversations.where((item) => item.running).length;
+  int get attentionCount =>
+      conversations.where((item) => item.needsAttention).length;
   bool get hasEnabledDaemons => daemons.any((item) => item.enabled);
 
   WorkspaceState copyWith({
@@ -81,11 +85,14 @@ class WorkspaceState {
 
 class WorkspaceController extends AsyncNotifier<WorkspaceState> {
   int _selectionGeneration = 0;
+  StreamSubscription<Map<String, dynamic>>? _eventSubscription;
+  Timer? _eventRefreshDebounce;
 
   CoreGateway get _gateway => ref.read(coreGatewayProvider);
 
   @override
   Future<WorkspaceState> build() async {
+    _subscribeToEvents();
     try {
       var statusEnvelope = await _gateway.status();
       var status =
@@ -149,6 +156,38 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
     } catch (_) {
       return const WorkspaceState(needsPairing: true);
     }
+  }
+
+  void _subscribeToEvents() {
+    if (_eventSubscription != null) return;
+    _eventSubscription = _gateway.events.listen(_handleEvent, onError: (_) {});
+    ref.onDispose(() {
+      _eventRefreshDebounce?.cancel();
+      unawaited(_eventSubscription?.cancel());
+      _eventSubscription = null;
+    });
+  }
+
+  void _handleEvent(Map<String, dynamic> event) {
+    if (event['type'] != 'event') return;
+    final current = state.value;
+    if (current == null || current.needsPairing) return;
+    final eventDaemonId = event['daemonId'] as String?;
+    final eventGeneration = (event['generation'] as num?)?.toInt();
+    if (eventDaemonId != null && eventDaemonId != current.selectedDaemonId) {
+      return;
+    }
+    if (current.eventGeneration != null &&
+        eventGeneration != current.eventGeneration) {
+      return;
+    }
+    final name = (event['event'] as String? ?? '').toLowerCase();
+    if (!name.contains('action')) return;
+    _eventRefreshDebounce?.cancel();
+    _eventRefreshDebounce = Timer(
+      const Duration(milliseconds: 150),
+      () => unawaited(refresh()),
+    );
   }
 
   Future<void> pair(String uri) async {

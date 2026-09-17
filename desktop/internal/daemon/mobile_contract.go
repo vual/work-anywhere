@@ -49,14 +49,39 @@ type mobileProjectSummary struct {
 }
 
 type mobileConversationSummary struct {
-	ID        string `json:"id"`
-	AgentID   string `json:"agentId"`
-	ProjectID string `json:"projectId,omitempty"`
-	Title     string `json:"title"`
-	Status    string `json:"status"`
-	Running   bool   `json:"running"`
-	CreatedAt int64  `json:"createdAt"`
-	UpdatedAt int64  `json:"updatedAt"`
+	ID             string `json:"id"`
+	AgentID        string `json:"agentId"`
+	ProjectID      string `json:"projectId,omitempty"`
+	Title          string `json:"title"`
+	Status         string `json:"status"`
+	Running        bool   `json:"running"`
+	NeedsAttention bool   `json:"needsAttention"`
+	CreatedAt      int64  `json:"createdAt"`
+	UpdatedAt      int64  `json:"updatedAt"`
+}
+
+type mobileActionOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+}
+
+type mobileActionQuestion struct {
+	Header   string               `json:"header"`
+	ID       string               `json:"id"`
+	Question string               `json:"question"`
+	IsOther  bool                 `json:"isOther,omitempty"`
+	IsSecret bool                 `json:"isSecret,omitempty"`
+	Options  []mobileActionOption `json:"options"`
+}
+
+type mobileAction struct {
+	ID             json.RawMessage        `json:"id"`
+	Kind           string                 `json:"kind"`
+	Method         string                 `json:"method"`
+	ConversationID string                 `json:"conversationId,omitempty"`
+	TurnID         string                 `json:"turnId,omitempty"`
+	CreatedAt      time.Time              `json:"createdAt"`
+	Questions      []mobileActionQuestion `json:"questions,omitempty"`
 }
 
 type mobilePage[T any] struct {
@@ -715,6 +740,43 @@ func normalizeConversationList(agentID string, raw json.RawMessage) (mobilePage[
 		page.Items = append(page.Items, mobileConversationSummary{ID: item.ID, AgentID: agentID, ProjectID: item.ProjectID, Title: title, Status: status, Running: running, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt})
 	}
 	return page, nil
+}
+
+func applyConversationAttention(page *mobilePage[mobileConversationSummary], actions []pendingAction) {
+	pending := make(map[string]struct{}, len(actions))
+	for _, action := range actions {
+		if action.ConversationID != "" && !action.Resolved {
+			pending[action.ConversationID] = struct{}{}
+		}
+	}
+	for index := range page.Items {
+		_, page.Items[index].NeedsAttention = pending[page.Items[index].ID]
+	}
+}
+
+func normalizeMobileActions(actions []pendingAction) []mobileAction {
+	result := make([]mobileAction, 0, len(actions))
+	for _, action := range actions {
+		item := mobileAction{
+			ID:             append(json.RawMessage(nil), action.ID...),
+			Kind:           "approval",
+			Method:         action.Method,
+			ConversationID: action.ConversationID,
+			TurnID:         action.TurnID,
+			CreatedAt:      action.CreatedAt,
+		}
+		if action.Method == "item/tool/requestUserInput" {
+			item.Kind = "userInput"
+			var params struct {
+				Questions []mobileActionQuestion `json:"questions"`
+			}
+			if json.Unmarshal(action.Params, &params) == nil && len(params.Questions) > 0 {
+				item.Questions = params.Questions
+			}
+		}
+		result = append(result, item)
+	}
+	return result
 }
 
 type mobileConversationMetadata struct {

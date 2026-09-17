@@ -1,6 +1,6 @@
 # Mobile protocol and synchronization
 
-> 状态：Mobile Go Core 已复用 Relay endpoint 完成 pair/auth/Noise/control、多 pairing catalog、选择/启停/排序/Relay 更新和 Android 安全恢复路径；Desktop 已发布 normalized summary、分页 timeline、大内容引用和会话 settings/catalog，Mobile 会话控制器已支持分页、局部重试和 gap snapshot 恢复。完整 action DTO、多 pairing 真机 E2E 和 iOS host 尚未完成。
+> 状态：Mobile Go Core 已复用 Relay endpoint 完成 pair/auth/Noise/control、多 pairing catalog、选择/启停/排序/Relay 更新和 Android 安全恢复路径；Desktop 已发布 normalized summary、分页 timeline、大内容引用、会话 settings/catalog 和 `request_user_input` 问题 DTO，Mobile 会话控制器已支持分页、局部重试和 gap snapshot 恢复。完整 approval DTO、多 pairing 真机 E2E 和 iOS host 尚未完成。
 
 ## 目标与范围
 
@@ -109,7 +109,7 @@ App 前台对未选中 Daemon 以有界短连接依次执行 status probe，更�
 
 ### 规范化 DTO 当前边界与发布门槛
 
-`mobile-control-v1` envelope 会回显 contract，未知 contract 返回 `unsupported_contract`。Mobile-facing target 参数统一使用 `agentId`，Desktop 只在 provider 边界内转换为 `instanceId`；附件上传会先绑定该实例，再把 `instanceId` 从 provider 参数中移除。`agent.list`、`project.list`、`conversation.list`、conversation timeline 与 model/permission catalog 已输出稳定 DTO；project list 不暴露 root，conversation list 不暴露 preview，Mobile 不解析 provider 原始权限结构；action 仍有 provider-shaped payload。
+`mobile-control-v1` envelope 会回显 contract，未知 contract 返回 `unsupported_contract`。Mobile-facing target 参数统一使用 `agentId`，Desktop 只在 provider 边界内转换为 `instanceId`；附件上传会先绑定该实例，再把 `instanceId` 从 provider 参数中移除。`agent.list`、`project.list`、`conversation.list`、conversation timeline 与 model/permission catalog 已输出稳定 DTO；project list 不暴露 root，conversation list 不暴露 preview，Mobile 不解析 provider 原始权限结构。Mobile `action.list` 不返回原始 params：通用 approval 只返回归属和 method，`item/tool/requestUserInput` 额外归一化 questions/options。
 
 `conversation.read` 组合 metadata-only `thread/read`、`thread/items/list(sortDirection=desc)` 和 `thread/queue/list`，默认 timeline 20、最大 50。snapshot 包含 metadata、revision、sequence、timeline、权威 queue 和 `settings={mode,modelId,reasoningEffort,permissionModeId}`。queue item 固定为 `id`、`clientMessageId`、`text` 与 `attachmentCount`，不得把 Desktop 图片/mention 路径带到 Mobile。`TimelineItem` 固定为 id、可选 turnId、kind、status 与 blocks，不透传 provider JSON。Plan item 使用单个 `kind=plan` block，daemon 保留原始 Markdown；真正超过 5 个源文件行时普通 Timeline response 只返回前 5 行，并为完整正文返回 `contentRef` 与 `totalBytes`，不生成 title/summary。Plan 和其他大 block 通过 `conversation.content.read` 按 128 KiB 分块读取；引用过期后，Flutter 使用私有的 turnId/itemId/blockIndex 调用 `conversation.content.resolve`，daemon 在该 turn 内分页查找 item 并重新签发引用，找不到时返回 `content_not_found`，不要求刷新或丢弃已加载旧页。
 
@@ -119,19 +119,19 @@ App 前台对未选中 Daemon 以有界短连接依次执行 status probe，更�
 
 `hookPrompt` 不进入 DTO；function/tool、协作、搜索、图片、sleep、review 和 compaction item 只返回单个 `kind=summary` block。该 block 的 `summaryKind` 是原始类型，`summaryValue` 是脱敏、单行且不超过 512 UTF-8 字节的值，`text` 是语言无关 fallback；完整句子和 status 由 Flutter ARB 本地化。summary 不包含 arguments/output/result/error/path/prompt，不生成 `contentRef`；commandExecution 只返回 command block。过滤后可见 item 不足请求数量时 daemon 沿 provider cursor 补读后续页面，最多 8 页。其他单 block 超过 64 KiB 时内联 UTF-8 前 16 KiB，并用 15 分钟滑动过期的 `contentRef` 分块读取。项目下对话列表优先按 `projectId` 查询；Desktop 若发现历史线程项目关联未迁移，会按项目根目录 `cwd` 回退查询。Desktop control response 不超过 512 KiB；页面超预算时以相同 cursor 将 limit 逐次减半。
 
-`conversation.subscribe` 保留为恢复用的 cursor/snapshot 接口；Android 正常路径由 Relay unsolicited event 主动推送 metadata-only event，Go Core 通过 EventSink/EventChannel 转交 Flutter。Desktop 先在 100 ms 内按 instance/thread 合并普通流式失效提示，并分别保留 action 与 terminal 类别；endpoint 只转发 `type=event`，无 sink 时按到达顺序保留最近 1000 条，迟到/未知 response 不进入事件流。连接生命周期另发 `type=transport` 的 `online/disconnected/revoked/closed`。Go Core 为两类 envelope 附加当前 `daemonId` 和 selection generation，Flutter 在消费时与实时 Workspace 选择再次比对，拒绝已经进入 Android 主线程队列的旧电脑事件。Flutter 在 disconnected、stream error/done 时立即把会话页连接点改为离线、禁用发送并启动 catch-up，每 2 秒轮询；online 或成功恢复读时恢复安全连接状态，停止轮询并再 catch-up 一次，revoked/closed 停止恢复。Flutter 对收到的 event burst 再做约 150 ms 合并刷新，旧 snapshot 不覆盖新 sequence，刷新最新页时保留用户已加载的旧页。当前尚未完成 iOS Go Core/事件宿主接入的平台直接使用恢复路径。事件和轮询都不携带 provider 正文；当客户端游标过旧或待追赶事件超过 Desktop 的有界窗口时，服务端返回 `snapshot=true`。
+`conversation.subscribe` 保留为恢复用的 cursor/snapshot 接口；Android 正常路径由 Relay unsolicited event 主动推送 metadata-only event，Go Core 通过 EventSink/EventChannel 转交 Flutter。Desktop 先在 100 ms 内按 instance/thread 合并普通流式失效提示，并分别保留 action 与 terminal 类别；endpoint 只转发 `type=event`，无 sink 时按到达顺序保留最近 1000 条，迟到/未知 response 不进入事件流。连接生命周期另发 `type=transport` 的 `online/disconnected/revoked/closed`。Go Core 为两类 envelope 附加当前 `daemonId` 和 selection generation，Flutter 在消费时与实时 Workspace 选择再次比对，拒绝已经进入 Android 主线程队列的旧电脑事件。Workspace 对 action event 做约 150 ms 合并并重新读取当前 Agent 的会话列表，使 `needsAttention` 和顶栏待处理数量无需手动刷新即可更新；会话详情独立刷新 action 与 snapshot。Flutter 在 disconnected、stream error/done 时立即把会话页连接点改为离线、禁用发送并启动 catch-up，每 2 秒轮询；online 或成功恢复读时恢复安全连接状态，停止轮询并再 catch-up 一次，revoked/closed 停止恢复。Flutter 对收到的 event burst 再做约 150 ms 合并刷新，旧 snapshot 不覆盖新 sequence，刷新最新页时保留用户已加载的旧页。当前尚未完成 iOS Go Core/事件宿主接入的平台直接使用恢复路径。事件和轮询都不携带 provider 正文；当客户端游标过旧或待追赶事件超过 Desktop 的有界窗口时，服务端返回 `snapshot=true`。
 
 - `DaemonSummary`：由本地 pairing + live probe 组合的 id、配对时读取的 daemon 运行电脑 `computerName` 或后续本地管理名称、connection state、checked time；名称不可用时使用本地化通用文案，不把固定产品文案冒充主机名；
 - `AgentSummary`：agent id、provider (`codex` 等)、display name、state、supported、navigation kind、capabilities、active turn/pending action count、last error；
 - `ProjectSummary`：稳定 project id、name、conversation/running counts、updated time；
 - `BotSummary`：为 Hermes 预留的稳定 bot id/name/state/capabilities，Codex 不返回；
-- `ConversationSummary`：thread id、title、project id/label、status、`isRunning`、updated time、revision；
-- `PendingAction`：id、kind (`approval`/`question`)、title、explanation、choices/input schema、created time；
+- `ConversationSummary`：thread id、title、project id、status、`running`、`needsAttention`、created/updated time；`needsAttention` 只由与该 thread 关联的未完成 action 投影；
+- `PendingAction`：id、kind (`approval`/`userInput`)、method、conversation/turn id、created time；`userInput` 额外包含 questions，每题固定为 header、id、question、`isOther`、`isSecret` 与 label/description options；
 - `Catalog`：稳定 ID/label/capability/availability，不把 provider enum 当 UI 文案；
 - `Page<T>`：items、next cursor、has more；project 默认请求 10、项目对话 15、最近对话 20，数量是 client request 而非 server hard limit；
 - 稳定 error code 包含 `payload_too_large`、`response_too_large`、`content_ref_expired`、`content_not_found`、`peer_offline`、`ambiguous_write`、`queue_full`、`request_timeout`，并保留 busy、revision conflict、already resolved 与 forbidden。
 
-Mobile 产品页面只消费稳定 timeline 与 catalog/settings DTO；尚未规范化的 action 仍按预发布边界处理。
+Mobile 产品页面只消费稳定 timeline、catalog/settings 和 action DTO；通用 approval 尚未提供完整上下文，只保留允许/拒绝兼容交互。
 
 ## 写操作语义
 
@@ -149,7 +149,7 @@ V1 只支持图片附件，一条消息最多 10 张；单文件和图片总大�
 
 打开 action sheet 时再次确认 action 仍存在。提交后按钮进入不可重复点击状态；成功 response 或 snapshot 中 action 消失后显示完成。`already_resolved` 不是错误重试，而是“已在电脑或另一台手机处理”，关闭 sheet 并刷新。
 
-问题回答严格按 DTO schema 校验必填/单选/多选/文本；approval 必须清楚区分“仅本次允许”“拒绝”等真实 provider 选项，不自造永久授权。
+`request_user_input` 当前按每题单个选项或一条自定义文本校验必填，并提交 `answers[questionId].answers=[value]`；approval 保持允许/拒绝兼容，不自造永久授权。多选和完整 provider approval 选项必须在 DTO 明确支持后再开放。
 
 ### Interrupt
 

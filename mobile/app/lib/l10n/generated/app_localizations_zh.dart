@@ -98,6 +98,14 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
+  String pendingCount(int count) {
+    return '$count 个待处理';
+  }
+
+  @override
+  String get needsAttention => '需要人工处理';
+
+  @override
   String get loadWorkspaceFailed => '无法载入工作台';
 
   @override
@@ -279,6 +287,23 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get allow => '允许';
+
+  @override
+  String get answerQuestionsTitle => '需要你的回答';
+
+  @override
+  String get answer => '回答';
+
+  @override
+  String get answerHint => '输入回答';
+
+  @override
+  String get openQuestions => '填写回答';
+
+  @override
+  String questionResponseFailed(String error) {
+    return '提交回答失败：$error';
+  }
 
   @override
   String get runningStop => '任务运行中 · 停止';

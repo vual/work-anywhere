@@ -179,6 +179,41 @@ void main() {
     ]);
   });
 
+  test('action event refreshes conversation attention state', () async {
+    final events = StreamController<Map<String, dynamic>>.broadcast();
+    addTearDown(events.close);
+    final gateway = _FakeCoreGateway(
+      connectedOnStatus: true,
+      agents: const [
+        {
+          'id': 'agent-ready',
+          'name': 'Ready Codex',
+          'kind': 'codex',
+          'status': 'ready',
+        },
+      ],
+      events: events.stream,
+    );
+    final container = ProviderContainer(
+      overrides: [coreGatewayProvider.overrideWithValue(gateway)],
+    );
+    addTearDown(container.dispose);
+
+    var result = await container.read(workspaceProvider.future);
+    expect(result.conversations.single.needsAttention, isFalse);
+
+    gateway.conversationNeedsAttention = true;
+    events.add({
+      'type': 'event',
+      'event': 'action.created',
+      'daemonId': 'daemon-1',
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+
+    result = container.read(workspaceProvider).requireValue;
+    expect(result.conversations.single.needsAttention, isTrue);
+  });
+
   test('failed computer selection restores UI and preference', () async {
     SharedPreferences.setMockInitialValues({'lastDaemonId': 'daemon-a'});
     final gateway = _FailingSelectionGateway();
@@ -253,6 +288,9 @@ void main() {
 }
 
 class _FailingSelectionGateway extends CoreGateway {
+  @override
+  Stream<Map<String, dynamic>> get events => const Stream.empty();
+
   Map<String, dynamic> get _status => {
     'ok': true,
     'result': {
@@ -310,7 +348,8 @@ class _FakeCoreGateway extends CoreGateway {
     this.failedAgentIds = const {},
     this.delayedFailureAgentId,
     this.duplicateConversations = false,
-  });
+    Stream<Map<String, dynamic>>? events,
+  }) : _events = events ?? const Stream.empty();
 
   final bool pairFails;
   final bool syncFails;
@@ -320,9 +359,14 @@ class _FakeCoreGateway extends CoreGateway {
   final Set<String> failedAgentIds;
   final String? delayedFailureAgentId;
   final bool duplicateConversations;
+  final Stream<Map<String, dynamic>> _events;
+  bool conversationNeedsAttention = false;
   Completer<Map<String, dynamic>>? _delayedContent;
   bool persisted = false;
   int systemStatusCalls = 0;
+
+  @override
+  Stream<Map<String, dynamic>> get events => _events;
 
   void failDelayedContent() => _delayedContent?.completeError(
     CoreFault('call_failed', 'delayed content sync failed'),
@@ -407,6 +451,7 @@ class _FakeCoreGateway extends CoreGateway {
         'title': 'Conversation for $agentId',
         'status': 'idle',
         'running': false,
+        'needsAttention': conversationNeedsAttention,
         'updatedAt': 1,
       };
       return {

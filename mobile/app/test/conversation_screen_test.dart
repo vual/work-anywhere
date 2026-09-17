@@ -442,7 +442,126 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('需要你确认'), findsOneWidget);
+    expect(find.text('允许'), findsOneWidget);
+    expect(find.text('拒绝'), findsOneWidget);
+    expect(find.byType(Dialog), findsNothing);
     expect(find.byKey(const ValueKey('plan-confirmation-panel')), findsNothing);
+  });
+
+  testWidgets('request user input opens all questions and submits answers', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    Map<String, dynamic>? resolved;
+    var actionPending = true;
+    final gateway = _FakeGateway((method, params) async {
+      if (method == 'conversation.subscribe') return {'result': const {}};
+      if (method == 'action.list') {
+        return {
+          'result': actionPending
+              ? [
+                  {
+                    'id': 'question-1',
+                    'kind': 'userInput',
+                    'method': 'item/tool/requestUserInput',
+                    'conversationId': 'thread-questions',
+                    'questions': [
+                      {
+                        'header': '空数据表现',
+                        'id': 'empty_state',
+                        'question': '后端表尚未建立时如何展示？',
+                        'options': [
+                          {'label': '保留指标区', 'description': '显示占位状态。'},
+                          {'label': '整块隐藏', 'description': '接口无数据时隐藏。'},
+                        ],
+                      },
+                      {
+                        'header': '接口粒度',
+                        'id': 'api_shape',
+                        'question': '查询接口按什么粒度设计？',
+                        'options': [
+                          {'label': '按订单批量查询', 'description': '携带订单与流程 ID。'},
+                        ],
+                      },
+                    ],
+                  },
+                ]
+              : <dynamic>[],
+        };
+      }
+      if (method == 'action.resolve') {
+        resolved = params;
+        actionPending = false;
+        return {
+          'result': {'resolved': true},
+        };
+      }
+      return {
+        'result': {
+          'conversation': {
+            'id': 'thread-questions',
+            'title': 'Questions',
+            'running': true,
+          },
+          'revision': 2,
+          'timeline': {'items': const []},
+        },
+      };
+    });
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          coreGatewayProvider.overrideWithValue(gateway),
+          workspaceProvider.overrideWith(_FakeWorkspaceController.new),
+        ],
+        child: const MaterialApp(
+          locale: Locale('zh', 'CN'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: ConversationScreen(conversationId: 'thread-questions'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('需要你的回答'), findsWidgets);
+    final dialog = find.byType(Dialog);
+    expect(
+      find.descendant(of: dialog, matching: find.text('后端表尚未建立时如何展示？')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: dialog, matching: find.text('查询接口按什么粒度设计？')),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const ValueKey('submit-user-input')))
+          .onPressed,
+      isNull,
+    );
+
+    await tester.tap(find.text('保留指标区'));
+    await tester.enterText(
+      find.byKey(const ValueKey('user-input-api_shape')),
+      '按流程集合批量查询',
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('submit-user-input')));
+    await tester.pumpAndSettle();
+
+    expect(resolved?['id'], 'question-1');
+    expect(resolved?['result'], {
+      'answers': {
+        'empty_state': {
+          'answers': ['保留指标区'],
+        },
+        'api_shape': {
+          'answers': ['按流程集合批量查询'],
+        },
+      },
+    });
   });
 
   testWidgets('failed plan revision keeps the panel and input', (tester) async {

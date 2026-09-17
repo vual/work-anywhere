@@ -169,6 +169,54 @@ void main() {
     expect(runningTextRect.right, lessThanOrEqualTo(daemonRect.left));
   });
 
+  testWidgets('conversation needing attention shows an orange alert icon', (
+    tester,
+  ) async {
+    const data = WorkspaceState(
+      needsPairing: false,
+      daemons: [
+        DaemonSummary(
+          id: 'daemon-1',
+          name: 'My PC',
+          phase: ConnectionPhase.online,
+        ),
+      ],
+      conversations: [
+        ConversationSummary(
+          id: 'thread-1',
+          agentId: 'agent-1',
+          projectId: 'project-1',
+          title: 'Waiting for an answer',
+          status: 'waiting_action',
+          running: true,
+          needsAttention: true,
+          updatedAt: 0,
+        ),
+      ],
+      selectedDaemonId: 'daemon-1',
+    );
+
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MaterialApp(
+          locale: Locale('zh', 'CN'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: WorkspaceScreen(data: data),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('1 个待处理'), findsOneWidget);
+    final icons = tester.widgetList<Icon>(
+      find.byIcon(Icons.error_outline_rounded),
+    );
+    expect(icons, hasLength(2));
+    expect(icons.every((icon) => icon.color == wawAttention), isTrue);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
   testWidgets('workspace uses 54dp rows and supports 200 percent text', (
     tester,
   ) async {

@@ -151,7 +151,16 @@ class _ProjectScreenState extends ConsumerState<ProjectScreen> {
                     overflow: TextOverflow.ellipsis,
                     style: WawCompact.listTitle,
                   ),
-                  trailing: item.running
+                  trailing: item.needsAttention
+                      ? Semantics(
+                          label: context.l10n.needsAttention,
+                          child: const Icon(
+                            Icons.error_outline_rounded,
+                            color: wawAttention,
+                            size: 28,
+                          ),
+                        )
+                      : item.running
                       ? const SizedBox.square(
                           dimension: 19,
                           child: CircularProgressIndicator(

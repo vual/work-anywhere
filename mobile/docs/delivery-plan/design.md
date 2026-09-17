@@ -43,7 +43,7 @@
 
 ## Phase 3 — controlled writes
 
-- 实现 action center、approval/question schema、first-valid-wins 和 `already_resolved` 交互。
+- `request_user_input` 已实现问题/选项稳定 DTO、会话列表提醒、多问题弹窗与官方 answers 映射；继续完成 action center、完整 approval schema、first-valid-wins 和 `already_resolved` 专用交互。
 - 实现 interrupt 的 pending/terminal 状态。
 - 完善 composer；计划模式、模型、思考等级、四种执行权限、`expectedRevision`、`clientMessageId` 和 ambiguous-write reconciliation 已有代码与 Widget 覆盖，仍需 Android 真机链路验收。
 - 实现相册/相机选择、图片预览、begin/chunk/commit、取消与失败重试。

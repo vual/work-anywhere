@@ -17,7 +17,7 @@ Work Anywhere(WAW) 的目标是让你在手机上也能实时与电脑端 ChatGP
 - `relay`：在 Desktop daemon 与移动端之间中继加密连接、状态和通知。
 - `mobile`：查看任务进度、处理审批/问题并继续输入；Android-first Flutter/Go Core、配对流程和工作台已建立，当前仍处于未发布的测试前阶段。
 
-**Desktop V1 与单节点 Relay V1 已实现**。Desktop 已包含 Relay 出站连接、设备注册、真实二维码配对、Noise 端到端加密和 Mobile control adapter；Relay 可使用 Docker Compose 与 PostgreSQL 部署。Mobile 已建立 Android-first Flutter 应用、Go endpoint core、Pigeon/Keystore host 和 tester APK CI，会话输入区可按 thread 选择计划模式、模型、思考等级和四种执行权限，并可在 Turn 运行时继续输入、排队及编辑/立即引导/取消排队消息；真机、iOS、push、完整 action DTO 与发布验收尚未完成，浏览器 Mobile simulator 仍仅用于协议联调。
+**Desktop V1 与单节点 Relay V1 已实现**。Desktop 已包含 Relay 出站连接、设备注册、真实二维码配对、Noise 端到端加密和 Mobile control adapter；Relay 可使用 Docker Compose 与 PostgreSQL 部署。Mobile 已建立 Android-first Flutter 应用、Go endpoint core、Pigeon/Keystore host 和 tester APK CI，会话输入区可按 thread 选择计划模式、模型、思考等级和四种执行权限，并可在 Turn 运行时继续输入、排队及编辑/立即引导/取消排队消息；`request_user_input` 已使用稳定问题 DTO、待处理提醒和多问题回答弹窗，命令审批兼容允许/拒绝。真机、iOS、push、完整 approval DTO 与发布验收尚未完成，浏览器 Mobile simulator 仍仅用于协议联调。
 
 Mobile 会话同步使用 metadata snapshot、最近 20 项 timeline 分页和实时增量恢复；旧历史通过 opaque cursor 加载，超过 64 KiB 的单个正文 block 通过临时引用按需分块查看。Desktop control 响应限制为 512 KiB，Relay 继续保持 1 MiB routed payload 上限。
 

@@ -37,6 +37,8 @@ App Server 发出的 server request 被规范化为 `PendingAction`，保留原 
 - 后续结果得到 `already_resolved`，不会再次写回 App Server。
 - `serverRequest/resolved`、Turn 完成或中断会清除相关未完成 action。
 
+原始 `PendingAction.params` 只用于 daemon 内部、Desktop 透明转发和加密持久化。`mobile-control-v1` 的 `action.list` 使用稳定投影：通用请求标记为 `approval`，`item/tool/requestUserInput` 标记为 `userInput` 并只暴露 questions/options 所需字段，不向 Mobile 透传其他 provider 参数。与 thread 关联的未完成 action 同时投影为 `ConversationSummary.needsAttention=true`。问题回答沿用官方 `answers[questionId].answers` 结构；命令审批继续接受 allow/deny 对应的 decision response。
+
 ## Interfaces
 
 已识别的核心官方方法/通知包括 initialize、thread/turn 生命周期、`turn/start`、`turn/interrupt`、model catalog、permission profile 和 server request。未知请求和通知仍转发；未知 notification 只记录 method 名，不因 schema 不认识而断开连接。

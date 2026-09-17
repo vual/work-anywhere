@@ -232,18 +232,22 @@ class _TopBar extends ConsumerWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   key: const Key('workspace-running-indicator'),
-                  child: data.runningCount == 0
+                  child: data.attentionCount == 0 && data.runningCount == 0
                       ? const SizedBox.shrink()
                       : Align(
                           alignment: Alignment.center,
                           child: Semantics(
-                            label: context.l10n.runningCount(data.runningCount),
+                            label: data.attentionCount > 0
+                                ? context.l10n.pendingCount(data.attentionCount)
+                                : context.l10n.runningCount(data.runningCount),
                             button: true,
                             child: InkWell(
                               borderRadius: BorderRadius.circular(22),
                               onTap: () {
                                 final item = data.conversations.firstWhere(
-                                  (item) => item.running,
+                                  (item) => data.attentionCount > 0
+                                      ? item.needsAttention
+                                      : item.running,
                                 );
                                 context.push(
                                   '/conversation/${item.id}',
@@ -255,19 +259,30 @@ class _TopBar extends ConsumerWidget {
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    const SizedBox.square(
-                                      dimension: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2.4,
-                                        color: wawBlue,
+                                    if (data.attentionCount > 0)
+                                      const Icon(
+                                        Icons.error_outline_rounded,
+                                        size: 20,
+                                        color: wawAttention,
+                                      )
+                                    else
+                                      const SizedBox.square(
+                                        dimension: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2.4,
+                                          color: wawBlue,
+                                        ),
                                       ),
-                                    ),
                                     const SizedBox(width: 8),
                                     Flexible(
                                       child: Text(
-                                        context.l10n.runningCount(
-                                          data.runningCount,
-                                        ),
+                                        data.attentionCount > 0
+                                            ? context.l10n.pendingCount(
+                                                data.attentionCount,
+                                              )
+                                            : context.l10n.runningCount(
+                                                data.runningCount,
+                                              ),
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
                                       ),
@@ -486,7 +501,16 @@ class _ConversationRow extends StatelessWidget {
       overflow: TextOverflow.ellipsis,
       style: WawCompact.listTitle,
     ),
-    trailing: conversation.running
+    trailing: conversation.needsAttention
+        ? Semantics(
+            label: context.l10n.needsAttention,
+            child: const Icon(
+              Icons.error_outline_rounded,
+              color: wawAttention,
+              size: 28,
+            ),
+          )
+        : conversation.running
         ? Semantics(
             label: context.l10n.running,
             child: SizedBox.square(

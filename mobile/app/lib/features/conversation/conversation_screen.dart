@@ -17,6 +17,7 @@ import '../../core/models.dart';
 import '../workspace/workspace_controller.dart';
 import 'conversation_controller.dart';
 import 'markdown_renderer.dart';
+import 'user_input_dialog.dart';
 
 const _maxImageCount = 10;
 const _maxImageBytes = 48 * 1024 * 1024;
@@ -70,6 +71,8 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   bool _planPreferencesLoaded = false;
   final Set<String> _dismissedPlanConfirmations = {};
   final Set<String> _handledPlanConfirmations = {};
+  final Set<String> _presentedUserInputActions = {};
+  bool _userInputDialogOpen = false;
   int _timelineTailSignature = 0;
   late String? _activeConversationId = widget.conversationId;
 
@@ -204,6 +207,37 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
 
     setState(() {});
     if (shouldFollow) _followTimelineToBottom();
+    _scheduleUserInputDialog();
+  }
+
+  void _scheduleUserInputDialog() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _userInputDialogOpen) return;
+      final action = (_controller?.state.actions ?? const [])
+          .where(
+            (item) =>
+                item['kind'] == 'userInput' &&
+                (item['questions'] as List? ?? const []).isNotEmpty &&
+                !_presentedUserInputActions.contains('${item['id']}'),
+          )
+          .firstOrNull;
+      if (action != null) unawaited(_presentUserInputAction(action));
+    });
+  }
+
+  Future<void> _presentUserInputAction(Map<String, dynamic> action) async {
+    if (!mounted || _userInputDialogOpen) return;
+    _presentedUserInputActions.add('${action['id']}');
+    _userInputDialogOpen = true;
+    try {
+      final answers = await showUserInputDialog(context, action);
+      if (answers != null && mounted) {
+        await _resolveUserInput(action, answers);
+      }
+    } finally {
+      _userInputDialogOpen = false;
+      _scheduleUserInputDialog();
+    }
   }
 
   ConversationSettings? _normalizeSettings(ConversationSettings? value) {
@@ -1287,10 +1321,39 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         'result': result,
       });
       await _refresh();
+      await ref.read(workspaceProvider.notifier).refresh();
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('$error')));
+      }
+    }
+  }
+
+  Future<void> _resolveUserInput(
+    Map<String, dynamic> action,
+    Map<String, List<String>> answers,
+  ) async {
+    try {
+      await ref.read(coreGatewayProvider).call('action.resolve', {
+        'agentId': _agentId,
+        'id': action['id'],
+        'result': {
+          'answers': {
+            for (final entry in answers.entries)
+              entry.key: {'answers': entry.value},
+          },
+        },
+      });
+      await _refresh();
+      await ref.read(workspaceProvider.notifier).refresh();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(context.l10n.questionResponseFailed('$error')),
+          ),
+        );
       }
     }
   }
@@ -1456,6 +1519,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                     child: _ActionConfirmation(
                       action: action,
                       onResolve: (approved) => _resolve(action, approved),
+                      onAnswer: () => _presentUserInputAction(action),
                     ),
                   ),
               Expanded(
@@ -1556,10 +1620,15 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
 }
 
 class _ActionConfirmation extends StatelessWidget {
-  const _ActionConfirmation({required this.action, required this.onResolve});
+  const _ActionConfirmation({
+    required this.action,
+    required this.onResolve,
+    required this.onAnswer,
+  });
 
   final Map<String, dynamic> action;
   final ValueChanged<bool> onResolve;
+  final VoidCallback onAnswer;
 
   @override
   Widget build(BuildContext context) => WawFloatingSurface(
@@ -1568,27 +1637,49 @@ class _ActionConfirmation extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          context.l10n.confirmationRequired,
+          action['kind'] == 'userInput'
+              ? context.l10n.answerQuestionsTitle
+              : context.l10n.confirmationRequired,
           style: const TextStyle(fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 6),
-        Text(action['method'] as String? ?? context.l10n.agentContinueRequest),
-        const SizedBox(height: 8),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            TextButton(
-              onPressed: () => onResolve(false),
-              child: Text(context.l10n.deny),
-            ),
-            const SizedBox(width: 8),
-            IconButton.filled(
-              onPressed: () => onResolve(true),
-              tooltip: context.l10n.allow,
-              icon: const Icon(Icons.check_rounded),
-            ),
-          ],
+        Text(
+          action['kind'] == 'userInput'
+              ? ((action['questions'] as List? ?? const [])
+                            .whereType<Map<String, dynamic>>()
+                            .firstOrNull?['question']
+                        as String? ??
+                    context.l10n.agentContinueRequest)
+              : action['method'] as String? ??
+                    context.l10n.agentContinueRequest,
         ),
+        const SizedBox(height: 8),
+        if (action['kind'] == 'userInput')
+          Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton(
+              onPressed: (action['questions'] as List? ?? const []).isNotEmpty
+                  ? onAnswer
+                  : null,
+              child: Text(context.l10n.openQuestions),
+            ),
+          )
+        else
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: () => onResolve(false),
+                child: Text(context.l10n.deny),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.icon(
+                onPressed: () => onResolve(true),
+                icon: const Icon(Icons.check_rounded),
+                label: Text(context.l10n.allow),
+              ),
+            ],
+          ),
       ],
     ),
   );

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 const wawBlue = Color(0xFF2F80ED);
 const wawGreen = Color(0xFF34C759);
+const wawAttention = Color(0xFFE15B20);
 
 /// System bar appearance for the app's edge-to-edge surfaces.
 ///

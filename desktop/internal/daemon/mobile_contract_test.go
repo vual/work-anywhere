@@ -112,6 +112,55 @@ func TestNormalizeConversationMetadataAndTimeline(t *testing.T) {
 	}
 }
 
+func TestMobileConversationAttentionComesFromPendingActions(t *testing.T) {
+	page, err := normalizeConversationList("agent-1", json.RawMessage(`{"data":[{"id":"thread-1","name":"Needs help"},{"id":"thread-2","name":"Running"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyConversationAttention(&page, []pendingAction{
+		{ConversationID: "thread-1"},
+		{ConversationID: "thread-2", Resolved: true},
+	})
+	if !page.Items[0].NeedsAttention || page.Items[1].NeedsAttention {
+		t.Fatalf("unexpected attention projection: %#v", page.Items)
+	}
+}
+
+func TestNormalizeMobileRequestUserInputAction(t *testing.T) {
+	actions := normalizeMobileActions([]pendingAction{{
+		ID:             json.RawMessage(`"request-1"`),
+		Method:         "item/tool/requestUserInput",
+		ConversationID: "thread-1",
+		TurnID:         "turn-1",
+		Params:         json.RawMessage(`{"threadId":"thread-1","questions":[{"header":"Data","id":"empty_state","question":"How should it render?","options":[{"label":"Keep metrics","description":"Show placeholders."}],"isOther":true}]}`),
+	}})
+	if len(actions) != 1 || actions[0].Kind != "userInput" || len(actions[0].Questions) != 1 {
+		t.Fatalf("unexpected action projection: %#v", actions)
+	}
+	question := actions[0].Questions[0]
+	if question.ID != "empty_state" || question.Options[0].Label != "Keep metrics" || !question.IsOther {
+		t.Fatalf("unexpected question projection: %#v", question)
+	}
+	encoded, err := json.Marshal(actions[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "threadId") {
+		t.Fatalf("raw provider params escaped the stable Mobile DTO: %s", encoded)
+	}
+}
+
+func TestMalformedMobileRequestUserInputDoesNotBecomeApproval(t *testing.T) {
+	actions := normalizeMobileActions([]pendingAction{{
+		ID:     json.RawMessage(`"request-1"`),
+		Method: "item/tool/requestUserInput",
+		Params: json.RawMessage(`{"questions":"invalid"}`),
+	}})
+	if len(actions) != 1 || actions[0].Kind != "userInput" || len(actions[0].Questions) != 0 {
+		t.Fatalf("malformed question action must stay non-approvable: %#v", actions)
+	}
+}
+
 func TestNormalizeMobileQueueRedactsProviderInputs(t *testing.T) {
 	page, err := normalizeMobileQueuePage(json.RawMessage(`{"data":[{"id":"queue-1","clientUserMessageId":"client-1","input":[{"type":"text","text":"first"},{"type":"text","text":"second"},{"type":"localImage","path":"C:\\secret\\photo.jpg"},{"type":"mention","name":"private","path":"C:\\secret"}]}],"nextCursor":"next"}`))
 	if err != nil {

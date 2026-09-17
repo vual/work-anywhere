@@ -541,9 +541,13 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 		if callErr != nil {
 			response.Error = &protocol.ControlError{Code: "provider_error", Message: callErr.Error()}
 		} else if request.Contract == protocol.MobileControlContract && request.Method == "conversation.list" {
-			response.Result, callErr = normalizeConversationList(instance.descriptor.ID, result)
+			var page mobilePage[mobileConversationSummary]
+			page, callErr = normalizeConversationList(instance.descriptor.ID, result)
 			if callErr != nil {
 				response.Error = &protocol.ControlError{Code: "invalid_provider_response", Message: callErr.Error()}
+			} else {
+				applyConversationAttention(&page, instance.Actions())
+				response.Result = page
 			}
 		} else if request.Contract == protocol.MobileControlContract && request.Method == "catalog.models" {
 			response.Result, callErr = normalizeMobileModelCatalog(result)
@@ -564,7 +568,11 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 		if err != nil {
 			response.Error = &protocol.ControlError{Code: "invalid_target", Message: err.Error()}
 		} else {
-			response.Result = instance.Actions()
+			if request.Contract == protocol.MobileControlContract {
+				response.Result = normalizeMobileActions(instance.Actions())
+			} else {
+				response.Result = instance.Actions()
+			}
 		}
 	case "action.resolve":
 		var instance *Instance
