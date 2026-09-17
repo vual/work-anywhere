@@ -10,7 +10,7 @@
 
 跨模块前置工作：
 
-- 在 Desktop control 层定义并测试 `AgentSummary`、`ProjectSummary`、`ConversationSummary/Snapshot`、分页/搜索、typed timeline、`PendingAction`、catalog 和 stable error DTO；Codex instance 映射为 Agent，禁止 Mobile 产品代码解析任意 Codex raw JSON。
+- 在 Desktop control 层定义并测试 `AgentSummary`、`ProjectSummary`、带权威项目 ID/名称的 `ConversationSummary/Snapshot`、分页/搜索、typed timeline、`PendingAction`、catalog 和 stable error DTO；Codex instance 映射为 Agent，禁止 Mobile 产品代码解析任意 Codex raw JSON。
 - 增加 Codex-first `agent.list`、`project.list` 和带 `agentId/projectId/query/limit/cursor` 的 `conversation.list` 规范化接口；预留 `navigationKind=bots`/`BotSummary`，但不把 Hermes 描述为已适配。
 - 冻结 control DTO 版本协商与兼容策略；明确新增字段、unknown kind 和最低支持版本行为。
 - 从 Relay/Go reference 导出 auth、pair proof/grant、Noise KK handshake/transport、replay/tamper 的语言无关 golden vectors。

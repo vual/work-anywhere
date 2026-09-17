@@ -176,7 +176,7 @@ class _ProjectScreenState extends ConsumerState<ProjectScreen> {
                         ),
                   onTap: () => context.push(
                     '/conversation/${item.id}',
-                    extra: project?.name,
+                    extra: item.projectName ?? project?.name,
                   ),
                 );
               },

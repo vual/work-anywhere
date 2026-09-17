@@ -110,7 +110,7 @@ Agent selector 每项至少显示 display name 和 provider icon/label；当前�
 
 ## 工作台内容
 
-页面固定顺序为：App icon + 居中活跃任务提示 + 右侧 Daemon selector 顶栏 → 横向 Agent selector → Provider 主对象列表 → 最近对话 → 底部搜索框。下拉刷新重建当前 Daemon/Agent snapshot，不打断运行中的对话。
+页面固定顺序为：App icon + 居中活跃任务提示 + 右侧 Daemon selector 顶栏 → 横向 Agent selector → Provider 主对象列表 → 最近对话 → 底部搜索框。顶栏和 Agent selector 固定在工作台顶部，不随纵向列表滚动；纵向滚动与下拉刷新只作用于 Provider 主对象和最近对话内容区。下拉刷新重建当前 Daemon/Agent snapshot，不打断运行中的对话。
 
 ### Codex 项目
 
@@ -129,6 +129,8 @@ Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项�
 项目/Bot 区域下方展示当前 Agent 最近 20 条对话，跨项目合并且不按项目分组，按最后更新时间倒序。对话使用与项目一致的约 54dp 紧凑扁平文本行，左侧单行标题、右侧相对时间；项目详情中的对话列表沿用相同行高。列表 DTO 不携带 preview，状态优先级为 `等待处理 > 运行中 > 正在停止 > 失败 > 空闲`。`needsAttention=true` 时标题右侧显示橙色描边感叹号并提供“需要人工处理”的无障碍文本，取代运行中 loading 和相对时间；工作台顶栏同时优先显示“n 个待处理”。
 
 运行中的对话在卡片最右侧显示蓝色旋转 loading icon，并提供“运行中”的无障碍文本；它与 Daemon selector 的连接 loading 分属不同语义。点击任意对话进入会话详情。超过 20 条时工作台不继续分页，用户通过底部搜索访问更早对话；项目详情仍可独立分页。
+
+会话列表 DTO 携带 Desktop 从完整项目目录解析的项目 ID 和名称。进入详情时优先使用会话自带的项目名称，不依赖该项目是否位于工作台已加载的前 10 个项目中；只有服务端确实无法解析项目归属时才显示通用“项目”文案。
 
 ### 底部搜索
 

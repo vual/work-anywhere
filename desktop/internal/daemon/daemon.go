@@ -542,8 +542,10 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 			response.Error = &protocol.ControlError{Code: "provider_error", Message: callErr.Error()}
 		} else if request.Contract == protocol.MobileControlContract && request.Method == "conversation.list" {
 			var page mobilePage[mobileConversationSummary]
-			page, callErr = normalizeConversationList(instance.descriptor.ID, result)
-			if callErr != nil {
+			projects, projectErr := fetchMobileProjects(m.ctx, instance)
+			if projectErr != nil {
+				response.Error = &protocol.ControlError{Code: "provider_error", Message: projectErr.Error()}
+			} else if page, callErr = normalizeConversationList(instance.descriptor.ID, result, projects); callErr != nil {
 				response.Error = &protocol.ControlError{Code: "invalid_provider_response", Message: callErr.Error()}
 			} else {
 				applyConversationAttention(&page, instance.Actions())

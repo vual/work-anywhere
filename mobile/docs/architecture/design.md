@@ -14,7 +14,7 @@
 - Android UI 使用 edge-to-edge；系统状态栏和导航栏保持透明，由 Flutter `SystemUiOverlayStyle` 按浅色/深色主题显式设置图标亮度，Android 启动主题同时提供同样的初始 appearance，避免 Activity 被 OEM 恢复时状态栏图标在浅色背景上不可见。
 - App shell 使用单工作台与系统返回栈，不建立底部导航状态；Daemon/Agent 是工作台上下文 selection，项目和会话是可恢复的下钻 route。
 - 路由、依赖注入和状态容器使用锁定版本的 Dart package；具体 package 在 scaffold PoC 后写入 `pubspec.lock`，不得让其类型泄漏到 protocol/repository public interface。
-- Flutter 到 host 的命令边界集中在 `app/pigeons/mobile_core.dart` 生成的 Pigeon typed channel，host 到 Flutter 的主动状态/事件通过专用 EventChannel 传递。业务 widget 不直接依赖 channel 字符串，也不接触 key bytes 或 protobuf frame；当前 timeline summary 和 model/permission catalog 已在 Desktop 结构化，完整句子由 Flutter 本地化，action 仍含受控的 provider-shaped payload。
+- Flutter 到 host 的命令边界集中在 `app/pigeons/mobile_core.dart` 生成的 Pigeon typed channel，host 到 Flutter 的主动状态/事件通过专用 EventChannel 传递。业务 widget 不直接依赖 channel 字符串，也不接触 key bytes 或 protobuf frame；当前 conversation summary（含 Desktop 解析的项目 ID/名称）、timeline summary 和 model/permission catalog 已在 Desktop 结构化，完整句子由 Flutter 本地化，action 仍含受控的 provider-shaped payload。
 - endpoint core 使用 Go，与 Desktop/Relay 保持同一仓库工具链；一个窄 `mobilecore` facade 通过锁定 commit 的 `gomobile bind` 生成 Android AAR 和 iOS XCFramework。Go 官方工具明确支持这两类 library artifact：[gomobile bind](https://pkg.go.dev/golang.org/x/mobile/cmd/gomobile)。
 - Relay endpoint 的 canonical/protobuf/Noise 代码从 `relay/internal` 重构到可复用但不暴露服务端存储的 `relay/pkg/endpoint`；Mobile core 依赖该 package，Relay schema 仍是唯一所有者。生成脚本比较 schema hash，禁止手工编辑生成物。
 - Android Kotlin host 已使用 Android Keystore 中不可导出的 AES key，以 AES-GCM wrapping 保存 pairing credential；导出和恢复发生在 native host 与 Go Core 之间，private key 不经过 Dart heap。Android manifest 禁止备份 credential ciphertext；Activity 启动时显式清除 `FLAG_SECURE`，并保留在最近任务列表中，因此系统截图、录屏和后台任务缩略图保持可用。Swift Keychain/APNs、Android FCM、应用锁和 app-switcher 敏感内容遮罩尚未实现。
@@ -78,7 +78,7 @@ Repository 中的权威划分：
 
 - Desktop snapshot 是会话与 action 的远端权威。
 - Go `PairingRuntime` 是连接/握手、request map 和 wire sequence 的内存权威；Dart Repository 是规范化 view projection/cursor 的内存 owner。
-- Workspace ViewModel 恢复并持有当前 Daemon/Agent、项目展开页数、搜索 query 和滚动位置；切换 context 时只接受当前 selection generation 的结果。
+- Workspace ViewModel 恢复并持有当前 Daemon/Agent、项目展开页数、搜索 query 和滚动位置；View 将 Daemon 顶栏和 Agent selector 放在纵向滚动容器之外，仅让项目/对话内容区滚动和响应下拉刷新；切换 context 时只接受当前 selection generation 的结果。
 - `ConversationController` 拥有 metadata、正序 timeline、older cursor、revision/sequence、分页与 snapshot/action/旧页局部错误；按 item ID 去重。事件触发最新页合并，既不覆盖已加载旧页，也不允许较低 sequence 覆盖新状态；内容引用过期时通过稳定 locator 重新签发，不刷新整页。
 
 会话正文只存在 Dart/Go 进程内存。Desktop 对大 block 返回临时定位引用，Mobile 按 128 KiB 分块拼接查看；引用过期时使用 turn/item/block locator 重新签发，引用和正文都不持久化。`CoreGateway` 的 100 条内存诊断环只记录 method、耗时、结果、稳定 error code 和 request ID，Debug 构建将相同脱敏元数据写入 Logcat。
@@ -128,7 +128,7 @@ Repository 中的权威划分：
 
 - Go core unit tests：canonical/Noise vectors、sequence/replay、state machine、late callback、suspend/resume 和 request retry policy。
 - Dart unit tests：DTO reducers、connection projection、selection generation、ViewModel 与错误映射。
-- widget/golden tests：无配对根页、无底栏工作台、顶栏右侧 Daemon 状态下拉、左侧 App icon 与居中活跃任务提示、横向 Agent selector、项目/对话/搜索/详情的 loading/empty/offline/error/action states、动态字体、深浅主题和窄屏。
+- widget/golden tests：无配对根页、无底栏工作台、顶栏右侧 Daemon 状态下拉、左侧 App icon 与居中活跃任务提示、纵向滚动时固定的顶栏和横向 Agent selector、项目/对话/搜索/详情的 loading/empty/offline/error/action states、动态字体、深浅主题和窄屏。
 - integration tests：模拟 Relay/Desktop 的 pair/auth/Noise/snapshot/event/gap/revoke；真实 Relay + Desktop 端到端闭环。
 - iOS/Android physical-device tests：Keychain/Keystore、重装、升级、锁屏、切后台、弱网、push token rotation、相机权限和通知权限。
 - release gate：依赖/SBOM/secret scan、release build 中无 debug entitlement、日志与本机文件扫描无 fixture 明文；HTTP/WS 与 HTTPS/WSS 均为受支持的 Relay transport，部署方负责选择安全传输。

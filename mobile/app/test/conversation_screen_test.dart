@@ -71,6 +71,35 @@ class _FakeWorkspaceController extends WorkspaceController {
   );
 }
 
+class _EmbeddedProjectWorkspaceController extends WorkspaceController {
+  @override
+  Future<WorkspaceState> build() async => const WorkspaceState(
+    needsPairing: false,
+    agents: [
+      AgentSummary(
+        id: 'agent-1',
+        name: 'Codex',
+        kind: 'codex',
+        status: 'ready',
+      ),
+    ],
+    conversations: [
+      ConversationSummary(
+        id: 'thread-hidden-project',
+        agentId: 'agent-1',
+        projectId: 'project-hidden',
+        projectName: 'Hidden Project',
+        title: 'Conversation outside the first project page',
+        status: 'idle',
+        running: false,
+        updatedAt: 0,
+      ),
+    ],
+    selectedAgentId: 'agent-1',
+    selectedDaemonId: 'daemon-1',
+  );
+}
+
 class _FakeImagePicker extends ImagePicker {
   _FakeImagePicker(this.selections);
 
@@ -769,6 +798,51 @@ void main() {
     expect(commandDetail.style?.fontSize, 13);
     expect(commandDetail.style?.height, 1.25);
   });
+
+  testWidgets(
+    'conversation uses its embedded project name when project is not loaded',
+    (tester) async {
+      final gateway = _FakeGateway((method, params) async {
+        if (method == 'action.list' || method == 'conversation.subscribe') {
+          return {'result': const {}};
+        }
+        return {
+          'result': {
+            'conversation': {
+              'id': 'thread-hidden-project',
+              'agentId': 'agent-1',
+              'projectId': 'project-hidden',
+              'title': 'Hidden project conversation',
+              'running': false,
+            },
+            'timeline': {'items': const []},
+          },
+        };
+      });
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            coreGatewayProvider.overrideWithValue(gateway),
+            workspaceProvider.overrideWith(
+              _EmbeddedProjectWorkspaceController.new,
+            ),
+          ],
+          child: const MaterialApp(
+            locale: Locale('zh', 'CN'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: ConversationScreen(conversationId: 'thread-hidden-project'),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.text('Hidden Project · Codex'), findsOneWidget);
+      expect(find.text('项目 · Codex'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
 
   testWidgets('timeline summary is localized in English', (tester) async {
     final gateway = _FakeGateway((method, params) async {

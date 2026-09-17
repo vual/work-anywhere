@@ -118,6 +118,7 @@ class ConversationSummary {
     required this.id,
     required this.agentId,
     required this.projectId,
+    this.projectName,
     required this.title,
     required this.status,
     required this.running,
@@ -127,6 +128,7 @@ class ConversationSummary {
   final String id;
   final String agentId;
   final String projectId;
+  final String? projectName;
   final String title;
   final String status;
   final bool running;
@@ -138,6 +140,7 @@ class ConversationSummary {
         id: json['id'] as String,
         agentId: json['agentId'] as String,
         projectId: json['projectId'] as String? ?? '',
+        projectName: json['projectName'] as String?,
         title: json['title'] as String? ?? 'Untitled conversation',
         status: json['status'] as String? ?? 'unknown',
         running: json['running'] as bool? ?? false,

@@ -1384,7 +1384,10 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         .where((item) => item.id == agentId)
         .firstOrNull;
     final projectName =
-        widget.projectName ?? project?.name ?? context.l10n.project;
+        widget.projectName ??
+        summary?.projectName ??
+        project?.name ??
+        context.l10n.project;
     final agentName = agent?.name ?? workspace?.selectedAgent?.name ?? 'Codex';
     final running = conversation?['running'] as bool? ?? false;
     final online = _isDraft ? _connectionOnline : state.online;

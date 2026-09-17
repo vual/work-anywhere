@@ -169,6 +169,75 @@ void main() {
     expect(runningTextRect.right, lessThanOrEqualTo(daemonRect.left));
   });
 
+  testWidgets('workspace scroll keeps daemon and agent rows fixed', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(360, 640));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    final data = WorkspaceState(
+      needsPairing: false,
+      daemons: const [
+        DaemonSummary(
+          id: 'daemon-1',
+          name: 'My PC',
+          phase: ConnectionPhase.online,
+        ),
+      ],
+      agents: const [
+        AgentSummary(
+          id: 'agent-1',
+          name: 'Codex',
+          kind: 'codex',
+          status: 'ready',
+        ),
+      ],
+      projects: List.generate(
+        20,
+        (index) => ProjectSummary(
+          id: 'project-$index',
+          agentId: 'agent-1',
+          name: 'Project $index',
+          updatedAt: index,
+        ),
+      ),
+      selectedDaemonId: 'daemon-1',
+      selectedAgentId: 'agent-1',
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          locale: const Locale('zh', 'CN'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: WorkspaceScreen(data: data),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final topBar = find.byKey(const Key('workspace-top-bar'));
+    final agentRail = find.byKey(const Key('workspace-agent-rail'));
+    final contentScroll = find.byKey(const Key('workspace-content-scroll'));
+    final topBarBefore = tester.getRect(topBar);
+    final agentRailBefore = tester.getRect(agentRail);
+
+    await tester.drag(contentScroll, const Offset(0, -420));
+    await tester.pumpAndSettle();
+
+    expect(tester.getRect(topBar), topBarBefore);
+    expect(tester.getRect(agentRail), agentRailBefore);
+    final scrollable = find.descendant(
+      of: contentScroll,
+      matching: find.byType(Scrollable),
+    );
+    expect(
+      tester.state<ScrollableState>(scrollable).position.pixels,
+      greaterThan(0),
+    );
+  });
+
   testWidgets('conversation needing attention shows an orange alert icon', (
     tester,
   ) async {

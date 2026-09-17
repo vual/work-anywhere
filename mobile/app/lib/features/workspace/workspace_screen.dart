@@ -49,118 +49,128 @@ class WorkspaceScreen extends ConsumerWidget {
               .toList();
     return Scaffold(
       body: SafeArea(
-        child: RefreshIndicator(
-          onRefresh: () => ref.read(workspaceProvider.notifier).refresh(),
-          child: CustomScrollView(
-            slivers: [
-              SliverToBoxAdapter(child: _TopBar(data: data)),
-              if (!data.hasEnabledDaemons)
-                SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(28),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(context.l10n.noEnabledComputers),
-                          const SizedBox(height: 16),
-                          FilledButton(
-                            onPressed: () => context.push('/computers'),
-                            child: Text(context.l10n.manageComputers),
+        child: Column(
+          children: [
+            _TopBar(data: data),
+            if (data.hasEnabledDaemons) _AgentRail(data: data),
+            Expanded(
+              child: RefreshIndicator(
+                onRefresh: () => ref.read(workspaceProvider.notifier).refresh(),
+                child: CustomScrollView(
+                  key: const Key('workspace-content-scroll'),
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  slivers: [
+                    if (!data.hasEnabledDaemons)
+                      SliverFillRemaining(
+                        hasScrollBody: false,
+                        child: Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(28),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(context.l10n.noEnabledComputers),
+                                const SizedBox(height: 16),
+                                FilledButton(
+                                  onPressed: () => context.push('/computers'),
+                                  child: Text(context.l10n.manageComputers),
+                                ),
+                                TextButton(
+                                  onPressed: () => context.push('/pair'),
+                                  child: Text(context.l10n.addComputer),
+                                ),
+                              ],
+                            ),
                           ),
-                          TextButton(
-                            onPressed: () => context.push('/pair'),
-                            child: Text(context.l10n.addComputer),
+                        ),
+                      ),
+                    if (data.hasEnabledDaemons) ...[
+                      if (data.syncFailed)
+                        SliverToBoxAdapter(
+                          child: _SyncFailure(
+                            onRetry: () =>
+                                ref.read(workspaceProvider.notifier).refresh(),
                           ),
-                        ],
+                        ),
+                      SliverPadding(
+                        padding: const EdgeInsets.fromLTRB(
+                          WawCompact.horizontalPadding,
+                          16,
+                          WawCompact.horizontalPadding,
+                          0,
+                        ),
+                        sliver: SliverToBoxAdapter(
+                          child: _SectionTitle(
+                            title: query.isEmpty
+                                ? context.l10n.projects
+                                : context.l10n.projectSearchResults,
+                            trailing: query.isEmpty
+                                ? null
+                                : context.l10n.resultCount(projects.length),
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                ),
-              if (data.hasEnabledDaemons) ...[
-                if (data.syncFailed)
-                  SliverToBoxAdapter(
-                    child: _SyncFailure(
-                      onRetry: () =>
-                          ref.read(workspaceProvider.notifier).refresh(),
-                    ),
-                  ),
-                SliverToBoxAdapter(child: _AgentRail(data: data)),
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(
-                    WawCompact.horizontalPadding,
-                    16,
-                    WawCompact.horizontalPadding,
-                    0,
-                  ),
-                  sliver: SliverToBoxAdapter(
-                    child: _SectionTitle(
-                      title: query.isEmpty
-                          ? context.l10n.projects
-                          : context.l10n.projectSearchResults,
-                      trailing: query.isEmpty
-                          ? null
-                          : context.l10n.resultCount(projects.length),
-                    ),
-                  ),
-                ),
-                if (projects.isEmpty)
-                  SliverToBoxAdapter(
-                    child: _Empty(label: context.l10n.noProjects),
-                  )
-                else
-                  SliverList.builder(
-                    itemCount: projects.length,
-                    itemBuilder: (context, index) =>
-                        _ProjectRow(project: projects[index]),
-                  ),
-                if (query.isEmpty && data.projectCursor != null)
-                  SliverToBoxAdapter(
-                    child: TextButton(
-                      onPressed: () => ref
-                          .read(workspaceProvider.notifier)
-                          .loadMoreProjects(),
-                      child: Text(context.l10n.expandProjects),
-                    ),
-                  ),
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(
-                    WawCompact.horizontalPadding,
-                    18,
-                    WawCompact.horizontalPadding,
-                    0,
-                  ),
-                  sliver: SliverToBoxAdapter(
-                    child: _SectionTitle(
-                      title: query.isEmpty
-                          ? context.l10n.recent
-                          : context.l10n.conversationSearchResults,
-                      trailing: query.isEmpty
-                          ? null
-                          : context.l10n.resultCount(conversations.length),
-                    ),
-                  ),
-                ),
-                if (conversations.isEmpty)
-                  SliverToBoxAdapter(
-                    child: _Empty(label: context.l10n.noConversations),
-                  )
-                else
-                  SliverList.builder(
-                    itemCount: conversations.length,
-                    itemBuilder: (context, index) => _ConversationRow(
-                      conversation: conversations[index],
-                      projectName: _projectName(
-                        data,
-                        conversations[index].projectId,
+                      if (projects.isEmpty)
+                        SliverToBoxAdapter(
+                          child: _Empty(label: context.l10n.noProjects),
+                        )
+                      else
+                        SliverList.builder(
+                          itemCount: projects.length,
+                          itemBuilder: (context, index) =>
+                              _ProjectRow(project: projects[index]),
+                        ),
+                      if (query.isEmpty && data.projectCursor != null)
+                        SliverToBoxAdapter(
+                          child: TextButton(
+                            onPressed: () => ref
+                                .read(workspaceProvider.notifier)
+                                .loadMoreProjects(),
+                            child: Text(context.l10n.expandProjects),
+                          ),
+                        ),
+                      SliverPadding(
+                        padding: const EdgeInsets.fromLTRB(
+                          WawCompact.horizontalPadding,
+                          18,
+                          WawCompact.horizontalPadding,
+                          0,
+                        ),
+                        sliver: SliverToBoxAdapter(
+                          child: _SectionTitle(
+                            title: query.isEmpty
+                                ? context.l10n.recent
+                                : context.l10n.conversationSearchResults,
+                            trailing: query.isEmpty
+                                ? null
+                                : context.l10n.resultCount(
+                                    conversations.length,
+                                  ),
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                const SliverToBoxAdapter(child: SizedBox(height: 88)),
-              ],
-            ],
-          ),
+                      if (conversations.isEmpty)
+                        SliverToBoxAdapter(
+                          child: _Empty(label: context.l10n.noConversations),
+                        )
+                      else
+                        SliverList.builder(
+                          itemCount: conversations.length,
+                          itemBuilder: (context, index) => _ConversationRow(
+                            conversation: conversations[index],
+                            projectName: _projectName(
+                              data,
+                              conversations[index],
+                            ),
+                          ),
+                        ),
+                      const SliverToBoxAdapter(child: SizedBox(height: 88)),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
         ),
       ),
       bottomSheet: SafeArea(
@@ -206,6 +216,7 @@ class _TopBar extends ConsumerWidget {
           enabled: false,
         );
     return Padding(
+      key: const Key('workspace-top-bar'),
       padding: const EdgeInsets.fromLTRB(
         WawCompact.horizontalPadding,
         10,
@@ -251,7 +262,7 @@ class _TopBar extends ConsumerWidget {
                                 );
                                 context.push(
                                   '/conversation/${item.id}',
-                                  extra: _projectName(data, item.projectId),
+                                  extra: _projectName(data, item),
                                 );
                               },
                               child: Padding(
@@ -424,6 +435,7 @@ class _AgentRail extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final scaledLabel = MediaQuery.textScalerOf(context).scale(16);
     return SizedBox(
+      key: const Key('workspace-agent-rail'),
       height: math.max(52, 52 + (scaledLabel - 16) * 2),
       child: ListView.separated(
         padding: const EdgeInsets.symmetric(
@@ -532,9 +544,14 @@ class _ConversationRow extends StatelessWidget {
   );
 }
 
-String? _projectName(WorkspaceState data, String projectId) {
-  if (projectId.isEmpty) return null;
-  return data.projects.where((item) => item.id == projectId).firstOrNull?.name;
+String? _projectName(WorkspaceState data, ConversationSummary conversation) {
+  final embeddedName = conversation.projectName?.trim();
+  if (embeddedName != null && embeddedName.isNotEmpty) return embeddedName;
+  if (conversation.projectId.isEmpty) return null;
+  return data.projects
+      .where((item) => item.id == conversation.projectId)
+      .firstOrNull
+      ?.name;
 }
 
 class _SectionTitle extends StatelessWidget {

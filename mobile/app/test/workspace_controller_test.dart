@@ -152,6 +152,7 @@ void main() {
     expect(result.syncFailed, isFalse);
     expect(result.projects.single.id, 'project-agent-ready');
     expect(result.conversations.single.id, 'conversation-agent-ready');
+    expect(result.conversations.single.projectName, 'Project for agent-ready');
   });
 
   test('duplicate conversation IDs are shown only once', () async {
@@ -448,6 +449,7 @@ class _FakeCoreGateway extends CoreGateway {
         'id': 'conversation-$agentId',
         'agentId': agentId,
         'projectId': 'project-$agentId',
+        'projectName': 'Project for $agentId',
         'title': 'Conversation for $agentId',
         'status': 'idle',
         'running': false,

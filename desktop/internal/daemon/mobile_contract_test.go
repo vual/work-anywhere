@@ -113,7 +113,7 @@ func TestNormalizeConversationMetadataAndTimeline(t *testing.T) {
 }
 
 func TestMobileConversationAttentionComesFromPendingActions(t *testing.T) {
-	page, err := normalizeConversationList("agent-1", json.RawMessage(`{"data":[{"id":"thread-1","name":"Needs help"},{"id":"thread-2","name":"Running"}]}`))
+	page, err := normalizeConversationList("agent-1", json.RawMessage(`{"data":[{"id":"thread-1","name":"Needs help"},{"id":"thread-2","name":"Running"}]}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -934,16 +934,28 @@ func TestMobileControlTargetTranslatesPublicParameters(t *testing.T) {
 }
 
 func TestNormalizeConversationList(t *testing.T) {
-	page, err := normalizeConversationList("agent-1", json.RawMessage(`{"data":[{"id":"t1","projectId":"p1","name":null,"preview":"First line\nSecond line","status":{"active":{"activeFlags":["waitingOnApproval"]}},"createdAt":1,"updatedAt":2},{"id":"t1","projectId":"p1","name":"Duplicate","preview":"ignored","status":"idle","createdAt":1,"updatedAt":2}]}`))
+	projects := []mobileProviderProject{{ID: "p1", Name: "Project One"}}
+	page, err := normalizeConversationList("agent-1", json.RawMessage(`{"data":[{"id":"t1","projectId":"p1","name":null,"preview":"First line\nSecond line","status":{"active":{"activeFlags":["waitingOnApproval"]}},"createdAt":1,"updatedAt":2},{"id":"t1","projectId":"p1","name":"Duplicate","preview":"ignored","status":"idle","createdAt":1,"updatedAt":2}]}`), projects)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Items) != 1 || page.Items[0].Title != "First line" || !page.Items[0].Running || page.Items[0].Status != "waitingOnApproval" {
+	if len(page.Items) != 1 || page.Items[0].Title != "First line" || page.Items[0].ProjectName != "Project One" || !page.Items[0].Running || page.Items[0].Status != "waitingOnApproval" {
 		t.Fatalf("unexpected page: %#v", page)
 	}
 	encoded, _ := json.Marshal(page)
 	if strings.Contains(string(encoded), "preview") || strings.Contains(string(encoded), "Second line") {
 		t.Fatalf("conversation preview leaked into mobile DTO: %s", encoded)
+	}
+}
+
+func TestNormalizeConversationListRecoversLegacyProjectNameFromCWD(t *testing.T) {
+	projects := []mobileProviderProject{{ID: "p1", Name: "Project One", Roots: []string{`C:\code\one`}}}
+	page, err := normalizeConversationList("agent-1", json.RawMessage(`{"data":[{"id":"t1","projectId":"","cwd":"C:\\code\\one\\src","name":"Legacy thread","status":"idle"}]}`), projects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0].ProjectID != "p1" || page.Items[0].ProjectName != "Project One" {
+		t.Fatalf("legacy project was not recovered: %#v", page.Items)
 	}
 }
 

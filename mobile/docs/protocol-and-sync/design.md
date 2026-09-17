@@ -125,7 +125,7 @@ App 前台对未选中 Daemon 以有界短连接依次执行 status probe，更�
 - `AgentSummary`：agent id、provider (`codex` 等)、display name、state、supported、navigation kind、capabilities、active turn/pending action count、last error；
 - `ProjectSummary`：稳定 project id、name、conversation/running counts、updated time；
 - `BotSummary`：为 Hermes 预留的稳定 bot id/name/state/capabilities，Codex 不返回；
-- `ConversationSummary`：thread id、title、project id、status、`running`、`needsAttention`、created/updated time；`needsAttention` 只由与该 thread 关联的未完成 action 投影；
+- `ConversationSummary`：thread id、title、project id、project name、status、`running`、`needsAttention`、created/updated time；project name 由 Desktop 使用完整项目目录解析，不依赖 Mobile 当前加载的项目页；`needsAttention` 只由与该 thread 关联的未完成 action 投影；
 - `PendingAction`：id、kind (`approval`/`userInput`)、method、conversation/turn id、created time；`userInput` 额外包含 questions，每题固定为 header、id、question、`isOther`、`isSecret` 与 label/description options；
 - `Catalog`：稳定 ID/label/capability/availability，不把 provider enum 当 UI 文案；
 - `Page<T>`：items、next cursor、has more；project 默认请求 10、项目对话 15、最近对话 20，数量是 client request 而非 server hard limit；

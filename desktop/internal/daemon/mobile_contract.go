@@ -52,6 +52,7 @@ type mobileConversationSummary struct {
 	ID             string `json:"id"`
 	AgentID        string `json:"agentId"`
 	ProjectID      string `json:"projectId,omitempty"`
+	ProjectName    string `json:"projectName,omitempty"`
 	Title          string `json:"title"`
 	Status         string `json:"status"`
 	Running        bool   `json:"running"`
@@ -697,16 +698,18 @@ func (m *Manager) projectRoot(instance *Instance, projectID string) (string, err
 	return "", nil
 }
 
-func normalizeConversationList(agentID string, raw json.RawMessage) (mobilePage[mobileConversationSummary], error) {
+func normalizeConversationList(agentID string, raw json.RawMessage, projects []mobileProviderProject) (mobilePage[mobileConversationSummary], error) {
 	var source struct {
 		Data []struct {
-			ID        string          `json:"id"`
-			ProjectID string          `json:"projectId"`
-			Name      string          `json:"name"`
-			Preview   string          `json:"preview"`
-			Status    json.RawMessage `json:"status"`
-			CreatedAt int64           `json:"createdAt"`
-			UpdatedAt int64           `json:"updatedAt"`
+			ID           string                      `json:"id"`
+			ProjectID    string                      `json:"projectId"`
+			CWD          string                      `json:"cwd"`
+			Environments []mobileProviderEnvironment `json:"environments"`
+			Name         string                      `json:"name"`
+			Preview      string                      `json:"preview"`
+			Status       json.RawMessage             `json:"status"`
+			CreatedAt    int64                       `json:"createdAt"`
+			UpdatedAt    int64                       `json:"updatedAt"`
 		} `json:"data"`
 		NextCursor *string `json:"nextCursor"`
 	}
@@ -716,6 +719,10 @@ func normalizeConversationList(agentID string, raw json.RawMessage) (mobilePage[
 	page := mobilePage[mobileConversationSummary]{Items: make([]mobileConversationSummary, 0, len(source.Data))}
 	if source.NextCursor != nil {
 		page.NextCursor = *source.NextCursor
+	}
+	projectNames := make(map[string]string, len(projects))
+	for _, project := range projects {
+		projectNames[project.ID] = project.Name
 	}
 	seen := make(map[string]struct{}, len(source.Data))
 	for _, item := range source.Data {
@@ -736,8 +743,18 @@ func normalizeConversationList(agentID string, raw json.RawMessage) (mobilePage[
 		if title == "" {
 			title = "Untitled conversation"
 		}
+		projectID := item.ProjectID
+		if _, exists := projectNames[projectID]; !exists {
+			projectID = mobileConversationProjectID(mobileProviderConversation{
+				ID:           item.ID,
+				ProjectID:    item.ProjectID,
+				CWD:          item.CWD,
+				Environments: item.Environments,
+				UpdatedAt:    item.UpdatedAt,
+			}, projects)
+		}
 		status, running := normalizeThreadStatus(item.Status)
-		page.Items = append(page.Items, mobileConversationSummary{ID: item.ID, AgentID: agentID, ProjectID: item.ProjectID, Title: title, Status: status, Running: running, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt})
+		page.Items = append(page.Items, mobileConversationSummary{ID: item.ID, AgentID: agentID, ProjectID: projectID, ProjectName: projectNames[projectID], Title: title, Status: status, Running: running, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt})
 	}
 	return page, nil
 }
