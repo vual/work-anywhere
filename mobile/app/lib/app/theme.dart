@@ -1,7 +1,26 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 const wawBlue = Color(0xFF2F80ED);
 const wawGreen = Color(0xFF34C759);
+
+/// System bar appearance for the app's edge-to-edge surfaces.
+///
+/// Android 15+ (and Flutter apps targeting Android 16) keeps the status bar
+/// transparent. The icon brightness must therefore be explicit; relying on
+/// the native theme can leave dark icons disabled after the Activity is
+/// restored by an OEM launcher.
+SystemUiOverlayStyle wawSystemUiOverlayStyle(Brightness brightness) {
+  final style = brightness == Brightness.dark
+      ? SystemUiOverlayStyle.light
+      : SystemUiOverlayStyle.dark;
+  return style.copyWith(
+    statusBarColor: Colors.transparent,
+    systemNavigationBarColor: Colors.transparent,
+    systemStatusBarContrastEnforced: false,
+    systemNavigationBarContrastEnforced: false,
+  );
+}
 
 extension WawThemeColors on ThemeData {
   Color get floatingSurface =>
@@ -94,6 +113,7 @@ ThemeData _theme(Brightness brightness, Color surface, Color ink, Color soft) {
       scrolledUnderElevation: 0,
       toolbarHeight: 72,
       foregroundColor: ink,
+      systemOverlayStyle: wawSystemUiOverlayStyle(brightness),
     ),
     cardColor: soft,
     splashFactory: InkSparkle.splashFactory,

@@ -11,6 +11,7 @@
 ### UI 与应用层
 
 - 使用 Flutter/Dart 构建 iOS 与 Android UI，采用 feature-first 目录和 MVVM：View 只渲染 immutable UI state，ViewModel 编排 use case，Repository 按 Daemon、Agent、Project/Bot、Conversation 聚合本地状态与远端 service。
+- Android UI 使用 edge-to-edge；系统状态栏和导航栏保持透明，由 Flutter `SystemUiOverlayStyle` 按浅色/深色主题显式设置图标亮度，Android 启动主题同时提供同样的初始 appearance，避免 Activity 被 OEM 恢复时状态栏图标在浅色背景上不可见。
 - App shell 使用单工作台与系统返回栈，不建立底部导航状态；Daemon/Agent 是工作台上下文 selection，项目和会话是可恢复的下钻 route。
 - 路由、依赖注入和状态容器使用锁定版本的 Dart package；具体 package 在 scaffold PoC 后写入 `pubspec.lock`，不得让其类型泄漏到 protocol/repository public interface。
 - Flutter 到 host 的命令边界集中在 `app/pigeons/mobile_core.dart` 生成的 Pigeon typed channel，host 到 Flutter 的主动状态/事件通过专用 EventChannel 传递。业务 widget 不直接依赖 channel 字符串，也不接触 key bytes 或 protobuf frame；当前 timeline summary 和 model/permission catalog 已在 Desktop 结构化，完整句子由 Flutter 本地化，action 仍含受控的 provider-shaped payload。
