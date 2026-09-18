@@ -175,26 +175,30 @@ class _ComputerRow extends StatelessWidget {
             const Icon(Icons.laptop_mac_outlined, size: 26),
             const SizedBox(width: 12),
             Expanded(
-              child: Text(
-                computer.name?.isNotEmpty == true
-                    ? computer.name!
-                    : context.l10n.computer,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    computer.name?.isNotEmpty == true
+                        ? computer.name!
+                        : context.l10n.computer,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    '${_phaseLabel(context, computer.phase)}${computer.relayUrl.isEmpty ? '' : ' · ${computer.relayUrl}'}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: WawCompact.metadata.copyWith(
+                      color: Theme.of(context).mutedInk,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
-        ),
-        subtitle: Padding(
-          padding: const EdgeInsets.only(left: 38, top: 3),
-          child: Text(
-            '${_phaseLabel(context, computer.phase)}${computer.relayUrl.isEmpty ? '' : ' · ${computer.relayUrl}'}',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: WawCompact.metadata.copyWith(
-              color: Theme.of(context).mutedInk,
-            ),
-          ),
         ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
