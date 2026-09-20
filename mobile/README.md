@@ -82,7 +82,7 @@ mobile/
 
 Flutter 固定为 `3.47.2`，Go 为仓库 `1.26.5`，`x/mobile` 固定到 `v0.0.0-20260908204917-8b95e45f8d3e`；Dart 和 Gradle 依赖由提交的 lock/wrapper 固定。Android API 29 是最低版本。Android host 使用 Keystore AES-GCM wrapping 保存 Go Core 导出的 pairing credential，credential 不进入 Flutter/Dart；正文、action 和附件只保留在进程内存。
 
-Flutter 文案已提供 `zh-CN` 与 `en-US` locale（并保留对应基础语言 fallback）；Android/iOS launcher icon 与应用内顶栏统一使用黑底、白色 WAW 连线和绿色中心点。iOS 当前只有生成的 Pigeon 接口与权限声明，尚未接入 Go XCFramework/Keychain host，因此不属于可运行目标。
+Flutter 文案已提供 `zh-CN` 与 `en-US` locale（并保留对应基础语言 fallback）；Android/iOS launcher icon 使用白底、黑色 WAW 连线和绿色中心点，应用内图标仍使用黑底、白色 WAW 连线和绿色中心点。启动图标的矢量源见 [`app/branding/launcher-icon.svg`](app/branding/launcher-icon.svg)。iOS 当前只有生成的 Pigeon 接口与权限声明，尚未接入 Go XCFramework/Keychain host，因此不属于可运行目标。
 
 ## Build and verification
 

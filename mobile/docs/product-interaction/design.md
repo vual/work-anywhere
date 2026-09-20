@@ -14,6 +14,10 @@
 - **渐进披露**：默认展示适合手机阅读的消息/工具摘要；reasoning 完整展示，Plan 和大内容通过专用查看器渐进加载，工具参数和输出不进入 Mobile Timeline。
 - **隐私默认收敛**：通知、系统任务切换预览和日志不出现 Prompt/action 正文；用户进入并解锁 App 后才显示内容。
 
+## 应用图标
+
+Android/iOS 启动图标以 [`app/branding/launcher-icon.svg`](../../app/branding/launcher-icon.svg) 为源：白色背景、黑色 WAW 连线、绿色中心点。Android 的 `mipmap-*/ic_launcher.png` 和 iOS 的 `AppIcon.appiconset` 均由该图形按平台要求输出。应用内配对页、工作台顶栏和空白会话使用独立的 [`app/assets/waw-app-icon.svg`](../../app/assets/waw-app-icon.svg)，保持黑底白色连线；更改启动图标时不改变应用内页面。发布前需在 Android 启动器及 iOS 主屏幕核对图标的背景、颜色和裁切。
+
 ## 信息架构
 
 App 不使用底部导航栏。无 pairing 时根页面是添加配对；至少一个 pairing 后根页面是单一工作台，详情使用系统返回栈逐级下钻：
@@ -257,7 +261,7 @@ Daemon selector 底部提供“添加电脑”和“管理电脑”。管理页�
 
 ## 代码归属
 
-当前路径：`mobile/app/lib/features/{pairing,workspace,project,conversation}/`、`mobile/app/lib/app/` 与 `mobile/app/lib/core/`。Markdown 正文 renderer 位于 `mobile/app/lib/features/conversation/markdown_renderer.dart`；`actions` 当前内嵌在会话页；daemon management、settings、独立 action schema 尚未实现。
+当前路径：`mobile/app/lib/features/{pairing,workspace,project,conversation}/`、`mobile/app/lib/app/` 与 `mobile/app/lib/core/`。启动图标源位于 `mobile/app/branding/launcher-icon.svg`，平台图标分别位于 `mobile/app/android/app/src/main/res/mipmap-*/` 和 `mobile/app/ios/Runner/Assets.xcassets/AppIcon.appiconset/`。Markdown 正文 renderer 位于 `mobile/app/lib/features/conversation/markdown_renderer.dart`；`actions` 当前内嵌在会话页；daemon management、settings、独立 action schema 尚未实现。
 
 可点击交互参考：[Mobile 高保真原型 V3](../../../designs/work-anywhere-mobile/index-v3.html)。原型采用白底扁平列表、胶囊上下文与单一蓝色动作色，用于确认信息层级、页面状态和交互路径，不代表 Mobile 运行代码已经实现。
 
@@ -267,8 +271,9 @@ Daemon selector 底部提供“添加电脑”和“管理电脑”。管理页�
 - E2E 覆盖首次配对、拒绝/过期、恢复上次 Daemon/Agent、多 Daemon/Agent 切换、项目 10 条展开、项目会话 15 条分页、最近对话 20 条、跨项目搜索、运行中蓝色 icon、流式输出、运行中消息排队及编辑/立即引导/取消、cursor gap、action race、图片失败、interrupt race 和 push cold start。
 - Markdown widget 测试覆盖 GFM 常用格式、文本选择、代码块、链接确认入口和远程图片拦截；链接只允许 `http/https`，打开失败保留在当前页面并显示可解释提示。
 - VoiceOver/TalkBack、200% 字体、reduced motion、窄屏/平板、深色模式和本地化伪语言人工验收。
+- Android/iOS 启动图标逐档核对尺寸、白色不透明背景与黑色连线；真机启动器和主屏幕核对系统裁切后的图形。
 - 用户测试重点记录：能否区分 Desktop 离线与任务失败、能否理解“等待电脑确认”、是否会在 ambiguous write 后误重复发送。
 
 ## 文档更新触发
 
-修改根页面、Daemon/Agent/Provider 层级、项目/Bot 差异、列表数量/分页、搜索、状态 icon、页面职责、发送/action/interrupt、错误码映射、通知入口、隐私交互、可访问性或 V1 范围时，必须更新本文档以及架构、协议同步和交付计划。
+修改启动图标、根页面、Daemon/Agent/Provider 层级、项目/Bot 差异、列表数量/分页、搜索、状态 icon、页面职责、发送/action/interrupt、错误码映射、通知入口、隐私交互、可访问性或 V1 范围时，必须更新本文档及其他受影响文档。
