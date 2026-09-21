@@ -38,7 +38,7 @@ Flutter 适合共享 UI 与业务逻辑，同时保留 Swift/Kotlin 平台接入
 
 ## 内部 binding 接口
 
-当前 Flutter 通过 Pigeon `MobileCoreApi` 发出 `pair`、`restoreStored`、多 pairing 的选择/启停/排序/Relay 更新/短探测、credential catalog 持久化/删除、通用 versioned control `call`、`status` 和 `close`；业务 method/DTO 位于 `mobile-control-v1` envelope 内。Android host 把 Go Core 的 `EventSink` 接到 `work_anywhere/mobile_events` EventChannel，主动发送 daemon event 和 transport state；iOS 事件宿主尚未实现。
+当前 Flutter 通过 Pigeon `MobileCoreApi` 发出 `pair`、`restoreStored`、多 pairing 的选择/启停/排序/Relay 更新/本机删除/短探测、credential catalog 持久化、通用 versioned control `call`、`status` 和 `close`；业务 method/DTO 位于 `mobile-control-v1` envelope 内。Android host 把 Go Core 的 `EventSink` 接到 `work_anywhere/mobile_events` EventChannel，主动发送 daemon event 和 transport state；iOS 事件宿主尚未实现。
 
 Host 把 command 转给 gomobile facade；Go core 的 event sink 只返回两类 JSON envelope：metadata-only `type=event` 与连接生命周期 `type=transport`，两者都携带当前 `daemonId + selection generation`。endpoint 不把迟到 response 当事件，未注册 sink 时仅在内存保留最近 1000 条 daemon event；Android 主线程转发后，Dart controller 仍按当前电脑和 generation 二次过滤，再合并 event burst 并用 snapshot sequence 丢弃迟到结果。网络任务永不在 platform main thread 同步等待。
 
@@ -72,7 +72,7 @@ View ── intent ──► ViewModel ── use case ──► Repository
                                                └─ PushIntentService (system notification entry)
 ```
 
-一个 Go `PairingRuntime` 对应一条 daemon—Mobile pairing，拥有独立连接状态、Noise session、request ID namespace、cursor map 和 in-flight request map。endpoint 客户端为每个 runtime 维护单一重连门闩；并发请求共享一次重连尝试，失败后使用 500 ms 起、最大 30 s 的指数冷却，避免断线轮询把 Relay 连接限流放大。选中的 Daemon 保持前台连接；其余 pairing 由 coordinator 以最长 15 秒的有界短连接依次探测并缓存 `connecting/online/offline + checkedAt`，探测完成即关闭。切换或禁用 Daemon 时只断开旧常驻 session 并保留 catalog credential；只有 runtime 被替换、Core 最终关闭或未来显式解除配对时才擦除 credential。切换同时递增 selection generation 并激活新 runtime，避免无上限 socket/battery 消耗和迟到事件串台。
+一个 Go `PairingRuntime` 对应一条 daemon—Mobile pairing，拥有独立连接状态、Noise session、request ID namespace、cursor map 和 in-flight request map。endpoint 客户端为每个 runtime 维护单一重连门闩；并发请求共享一次重连尝试，失败后使用 500 ms 起、最大 30 s 的指数冷却，避免断线轮询把 Relay 连接限流放大。选中的 Daemon 保持前台连接；其余 pairing 由 coordinator 以最长 15 秒的有界短连接依次探测并缓存 `connecting/online/offline + checkedAt`，探测完成即关闭。切换或禁用 Daemon 时只断开旧常驻 session 并保留 catalog credential；本机删除配对时关闭并移除该 runtime，Android host 将更新后的 catalog 加密写入安全存储，写入失败则恢复旧 catalog。删除当前 Daemon 时递增 selection generation 并选用剩余已启用配对；删除最后一条时 catalog 为空且 Flutter 返回配对页。切换同样递增 generation，避免迟到事件串台。本机删除不撤销 Desktop 侧授权。
 
 Repository 中的权威划分：
 

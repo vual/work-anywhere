@@ -27,7 +27,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final icon = tester.getRect(find.byIcon(Icons.laptop_mac_outlined));
+    final icon = tester.getRect(find.byIcon(Icons.laptop_mac_outlined).first);
     final name = tester.getRect(find.text('LAPTOP'));
     final status = tester.getRect(
       find.text('在线 · 安全连接 · https://relay.example.com'),
@@ -37,6 +37,44 @@ void main() {
     expect(icon.center.dy, closeTo(informationCenter, 0.01));
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'deletion requires confirmation and removes the chosen computer',
+    (tester) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            workspaceProvider.overrideWith(_FakeWorkspaceController.new),
+          ],
+          child: MaterialApp(
+            locale: const Locale('zh', 'CN'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            theme: buildLightTheme(),
+            home: const ComputerManagementScreen(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(PopupMenuButton<String>).last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('删除电脑').last);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('SECOND'), findsWidgets);
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
+      expect(find.text('SECOND'), findsOneWidget);
+
+      await tester.tap(find.byType(PopupMenuButton<String>).last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('删除电脑').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('删除电脑').last);
+      await tester.pumpAndSettle();
+      expect(find.text('SECOND'), findsNothing);
+      expect(find.text('LAPTOP'), findsOneWidget);
+    },
+  );
 }
 
 class _FakeWorkspaceController extends WorkspaceController {
@@ -50,7 +88,23 @@ class _FakeWorkspaceController extends WorkspaceController {
         phase: ConnectionPhase.online,
         relayUrl: 'https://relay.example.com',
       ),
+      DaemonSummary(
+        id: 'daemon-2',
+        name: 'SECOND',
+        phase: ConnectionPhase.offline,
+        relayUrl: 'https://relay.example.com',
+      ),
     ],
     selectedDaemonId: 'daemon-1',
   );
+
+  @override
+  Future<void> removeDaemon(String id) async {
+    final current = state.requireValue;
+    state = AsyncData(
+      current.copyWith(
+        daemons: current.daemons.where((item) => item.id != id).toList(),
+      ),
+    );
+  }
 }

@@ -503,6 +503,20 @@ class AppLocalizationsZh extends AppLocalizations {
   String get editComputer => '编辑电脑';
 
   @override
+  String get deleteComputer => '删除电脑';
+
+  @override
+  String deleteComputerConfirm(String name) {
+    return '确定从这部手机删除“$name”吗？本机的配对信息会被移除；如需再次连接，请重新配对。电脑端授权仍需在电脑上撤销。';
+  }
+
+  @override
+  String get computerDeleted => '电脑已删除';
+
+  @override
+  String get computerDeleteFailed => '无法删除电脑，请重试';
+
+  @override
   String get save => '保存';
 
   @override

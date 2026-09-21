@@ -1,6 +1,6 @@
 # Work Anywhere Mobile
 
-> 状态：Android-first 实现已建立 Flutter 应用、Pigeon host、Go endpoint core、多电脑配对管理、工作台/项目/会话与受控写入代码路径；电脑管理支持锚定下拉切换、拖动排序、启用/禁用、名称与 Relay 地址编辑，并使用 Android Keystore 加密 catalog。会话详情使用稳定 timeline/catalog/settings/queue DTO、opaque cursor 分页和大内容按需读取；`request_user_input` 已使用稳定问题 DTO、多问题弹窗和待处理提醒，命令审批继续兼容允许/拒绝。尚未完成 Android 全量真机 E2E、正式签名、完整 approval DTO、iOS host、push、应用锁与发布验收，因此不能作为生产客户端发布。`relay/` 中的浏览器 `mobile-simulator` 仍只用于协议联调。
+> 状态：Android-first 实现已建立 Flutter 应用、Pigeon host、Go endpoint core、多电脑配对管理、工作台/项目/会话与受控写入代码路径；电脑管理支持锚定下拉切换、拖动排序、启用/禁用、名称与 Relay 地址编辑及本机删除配对，并使用 Android Keystore 加密 catalog。会话详情使用稳定 timeline/catalog/settings/queue DTO、opaque cursor 分页和大内容按需读取；`request_user_input` 已使用稳定问题 DTO、多问题弹窗和待处理提醒，命令审批继续兼容允许/拒绝。尚未完成 Android 全量真机 E2E、正式签名、完整 approval DTO、iOS host、push、应用锁与发布验收，因此不能作为生产客户端发布。`relay/` 中的浏览器 `mobile-simulator` 仍只用于协议联调。
 
 Mobile 是 Work Anywhere 的 iOS/Android 客户端。它不连接 Codex 云端，也不保存云端账号；每次通过已授权的 Desktop daemon 读取任务状态、继续已有会话、处理审批/问题、发送图片和中断运行中的 Turn。
 

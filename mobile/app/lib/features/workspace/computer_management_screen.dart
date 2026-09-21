@@ -84,6 +84,8 @@ class ComputerManagementScreen extends ConsumerWidget {
                     },
                     onEdit: () =>
                         _editComputer(context, ref, data.daemons[index]),
+                    onDelete: () =>
+                        _deleteComputer(context, ref, data.daemons[index]),
                   ),
                 ),
               ),
@@ -143,6 +145,52 @@ class ComputerManagementScreen extends ConsumerWidget {
       }
     }
   }
+
+  Future<void> _deleteComputer(
+    BuildContext context,
+    WidgetRef ref,
+    DaemonSummary computer,
+  ) async {
+    final name = computer.name?.isNotEmpty == true
+        ? computer.name!
+        : context.l10n.computer;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(dialogContext.l10n.deleteComputer),
+        content: Text(dialogContext.l10n.deleteComputerConfirm(name)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(dialogContext.l10n.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(dialogContext.l10n.deleteComputer),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await ref.read(workspaceProvider.notifier).removeDaemon(computer.id);
+      if (!context.mounted) return;
+      final remaining = ref.read(workspaceProvider).value?.daemons;
+      if (remaining?.isEmpty == true) {
+        context.go('/');
+      } else {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(context.l10n.computerDeleted)));
+      }
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.l10n.computerDeleteFailed)),
+        );
+      }
+    }
+  }
 }
 
 class _ComputerRow extends StatelessWidget {
@@ -151,12 +199,14 @@ class _ComputerRow extends StatelessWidget {
     required this.computer,
     required this.onEnabledChanged,
     required this.onEdit,
+    required this.onDelete,
     super.key,
   });
   final int index;
   final DaemonSummary computer;
   final ValueChanged<bool> onEnabledChanged;
   final VoidCallback onEdit;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -204,11 +254,15 @@ class _ComputerRow extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             PopupMenuButton<String>(
-              onSelected: (_) => onEdit(),
+              onSelected: (value) => value == 'delete' ? onDelete() : onEdit(),
               itemBuilder: (context) => [
                 PopupMenuItem(
                   value: 'edit',
                   child: Text(context.l10n.editComputer),
+                ),
+                PopupMenuItem(
+                  value: 'delete',
+                  child: Text(context.l10n.deleteComputer),
                 ),
               ],
             ),

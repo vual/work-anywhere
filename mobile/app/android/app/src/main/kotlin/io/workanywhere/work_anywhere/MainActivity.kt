@@ -109,6 +109,10 @@ private class ReflectiveMobileCore(context: Context) : MobileCoreApi {
         mutate("updatePairing", arrayOf(String::class.java, String::class.java, String::class.java), arrayOf(daemonId, displayName, relayUrl))
     }
 
+    override suspend fun removePairing(daemonId: String): CoreReply = withContext(Dispatchers.IO) {
+        mutate("removePairing", arrayOf(String::class.java), arrayOf(daemonId))
+    }
+
     override suspend fun reorderPairings(daemonIds: List<String>): CoreReply = withContext(Dispatchers.IO) {
         mutate("reorderPairings", arrayOf(List::class.java), arrayOf(daemonIds))
     }

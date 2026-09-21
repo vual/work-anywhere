@@ -282,6 +282,25 @@ class MobileCoreApi {
     return pigeonVar_replyValue! as CoreReply;
   }
 
+  Future<CoreReply> removePairing(String daemonId) async {
+    final pigeonVar_channelName = 'dev.flutter.pigeon.work_anywhere.MobileCoreApi.removePairing$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channel = BasicMessageChannel<Object?>(
+      pigeonVar_channelName,
+      pigeonChannelCodec,
+      binaryMessenger: pigeonVar_binaryMessenger,
+    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(<Object?>[daemonId]);
+    final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
+
+    final Object? pigeonVar_replyValue = _extractReplyValueOrThrow(
+        pigeonVar_replyList,
+        pigeonVar_channelName,
+        isNullValid: false,
+    )
+    ;
+    return pigeonVar_replyValue! as CoreReply;
+  }
+
   Future<CoreReply> reorderPairings(List<String> daemonIds) async {
     final pigeonVar_channelName = 'dev.flutter.pigeon.work_anywhere.MobileCoreApi.reorderPairings$pigeonVar_messageChannelSuffix';
     final pigeonVar_channel = BasicMessageChannel<Object?>(

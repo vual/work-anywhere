@@ -98,12 +98,14 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
       var status =
           statusEnvelope['result'] as Map<String, dynamic>? ?? statusEnvelope;
       CoreFault? restoreFault;
+      var restoredCatalog = false;
       if (_catalog(status).isEmpty && status['connected'] != true) {
         try {
           statusEnvelope = await _gateway.restoreStored();
           status =
               statusEnvelope['result'] as Map<String, dynamic>? ??
               statusEnvelope;
+          restoredCatalog = status['pairings'] is List;
         } on CoreFault catch (error) {
           restoreFault = error;
         }
@@ -128,7 +130,9 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
       if (status['connected'] != true) {
         final preferences = await SharedPreferences.getInstance();
         final daemonId = preferences.getString('lastDaemonId');
-        if (daemonId != null && restoreFault?.code != 'no_stored_pairing') {
+        if (daemonId != null &&
+            !restoredCatalog &&
+            restoreFault?.code != 'no_stored_pairing') {
           return WorkspaceState(
             needsPairing: false,
             daemons: [
@@ -442,6 +446,64 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
     return state.requireValue.daemons
         .where((item) => item.id == id)
         .firstOrNull;
+  }
+
+  Future<void> removeDaemon(String id) async {
+    final current = state.value;
+    if (current == null || !current.daemons.any((item) => item.id == id)) {
+      return;
+    }
+    final envelope = await _gateway.removePairing(id);
+    final result = envelope['result'] as Map<String, dynamic>? ?? envelope;
+    final daemons = _catalog(result);
+    final selectedId = _selectedEnabledId(
+      daemons,
+      result['activeDaemonId'] as String?,
+    );
+    ++_selectionGeneration;
+    final next = current.copyWith(
+      needsPairing: daemons.isEmpty,
+      daemons: daemons,
+      selectedDaemonId: selectedId,
+      eventGeneration:
+          (result['generation'] as num?)?.toInt() ?? current.eventGeneration,
+      selectedAgentId: selectedId == current.selectedDaemonId
+          ? current.selectedAgentId
+          : null,
+      agents: selectedId == current.selectedDaemonId
+          ? current.agents
+          : const [],
+      projects: selectedId == current.selectedDaemonId
+          ? current.projects
+          : const [],
+      conversations: selectedId == current.selectedDaemonId
+          ? current.conversations
+          : const [],
+      projectCursor: selectedId == current.selectedDaemonId
+          ? current.projectCursor
+          : null,
+      syncFailed: selectedId == current.selectedDaemonId
+          ? current.syncFailed
+          : false,
+    );
+    state = AsyncData(
+      selectedId != null && selectedId != current.selectedDaemonId
+          ? await _loadOrKeepPairing(next)
+          : next,
+    );
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      await preferences.remove('lastDaemonName:$id');
+      await preferences.remove('lastAgent:$id');
+      if (selectedId == null) {
+        await preferences.remove('lastDaemonId');
+      } else {
+        await preferences.setString('lastDaemonId', selectedId);
+      }
+    } catch (_) {
+      // The native encrypted catalog is authoritative; these preferences are
+      // only conveniences for restoring the most recent selection.
+    }
   }
 
   Future<void> probeDaemon(String id) async {

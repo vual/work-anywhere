@@ -201,7 +201,7 @@ Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项�
 
 ## Daemon 管理与设置
 
-Daemon selector 底部提供“添加电脑”和“管理电脑”。管理页卡片显示本地别名、Relay origin 和连接状态，电脑图标相对“别名 + 状态”两行信息整体垂直居中；每行支持拖动排序、启用/禁用及右侧更多菜单编辑名称和 Relay origin。当前不提供删除/解除配对入口，页面不放置常驻底部栏。
+Daemon selector 底部提供“添加电脑”和“管理电脑”。管理页卡片显示本地别名、Relay origin 和连接状态，电脑图标相对“别名 + 状态”两行信息整体垂直居中；每行支持拖动排序、启用/禁用及右侧更多菜单编辑名称和 Relay origin、删除电脑。删除前显示电脑名称与本机配对信息删除的确认弹窗；取消不修改状态，失败保留列表并提示重试。成功后移除本机加密 catalog 中的该条 credential 和相关选择偏好；删除当前电脑时选择排序最前的其他已启用电脑并重新同步，没有可用电脑时清空工作台内容，最后一台删除后返回配对页。删除只影响本机配对，Desktop 侧授权记录仍需在 Desktop 管理页撤销。页面不放置常驻底部栏。
 
 设置项：
 
@@ -261,13 +261,13 @@ Daemon selector 底部提供“添加电脑”和“管理电脑”。管理页�
 
 ## 代码归属
 
-当前路径：`mobile/app/lib/features/{pairing,workspace,project,conversation}/`、`mobile/app/lib/app/` 与 `mobile/app/lib/core/`。启动图标源位于 `mobile/app/branding/launcher-icon.svg`，平台图标分别位于 `mobile/app/android/app/src/main/res/mipmap-*/` 和 `mobile/app/ios/Runner/Assets.xcassets/AppIcon.appiconset/`。Markdown 正文 renderer 位于 `mobile/app/lib/features/conversation/markdown_renderer.dart`；`actions` 当前内嵌在会话页；daemon management、settings、独立 action schema 尚未实现。
+当前路径：`mobile/app/lib/features/{pairing,workspace,project,conversation}/`、`mobile/app/lib/app/` 与 `mobile/app/lib/core/`。启动图标源位于 `mobile/app/branding/launcher-icon.svg`，平台图标分别位于 `mobile/app/android/app/src/main/res/mipmap-*/` 和 `mobile/app/ios/Runner/Assets.xcassets/AppIcon.appiconset/`。Markdown 正文 renderer 位于 `mobile/app/lib/features/conversation/markdown_renderer.dart`；`actions` 当前内嵌在会话页；独立 action schema 尚未实现。
 
 可点击交互参考：[Mobile 高保真原型 V3](../../../designs/work-anywhere-mobile/index-v3.html)。原型采用白底扁平列表、胶囊上下文与单一蓝色动作色，用于确认信息层级、页面状态和交互路径，不代表 Mobile 运行代码已经实现。
 
 ## 验证方式
 
-- 每个页面覆盖 loading、empty、online、offline、stale、error、restricted 和 revoked golden/widget tests；项目页额外验证圆形图标“新建对话”按钮、tooltip/无障碍语义、重复点击保护、创建成功跳转和创建失败提示；Daemon 绿色/灰色状态点与两类 loading icon 都验证文本语义。
+- 每个页面覆盖 loading、empty、online、offline、stale、error、restricted 和 revoked golden/widget tests；项目页额外验证圆形图标“新建对话”按钮、tooltip/无障碍语义、重复点击保护、创建成功跳转和创建失败提示；管理电脑页验证删除确认、取消、失败后保留列表、当前电脑切换和删除最后一台后返回配对页；Daemon 绿色/灰色状态点与两类 loading icon 都验证文本语义。
 - E2E 覆盖首次配对、拒绝/过期、恢复上次 Daemon/Agent、多 Daemon/Agent 切换、项目 10 条展开、项目会话 15 条分页、最近对话 20 条、跨项目搜索、运行中蓝色 icon、流式输出、运行中消息排队及编辑/立即引导/取消、cursor gap、action race、图片失败、interrupt race 和 push cold start。
 - Markdown widget 测试覆盖 GFM 常用格式、文本选择、代码块、链接确认入口和远程图片拦截；链接只允许 `http/https`，打开失败保留在当前页面并显示可解释提示。
 - VoiceOver/TalkBack、200% 字体、reduced motion、窄屏/平板、深色模式和本地化伪语言人工验收。

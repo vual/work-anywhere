@@ -268,6 +268,7 @@ protocol MobileCoreApi {
   func selectPairing(daemonId: String) async throws -> CoreReply
   func setPairingEnabled(daemonId: String, enabled: Bool) async throws -> CoreReply
   func updatePairing(daemonId: String, displayName: String, relayUrl: String) async throws -> CoreReply
+  func removePairing(daemonId: String) async throws -> CoreReply
   func reorderPairings(daemonIds: [String]) async throws -> CoreReply
   func probePairing(daemonId: String) async throws -> CoreReply
   func persistCredentials() throws -> CoreReply
@@ -368,6 +369,23 @@ class MobileCoreApiSetup {
       }
     } else {
       updatePairingChannel.setMessageHandler(nil)
+    }
+    let removePairingChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.work_anywhere.MobileCoreApi.removePairing\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
+    if let api = api {
+      removePairingChannel.setMessageHandler { message, reply in
+        let args = message as! [Any?]
+        let daemonIdArg = args[0] as! String
+        Task { @MainActor in
+          do {
+            let result = try await api.removePairing(daemonId: daemonIdArg)
+            reply(wrapResult(result))
+          } catch {
+            reply(wrapError(error))
+          }
+        }
+      }
+    } else {
+      removePairingChannel.setMessageHandler(nil)
     }
     let reorderPairingsChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.work_anywhere.MobileCoreApi.reorderPairings\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
     if let api = api {

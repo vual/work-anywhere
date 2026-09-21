@@ -119,6 +119,46 @@ func TestMultiPairingCatalogSelectionAndDisable(t *testing.T) {
 	assertExportedCatalog(t, core, 2)
 }
 
+func TestRemovePairingForgetsOnlySelectedComputer(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+	first := testCatalogCredential(server.URL)
+	second := testCatalogCredential(server.URL)
+	firstRaw, _ := json.Marshal(first)
+	secondRaw, _ := json.Marshal(second)
+	core := NewCore()
+	defer core.Close()
+	raw, _ := json.Marshal(catalog{Version: 2, ActiveDaemonID: first.DaemonDeviceID, Pairings: []catalogPairing{
+		{DaemonID: first.DaemonDeviceID, RelayURL: server.URL, Enabled: true, Order: 0, Credential: firstRaw},
+		{DaemonID: second.DaemonDeviceID, RelayURL: server.URL, Enabled: true, Order: 1, Credential: secondRaw},
+	}})
+	var envelope resultEnvelope
+	if err := json.Unmarshal([]byte(core.Restore(string(raw))), &envelope); err != nil || !envelope.OK {
+		t.Fatalf("restore failed: %#v %v", envelope, err)
+	}
+	if err := json.Unmarshal([]byte(core.RemovePairing(first.DaemonDeviceID)), &envelope); err != nil || !envelope.OK {
+		t.Fatalf("remove failed: %#v %v", envelope, err)
+	}
+	status := core.statusValue()
+	if status.ActiveDaemonID != second.DaemonDeviceID || len(status.Pairings) != 1 || status.Pairings[0].DaemonID != second.DaemonDeviceID {
+		t.Fatalf("unexpected fallback status: %#v", status)
+	}
+	assertExportedCatalog(t, core, 1)
+	if err := json.Unmarshal([]byte(core.RemovePairing(first.DaemonDeviceID)), &envelope); err != nil || envelope.OK || envelope.Error.Code != "pairing_not_found" {
+		t.Fatalf("missing pairing removal = %#v, err=%v", envelope, err)
+	}
+	if err := json.Unmarshal([]byte(core.RemovePairing(second.DaemonDeviceID)), &envelope); err != nil || !envelope.OK {
+		t.Fatalf("last removal failed: %#v %v", envelope, err)
+	}
+	status = core.statusValue()
+	if status.ActiveDaemonID != "" || len(status.Pairings) != 0 {
+		t.Fatalf("last pairing was retained: %#v", status)
+	}
+	assertExportedCatalog(t, core, 0)
+}
+
 func assertExportedCatalog(t *testing.T, core *Core, want int) {
 	t.Helper()
 	var stored catalog

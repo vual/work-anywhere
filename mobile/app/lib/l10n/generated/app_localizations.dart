@@ -976,6 +976,30 @@ abstract class AppLocalizations {
   /// **'编辑电脑'**
   String get editComputer;
 
+  /// No description provided for @deleteComputer.
+  ///
+  /// In zh, this message translates to:
+  /// **'删除电脑'**
+  String get deleteComputer;
+
+  /// No description provided for @deleteComputerConfirm.
+  ///
+  /// In zh, this message translates to:
+  /// **'确定从这部手机删除“{name}”吗？本机的配对信息会被移除；如需再次连接，请重新配对。电脑端授权仍需在电脑上撤销。'**
+  String deleteComputerConfirm(String name);
+
+  /// No description provided for @computerDeleted.
+  ///
+  /// In zh, this message translates to:
+  /// **'电脑已删除'**
+  String get computerDeleted;
+
+  /// No description provided for @computerDeleteFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'无法删除电脑，请重试'**
+  String get computerDeleteFailed;
+
   /// No description provided for @save.
   ///
   /// In zh, this message translates to:

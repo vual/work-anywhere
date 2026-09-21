@@ -1,6 +1,6 @@
 # Mobile protocol and synchronization
 
-> 状态：Mobile Go Core 已复用 Relay endpoint 完成 pair/auth/Noise/control、多 pairing catalog、选择/启停/排序/Relay 更新和 Android 安全恢复路径；Desktop 已发布 normalized summary、分页 timeline、大内容引用、会话 settings/catalog 和 `request_user_input` 问题 DTO，Mobile 会话控制器已支持分页、局部重试和 gap snapshot 恢复。完整 approval DTO、多 pairing 真机 E2E 和 iOS host 尚未完成。
+> 状态：Mobile Go Core 已复用 Relay endpoint 完成 pair/auth/Noise/control、多 pairing catalog、选择/启停/排序/Relay 更新/本机删除和 Android 安全恢复路径；Desktop 已发布 normalized summary、分页 timeline、大内容引用、会话 settings/catalog 和 `request_user_input` 问题 DTO，Mobile 会话控制器已支持分页、局部重试和 gap snapshot 恢复。完整 approval DTO、多 pairing 真机 E2E 和 iOS host 尚未完成。
 
 ## 目标与范围
 
@@ -106,6 +106,8 @@ online
 8. `conversation.read` 可返回可选 `planConfirmation={planItemId,turnId,revision}`。仅把该权威字段作为计划确认入口，不能从 Markdown 或历史 Plan item 推断；提交 `plan.respond` 后继续通过 snapshot/event 确认最终状态，不因超时自动重复写入。
 
 App 前台对未选中 Daemon 以有界短连接依次执行 status probe，更新下拉列表的 `connecting/online/offline + checkedAt` 后关闭；只有选中 Daemon 保持前台 session。切换 Daemon/Agent/project/thread 或 search query 时取消旧 read request，并用 selection generation 丢弃迟到 response。实时 event 可以更新项目/对话摘要，但只有属于当前 Agent/thread 且 sequence 连续的 event 才能写入详情 reducer。
+
+管理页的删除电脑是本机 catalog 操作：Go Core 移除指定 pairing runtime 并关闭连接，Android host 在返回成功前持久化不含该 credential 的加密 catalog；持久化失败时恢复删除前 catalog 并返回错误。若删除当前电脑，Core 选择排序最前的剩余已启用电脑并递增 generation，Flutter 清空旧 Agent/Project/Conversation projection 后重新同步。删除最后一台时清除本机选择偏好并进入配对页。此操作不发送远端 revoke；Desktop 授权需要在 Desktop 管理页单独撤销。
 
 ### 规范化 DTO 当前边界与发布门槛
 

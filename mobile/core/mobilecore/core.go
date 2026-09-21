@@ -280,6 +280,35 @@ func (c *Core) SetPairingEnabled(daemonID string, enabled bool) string {
 	return success(c.statusValue())
 }
 
+// RemovePairing forgets one local pairing and closes its transport. This does
+// not revoke the phone from the Desktop authorization list.
+func (c *Core) RemovePairing(daemonID string) string {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return failure("closed", "mobile core is closed")
+	}
+	runtime := c.records[daemonID]
+	if runtime == nil {
+		c.mu.Unlock()
+		return failure("pairing_not_found", "pairing was not found")
+	}
+	delete(c.records, daemonID)
+	wasActive := c.activeID == daemonID
+	if wasActive {
+		c.activeID = c.firstEnabledLocked()
+		c.generation++
+	}
+	nextID := c.activeID
+	c.mu.Unlock()
+
+	runtime.client.Close()
+	if wasActive && nextID != "" {
+		_ = c.connectActive(context.Background())
+	}
+	return success(c.statusValue())
+}
+
 func (c *Core) UpdatePairing(daemonID, displayName, relayURL string) string {
 	displayName = strings.TrimSpace(displayName)
 	if displayName == "" || len([]rune(displayName)) > 80 {

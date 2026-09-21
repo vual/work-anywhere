@@ -80,6 +80,9 @@ class CoreGateway {
   ) async =>
       _decodeReply(await _api.updatePairing(daemonId, displayName, relayUrl));
 
+  Future<Map<String, dynamic>> removePairing(String daemonId) async =>
+      _decodeReply(await _api.removePairing(daemonId));
+
   Future<Map<String, dynamic>> reorderPairings(List<String> daemonIds) async =>
       _decodeReply(await _api.reorderPairings(daemonIds));
 

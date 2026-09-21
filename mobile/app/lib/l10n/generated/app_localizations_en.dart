@@ -522,6 +522,20 @@ class AppLocalizationsEn extends AppLocalizations {
   String get editComputer => 'Edit computer';
 
   @override
+  String get deleteComputer => 'Delete computer';
+
+  @override
+  String deleteComputerConfirm(String name) {
+    return 'Remove “$name” from this phone? Its local pairing information will be deleted. Pair it again to reconnect. Revoke the computer\'s authorization separately on the computer.';
+  }
+
+  @override
+  String get computerDeleted => 'Computer deleted';
+
+  @override
+  String get computerDeleteFailed => 'Unable to delete computer. Try again.';
+
+  @override
   String get save => 'Save';
 
   @override

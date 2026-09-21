@@ -25,6 +25,9 @@ abstract class MobileCoreApi {
   CoreReply updatePairing(String daemonId, String displayName, String relayUrl);
 
   @async
+  CoreReply removePairing(String daemonId);
+
+  @async
   CoreReply reorderPairings(List<String> daemonIds);
 
   @async

@@ -235,6 +235,82 @@ void main() {
     expect(preferences.getString('lastDaemonId'), 'daemon-a');
   });
 
+  test('removing active computer selects the remaining pairing', () async {
+    SharedPreferences.setMockInitialValues({
+      'lastDaemonId': 'daemon-a',
+      'lastDaemonName:daemon-a': 'A',
+    });
+    final gateway = _RemovingGateway();
+    final container = ProviderContainer(
+      overrides: [coreGatewayProvider.overrideWithValue(gateway)],
+    );
+    addTearDown(container.dispose);
+    await container.read(workspaceProvider.future);
+
+    await container.read(workspaceProvider.notifier).removeDaemon('daemon-a');
+
+    final result = container.read(workspaceProvider).requireValue;
+    expect(result.daemons.map((item) => item.id), ['daemon-b']);
+    expect(result.selectedDaemonId, 'daemon-b');
+    expect(result.needsPairing, isFalse);
+    final preferences = await SharedPreferences.getInstance();
+    expect(preferences.getString('lastDaemonId'), 'daemon-b');
+    expect(preferences.getString('lastDaemonName:daemon-a'), isNull);
+  });
+
+  test('removing the last computer returns to pairing', () async {
+    SharedPreferences.setMockInitialValues({'lastDaemonId': 'daemon-a'});
+    final gateway = _RemovingGateway(single: true);
+    final container = ProviderContainer(
+      overrides: [coreGatewayProvider.overrideWithValue(gateway)],
+    );
+    addTearDown(container.dispose);
+    await container.read(workspaceProvider.future);
+
+    await container.read(workspaceProvider.notifier).removeDaemon('daemon-a');
+
+    final result = container.read(workspaceProvider).requireValue;
+    expect(result.daemons, isEmpty);
+    expect(result.needsPairing, isTrue);
+    expect(result.selectedDaemonId, isNull);
+    final preferences = await SharedPreferences.getInstance();
+    expect(preferences.getString('lastDaemonId'), isNull);
+  });
+
+  test(
+    'empty stored catalog ignores a stale last-computer preference',
+    () async {
+      SharedPreferences.setMockInitialValues({'lastDaemonId': 'daemon-a'});
+      final gateway = _RemovingGateway(single: true, removed: true);
+      final container = ProviderContainer(
+        overrides: [coreGatewayProvider.overrideWithValue(gateway)],
+      );
+      addTearDown(container.dispose);
+
+      final result = await container.read(workspaceProvider.future);
+
+      expect(result.needsPairing, isTrue);
+      expect(result.daemons, isEmpty);
+    },
+  );
+
+  test('failed deletion keeps the computer and selection', () async {
+    final gateway = _RemovingGateway(failRemove: true);
+    final container = ProviderContainer(
+      overrides: [coreGatewayProvider.overrideWithValue(gateway)],
+    );
+    addTearDown(container.dispose);
+    await container.read(workspaceProvider.future);
+
+    await expectLater(
+      container.read(workspaceProvider.notifier).removeDaemon('daemon-a'),
+      throwsA(isA<CoreFault>()),
+    );
+    final result = container.read(workspaceProvider).requireValue;
+    expect(result.daemons.length, 2);
+    expect(result.selectedDaemonId, 'daemon-a');
+  });
+
   test(
     'late failure from a previous agent does not replace the current agent',
     () async {
@@ -286,6 +362,72 @@ void main() {
       expect(result.conversations.single.id, 'conversation-agent-ready');
     },
   );
+}
+
+class _RemovingGateway extends CoreGateway {
+  _RemovingGateway({
+    this.single = false,
+    this.failRemove = false,
+    this.removed = false,
+  });
+
+  final bool single;
+  final bool failRemove;
+  bool removed;
+
+  Map<String, dynamic> get _result => {
+    'connected': false,
+    'activeDaemonId': removed ? (single ? '' : 'daemon-b') : 'daemon-a',
+    'generation': removed ? 2 : 1,
+    'pairings': [
+      if (!removed)
+        {
+          'daemonId': 'daemon-a',
+          'displayName': 'A',
+          'relayUrl': 'https://relay.example.com',
+          'enabled': true,
+          'order': 0,
+          'phase': 'offline',
+        },
+      if (!single)
+        {
+          'daemonId': 'daemon-b',
+          'displayName': 'B',
+          'relayUrl': 'https://relay.example.com',
+          'enabled': true,
+          'order': 1,
+          'phase': 'offline',
+        },
+    ],
+  };
+
+  @override
+  Stream<Map<String, dynamic>> get events => const Stream.empty();
+
+  @override
+  Future<Map<String, dynamic>> status() async => {'result': _result};
+
+  @override
+  Future<Map<String, dynamic>> restoreStored() async => {'result': _result};
+
+  @override
+  Future<Map<String, dynamic>> removePairing(String daemonId) async {
+    if (failRemove) throw CoreFault('credential_store_failed', 'save failed');
+    removed = true;
+    return {'result': _result};
+  }
+
+  @override
+  Future<Map<String, dynamic>> probePairing(String daemonId) async => {
+    'result': _result,
+  };
+
+  @override
+  Future<Map<String, dynamic>> call(
+    String method,
+    Map<String, dynamic> params, {
+    int timeoutMilliseconds = 30000,
+  }) async => {'result': <dynamic>[]};
 }
 
 class _FailingSelectionGateway extends CoreGateway {
