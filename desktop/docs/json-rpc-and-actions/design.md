@@ -27,6 +27,7 @@ Turn 通知驱动会话状态：`idle`、`running`、`waiting_action`、`complet
 - 第一个 Desktop `initialize` 发送给真实 App Server，缓存参数和响应；对应 `initialized` 正常转发。
 - 后续 Desktop 重连的 `initialize` 使用缓存 response 本地回答，`initialized` 被 daemon 吸收。
 - capability 参数不同且实例空闲时重启 App Server；运行中则保存最新参数，在安全边界后重启。
+- 初始化兼容判断只比较 `params.capabilities`；缺失、`null` 和空对象视为相同，client name/version 变化不会触发重启。
 - 多个 frontend 同时等待首次 initialize 时合并到同一次真实 initialize，并分别恢复各自 ID。
 
 ## Pending actions
@@ -46,6 +47,8 @@ App Server 发出的 server request 被规范化为 `PendingAction`，保留原 
 ## State and persistence
 
 请求 ID 映射和 initialize waiter 只存在内存。会话状态、Turn、timeline event 和 pending action 投影到 SQLite；payload 使用加密列。官方 App Server/官方 session 仍是完整会话的权威来源。
+
+控制请求取消、超时、stdin 写入失败或 App Server 退出时会清理内存中的 request mapping；内部调用收到终止错误，迟到 response 会被丢弃。
 
 ## Security and failure handling
 

@@ -207,6 +207,7 @@ func (m *Manager) handleConnection(raw net.Conn) {
 	if err = conn.Write(ipc.Frame{Kind: ipc.KindHelloAck, Metadata: ipc.Metadata(ack)}); err != nil {
 		return
 	}
+	conn.StartWriter()
 	switch hello.Role {
 	case "bridge":
 		m.handleBridge(conn, bridgeInstance)
@@ -217,9 +218,10 @@ func (m *Manager) handleConnection(raw net.Conn) {
 
 func (m *Manager) handleBridge(conn *clientConn, instance *Instance) {
 	if instance == nil {
-		_ = conn.Write(ipc.Frame{Kind: ipc.KindError, Payload: []byte("invalid bridge registration")})
+		_ = conn.Enqueue(ipc.Frame{Kind: ipc.KindError, Payload: []byte("invalid bridge registration")})
 		return
 	}
+	conn.onClose = func() { instance.RemoveDesktop(conn.id) }
 	instance.AddDesktop(conn)
 	defer instance.RemoveDesktop(conn.id)
 	for {
@@ -230,13 +232,13 @@ func (m *Manager) handleBridge(conn *clientConn, instance *Instance) {
 		switch frame.Kind {
 		case ipc.KindDesktopFrame:
 			if err := instance.HandleDesktop(conn, frame.Payload); err != nil {
-				_ = conn.Write(ipc.Frame{Kind: ipc.KindError, Payload: []byte(err.Error())})
+				_ = conn.Enqueue(ipc.Frame{Kind: ipc.KindError, Payload: []byte(err.Error())})
 				return
 			}
 		case ipc.KindDesktopEOF:
 			return
 		case ipc.KindPing:
-			_ = conn.Write(ipc.Frame{Kind: ipc.KindPong})
+			_ = conn.Enqueue(ipc.Frame{Kind: ipc.KindPong})
 		}
 	}
 }
@@ -281,7 +283,7 @@ func (m *Manager) handleControl(conn *clientConn) {
 		}
 		response := m.control(request)
 		data, _ := json.Marshal(response)
-		if conn.Write(ipc.Frame{Kind: ipc.KindControlResponse, Payload: data}) != nil {
+		if conn.Enqueue(ipc.Frame{Kind: ipc.KindControlResponse, Payload: data}) != nil {
 			return
 		}
 	}
@@ -1286,10 +1288,18 @@ func (m *Manager) instanceSnapshots() []InstanceSnapshot {
 }
 
 type clientConn struct {
-	id     string
-	conn   net.Conn
-	mu     sync.Mutex
-	closed atomic.Bool
+	id       string
+	conn     net.Conn
+	mu       sync.Mutex
+	closed   atomic.Bool
+	start    sync.Once
+	close    sync.Once
+	done     chan struct{}
+	outbound chan ipc.Frame
+	queueMu  sync.Mutex
+	queued   int
+	queueCap int
+	onClose  func()
 }
 
 func (c *clientConn) Write(frame ipc.Frame) error {
@@ -1304,7 +1314,86 @@ func (c *clientConn) Write(frame ipc.Frame) error {
 	return err
 }
 
+const (
+	clientOutboundFrames = 128
+	clientOutboundBytes  = 8 << 20
+)
+
+func (c *clientConn) StartWriter() {
+	c.start.Do(func() {
+		c.done = make(chan struct{})
+		c.outbound = make(chan ipc.Frame, clientOutboundFrames)
+		c.queueCap = clientOutboundBytes
+		go c.writeLoop()
+	})
+}
+
+func (c *clientConn) Enqueue(frame ipc.Frame) error {
+	if c.outbound == nil {
+		return c.Write(frame)
+	}
+	if c.closed.Load() {
+		return net.ErrClosed
+	}
+	size := ipc.HeaderSize + len(frame.Metadata) + len(frame.Payload)
+	c.queueMu.Lock()
+	if c.closed.Load() || c.queued+size > c.queueCap {
+		c.queueMu.Unlock()
+		c.fail(errors.New("client outbound queue is full"))
+		return net.ErrClosed
+	}
+	c.queued += size
+	select {
+	case c.outbound <- frame:
+		c.queueMu.Unlock()
+		return nil
+	default:
+		c.queued -= size
+		c.queueMu.Unlock()
+		c.fail(errors.New("client outbound queue is full"))
+		return net.ErrClosed
+	}
+}
+
+func (c *clientConn) writeLoop() {
+	for {
+		select {
+		case <-c.done:
+			return
+		case frame := <-c.outbound:
+			size := ipc.HeaderSize + len(frame.Metadata) + len(frame.Payload)
+			c.queueMu.Lock()
+			c.queued -= size
+			c.queueMu.Unlock()
+			if c.closed.Load() {
+				return
+			}
+			if err := c.Write(frame); err != nil {
+				c.fail(err)
+				return
+			}
+		}
+	}
+}
+
+func (c *clientConn) fail(_ error) {
+	if c.closed.Load() {
+		return
+	}
+	c.Close()
+	if c.onClose != nil {
+		c.onClose()
+	}
+}
+
 func (c *clientConn) Close() error {
-	c.closed.Store(true)
-	return c.conn.Close()
+	var err error
+	c.close.Do(func() {
+		c.closed.Store(true)
+		if c.done != nil {
+			close(c.done)
+		}
+		err = c.conn.Close()
+	})
+	return err
 }

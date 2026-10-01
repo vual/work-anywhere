@@ -11,6 +11,8 @@ Desktop stdin ─► bounded JSONL reader ─► desktop_frame ─► daemon
 Desktop stdout ◄──────────────────────── server_frame ◄─ daemon
 ```
 
+daemon 向每个 Bridge 连接使用独立的有界发送队列（最多 128 帧或 8 MiB），由单独 writer 顺序写入。队列满、连接写入失败或写入持续超过 10 秒时，该连接会被关闭并从实例订阅者中移除；慢连接不能阻塞其他 Desktop 的响应和流式通知。
+
 Bridge 先发现 runtime/instance，再连接当前用户管理 Pipe。连接失败时隐藏启动 `work-anywhere.exe daemon run` 并在最多五秒内重试。若在任何 Desktop frame 发出前仍失败，则持有实例级 lease 并直通 `codex.exe app-server`；发出过 frame 后连接中断则直接退出，不热切换。
 
 `app-server --standalone-ws` 是诊断兼容模式：Bridge 在随机 loopback 端口启动官方实验性 WebSocket App Server，并在 stdio JSONL 与 WebSocket text frame 之间转发。daemon 正式链路不使用该模式。普通桌面启动即使带有 `-c ... app-server ...` 形式的全局选项，也会进入同一 stdio Bridge 路径。
@@ -48,6 +50,7 @@ Bridge 只保存本连接需要的 runtime、instance、连接 ID 和“是否�
 - fallback 的实例级互斥锁防止 daemon 同时为同一实例创建第二个 App Server。
 - stdio EOF 转换为 `desktop_eof`；daemon 的 `server_exit` 或 Pipe 错误导致 Bridge 结束。
 - 未完成请求期间禁止从 daemon 热切到 fallback，以免重复执行工具或写操作。
+- 正常输出使用有界队列处理背压；同一连接中已接受的帧保持顺序，不改变 WAI1 帧格式。
 
 ## Invariants and non-goals
 

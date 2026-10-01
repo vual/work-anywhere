@@ -2,10 +2,12 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +20,25 @@ import (
 type bufferWriteCloser struct{ bytes.Buffer }
 
 func (*bufferWriteCloser) Close() error { return nil }
+
+type synchronizedWriteCloser struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (w *synchronizedWriteCloser) Write(data []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.Write(data)
+}
+
+func (*synchronizedWriteCloser) Close() error { return nil }
+
+func (w *synchronizedWriteCloser) Bytes() []byte {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]byte(nil), w.buf.Bytes()...)
+}
 
 func testInstance(t *testing.T) (*Instance, *bufferWriteCloser, func()) {
 	t.Helper()
@@ -241,5 +262,67 @@ func TestCompletingOneTurnPreservesOtherConversationActivity(t *testing.T) {
 	}
 	if !instance.CanStartTurn("thread-a") {
 		t.Fatal("completed conversation did not become idle")
+	}
+}
+
+func TestConcurrentServerWritesRemainWholeJSONLines(t *testing.T) {
+	instance, _, cleanup := testInstance(t)
+	defer cleanup()
+	writer := &synchronizedWriteCloser{}
+	instance.stdin = writer
+	const count = 200
+	var group sync.WaitGroup
+	for index := 0; index < count; index++ {
+		group.Add(1)
+		go func(index int) {
+			defer group.Done()
+			payload, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": index, "method": "test"})
+			if err := instance.writeServer(payload); err != nil {
+				t.Errorf("writeServer: %v", err)
+			}
+		}(index)
+	}
+	group.Wait()
+	lines := bytes.Split(bytes.TrimSpace(writer.Bytes()), []byte("\n"))
+	if len(lines) != count {
+		t.Fatalf("got %d JSONL lines, want %d", len(lines), count)
+	}
+	for index, line := range lines {
+		var message map[string]any
+		if err := json.Unmarshal(line, &message); err != nil {
+			t.Fatalf("line %d is not valid JSON: %v", index, err)
+		}
+	}
+}
+
+func TestInitializeCapabilitiesIgnoreClientInfoChanges(t *testing.T) {
+	first := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"desktop","version":"1"},"capabilities":{"experimentalApi":true}}}`)
+	second := []byte(`{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"clientInfo":{"name":"desktop","version":"2"},"capabilities":{"experimentalApi":true}}}`)
+	if !sameInitializeCapabilities(first, second) {
+		t.Fatal("clientInfo changes must not require an App Server restart")
+	}
+	nullCapabilities := []byte(`{"jsonrpc":"2.0","id":3,"method":"initialize","params":{"clientInfo":{"name":"desktop","version":"3"},"capabilities":null}}`)
+	emptyCapabilities := []byte(`{"jsonrpc":"2.0","id":4,"method":"initialize","params":{"clientInfo":{"name":"desktop","version":"4"},"capabilities":{}}}`)
+	if !sameInitializeCapabilities(nullCapabilities, emptyCapabilities) {
+		t.Fatal("null and empty capabilities must be equivalent")
+	}
+	changed := []byte(`{"jsonrpc":"2.0","id":5,"method":"initialize","params":{"clientInfo":{"name":"desktop","version":"5"},"capabilities":{"experimentalApi":false}}}`)
+	if sameInitializeCapabilities(first, changed) {
+		t.Fatal("capability changes must require an App Server restart")
+	}
+}
+
+func TestCallTimeoutRemovesRequest(t *testing.T) {
+	instance, _, cleanup := testInstance(t)
+	defer cleanup()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if _, err := instance.Call(ctx, "test/request", json.RawMessage(`{"value":true}`)); err == nil {
+		t.Fatal("Call unexpectedly succeeded without a response")
+	}
+	instance.mu.Lock()
+	defer instance.mu.Unlock()
+	if len(instance.requests) != 0 {
+		t.Fatalf("timed out request remained routed: %#v", instance.requests)
 	}
 }

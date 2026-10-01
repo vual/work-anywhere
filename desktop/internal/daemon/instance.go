@@ -28,6 +28,7 @@ type requestOrigin struct {
 	method     string
 	internal   bool
 	response   chan []byte
+	startedAt  time.Time
 }
 
 type pendingAction struct {
@@ -69,6 +70,7 @@ type Instance struct {
 	manager *Manager
 
 	mu                       sync.Mutex
+	serverWriteMu            sync.Mutex
 	descriptor               protocol.InstanceDescriptor
 	runtime                  protocol.RuntimeDescriptor
 	pendingRuntime           *protocol.RuntimeDescriptor
@@ -96,6 +98,7 @@ type Instance struct {
 	pendingInitialize        []byte
 	initializeInFlight       bool
 	initializeWaiters        []initializeWaiter
+	autoRestartAttempted     bool
 }
 
 type InstanceSnapshot struct {
@@ -406,7 +409,13 @@ func (i *Instance) Start() error {
 	go i.readServerStderr(generation, stderr)
 	go i.waitServer(generation, cmd)
 	if len(cachedInit) > 0 {
+		i.mu.Lock()
+		i.initializeInFlight = true
+		i.mu.Unlock()
 		if err = i.sendInternalInitialize(cachedInit); err != nil {
+			i.mu.Lock()
+			i.initializeInFlight = false
+			i.mu.Unlock()
 			return err
 		}
 	}
@@ -523,7 +532,7 @@ func (i *Instance) HandleDesktop(conn *clientConn, raw []byte) error {
 			if rewriteErr != nil {
 				return rewriteErr
 			}
-			return conn.Write(ipc.Frame{Kind: ipc.KindServerFrame, Payload: append(response, '\n')})
+			return conn.Enqueue(ipc.Frame{Kind: ipc.KindServerFrame, Payload: append(response, '\n')})
 		}
 		i.mu.Lock()
 		if len(i.cachedInitializeRequest) == 0 {
@@ -537,14 +546,34 @@ func (i *Instance) HandleDesktop(conn *clientConn, raw []byte) error {
 	i.nextRequest++
 	proxyID := fmt.Sprintf("wa:d:%s:%d", conn.id, i.nextRequest)
 	rewritten, err := jsonrpc.RewriteID(bytes.TrimSpace(raw), proxyID)
+	proxyKey := string(mustJSON(proxyID))
 	if err == nil {
-		i.requests[string(mustJSON(proxyID))] = requestOrigin{desktopID: conn.id, originalID: append(json.RawMessage(nil), message.ID...), method: message.Method}
+		i.requests[proxyKey] = requestOrigin{desktopID: conn.id, originalID: append(json.RawMessage(nil), message.ID...), method: message.Method, startedAt: time.Now()}
 	}
 	i.mu.Unlock()
 	if err != nil {
 		return err
 	}
-	return i.writeServer(append(rewritten, '\n'))
+	if err := i.writeServer(append(rewritten, '\n')); err != nil {
+		i.removeRequest(proxyKey)
+		return err
+	}
+	return nil
+}
+
+func (i *Instance) removeRequest(key string) {
+	i.mu.Lock()
+	delete(i.requests, key)
+	i.mu.Unlock()
+}
+
+func (i *Instance) logRequestFailure(key, method, reason string, started time.Time) {
+	if i.manager.log != nil {
+		i.manager.log.Event("appserver.request_failed", map[string]any{
+			"instanceId": i.descriptor.ID, "requestId": key, "method": method,
+			"durationMs": time.Since(started).Milliseconds(), "reason": reason,
+		})
+	}
 }
 
 func (i *Instance) resolveServerRequest(message jsonrpc.Message, raw []byte) error {
@@ -570,6 +599,15 @@ func (i *Instance) resolveServerRequest(message jsonrpc.Message, raw []byte) err
 func (i *Instance) writeServer(raw []byte) error {
 	i.mu.Lock()
 	stdin := i.stdin
+	i.mu.Unlock()
+	if stdin == nil {
+		return errors.New("App Server is not running")
+	}
+	i.serverWriteMu.Lock()
+	defer i.serverWriteMu.Unlock()
+	// Recheck the handle after waiting for concurrent process shutdown.
+	i.mu.Lock()
+	stdin = i.stdin
 	i.mu.Unlock()
 	if stdin == nil {
 		return errors.New("App Server is not running")
@@ -638,6 +676,7 @@ func (i *Instance) handleServerFrame(generation uint64, raw []byte) {
 			i.state = "ready"
 			i.cachedInitializeResponse = append([]byte(nil), raw...)
 			i.initializeInFlight = false
+			i.autoRestartAttempted = false
 			waiters := append([]initializeWaiter(nil), i.initializeWaiters...)
 			i.initializeWaiters = nil
 			initialized := append([]byte(nil), i.cachedInitialized...)
@@ -658,6 +697,7 @@ func (i *Instance) handleServerFrame(generation uint64, raw []byte) {
 			i.mu.Lock()
 			i.cachedInitializeResponse = append([]byte(nil), restored...)
 			i.initializeInFlight = false
+			i.autoRestartAttempted = false
 			waiters := append([]initializeWaiter(nil), i.initializeWaiters...)
 			i.initializeWaiters = nil
 			i.state = "ready"
@@ -831,10 +871,14 @@ func (i *Instance) sendInternalInitialize(cached []byte) error {
 		return err
 	}
 	i.mu.Lock()
-	i.requests[string(mustJSON(internalID))] = requestOrigin{originalID: message.ID, method: "initialize", internal: true}
+	i.requests[string(mustJSON(internalID))] = requestOrigin{originalID: message.ID, method: "initialize", internal: true, startedAt: time.Now()}
 	i.mu.Unlock()
 	i.manager.traffic.Record(i.descriptor.ID, "daemon_to_server", rewritten)
-	return i.writeServer(append(rewritten, '\n'))
+	if err := i.writeServer(append(rewritten, '\n')); err != nil {
+		i.removeRequest(string(mustJSON(internalID)))
+		return err
+	}
+	return nil
 }
 
 func (i *Instance) waitServer(generation uint64, cmd *exec.Cmd) {
@@ -848,15 +892,92 @@ func (i *Instance) waitServer(generation uint64, cmd *exec.Cmd) {
 		i.mu.Unlock()
 		return
 	}
+	origins := i.requests
+	i.requests = make(map[string]requestOrigin)
+	actions := make([]string, 0, len(i.actions))
+	for id := range i.actions {
+		actions = append(actions, id)
+	}
+	waiters := append([]initializeWaiter(nil), i.initializeWaiters...)
+	restartable := len(i.activeTurns) == 0 && len(i.actions) == 0 && len(i.cachedInitializeRequest) > 0 && !i.autoRestartAttempted
+	if restartable {
+		i.autoRestartAttempted = true
+		for _, origin := range origins {
+			if origin.method == "initialize" && origin.desktopID != "" {
+				waiters = append(waiters, initializeWaiter{DesktopID: origin.desktopID, OriginalID: append(json.RawMessage(nil), origin.originalID...)})
+			}
+		}
+	} else {
+		i.initializeWaiters = nil
+	}
 	i.cmd, i.stdin = nil, nil
 	i.activeTurns = make(map[string]string)
 	i.actions = make(map[string]*pendingAction)
+	i.cachedInitializeResponse = nil
+	i.initializeInFlight = false
 	i.state = "error"
 	if err != nil {
 		i.lastError = err.Error()
 	}
 	i.mu.Unlock()
+	for _, id := range actions {
+		_ = i.manager.store.ResolvePendingAction(i.descriptor.ID, id)
+	}
+	for id, origin := range origins {
+		i.notifyRequestFailure(id, origin, "App Server exited")
+	}
+	if !restartable {
+		i.answerInitializeFailure(waiters, "App Server exited")
+	}
 	i.broadcastFrame(ipc.Frame{Kind: ipc.KindServerExit, Metadata: ipc.Metadata(map[string]any{"code": code, "error": errorText(err)})})
+	if restartable {
+		go func() {
+			timer := time.NewTimer(250 * time.Millisecond)
+			defer timer.Stop()
+			if i.manager.ctx != nil {
+				select {
+				case <-timer.C:
+				case <-i.manager.ctx.Done():
+					return
+				}
+			} else {
+				<-timer.C
+			}
+			if restartErr := i.Restart(); restartErr != nil && i.manager.log != nil {
+				i.manager.log.Event("instance.auto_restart_failed", map[string]any{"instanceId": i.descriptor.ID, "error": restartErr.Error()})
+			}
+		}()
+	}
+}
+
+func (i *Instance) notifyRequestFailure(key string, origin requestOrigin, message string) {
+	if i.manager.log != nil {
+		i.manager.log.Event("appserver.request_failed", map[string]any{
+			"instanceId": i.descriptor.ID, "requestId": key, "method": origin.method,
+			"durationMs": time.Since(origin.startedAt).Milliseconds(), "reason": message,
+		})
+	}
+	id := json.RawMessage(key)
+	if origin.internal && origin.response != nil {
+		payload, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "error": map[string]any{"code": -32000, "message": message}})
+		select {
+		case origin.response <- payload:
+		default:
+		}
+		return
+	}
+	if origin.desktopID == "" || len(origin.originalID) == 0 {
+		return
+	}
+	payload, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": origin.originalID, "error": map[string]any{"code": -32000, "message": message}})
+	i.sendDesktop(origin.desktopID, append(payload, '\n'))
+}
+
+func (i *Instance) answerInitializeFailure(waiters []initializeWaiter, message string) {
+	for _, waiter := range waiters {
+		payload, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": waiter.OriginalID, "error": map[string]any{"code": -32000, "message": message}})
+		i.sendDesktop(waiter.DesktopID, append(payload, '\n'))
+	}
 }
 
 func (i *Instance) broadcast(raw []byte) {
@@ -871,7 +992,9 @@ func (i *Instance) broadcastFrame(frame ipc.Frame) {
 	}
 	i.mu.Unlock()
 	for _, conn := range clients {
-		_ = conn.Write(frame)
+		if err := conn.Enqueue(frame); err != nil {
+			i.RemoveDesktop(conn.id)
+		}
 	}
 }
 
@@ -880,7 +1003,9 @@ func (i *Instance) sendDesktop(id string, raw []byte) {
 	conn := i.desktops[id]
 	i.mu.Unlock()
 	if conn != nil {
-		_ = conn.Write(ipc.Frame{Kind: ipc.KindServerFrame, Payload: raw})
+		if err := conn.Enqueue(ipc.Frame{Kind: ipc.KindServerFrame, Payload: raw}); err != nil {
+			i.RemoveDesktop(id)
+		}
 	}
 }
 
@@ -1061,7 +1186,7 @@ func (i *Instance) call(ctx context.Context, method string, params json.RawMessa
 	i.nextRequest++
 	id := fmt.Sprintf("wa:c:local:%d", i.nextRequest)
 	response := make(chan []byte, 1)
-	i.requests[string(mustJSON(id))] = requestOrigin{method: method, internal: true, response: response}
+	i.requests[string(mustJSON(id))] = requestOrigin{method: method, internal: true, response: response, startedAt: time.Now()}
 	i.mu.Unlock()
 	if observeSettings {
 		i.observeOutgoingThreadSettings(method, params)
@@ -1075,10 +1200,21 @@ func (i *Instance) call(ctx context.Context, method string, params json.RawMessa
 		i.broadcastEvent("frontend.turn.start", map[string]any{"params": json.RawMessage(params), "source": "control"})
 	}
 	i.manager.traffic.Record(i.descriptor.ID, "control_to_server", raw)
+	requestKey := string(mustJSON(id))
+	started := time.Now()
+	i.mu.Lock()
+	if origin, ok := i.requests[requestKey]; ok {
+		started = origin.startedAt
+	}
+	i.mu.Unlock()
 	if err := i.writeServer(append(raw, '\n')); err != nil {
+		i.removeRequest(requestKey)
+		i.logRequestFailure(requestKey, method, err.Error(), started)
 		i.clearPendingTurnSettings(method, params)
 		return nil, err
 	}
+	timer := time.NewTimer(60 * time.Second)
+	defer timer.Stop()
 	select {
 	case rawResponse := <-response:
 		var message jsonrpc.Message
@@ -1091,9 +1227,13 @@ func (i *Instance) call(ctx context.Context, method string, params json.RawMessa
 		}
 		return append(json.RawMessage(nil), message.Result...), nil
 	case <-ctx.Done():
+		i.removeRequest(requestKey)
+		i.logRequestFailure(requestKey, method, ctx.Err().Error(), started)
 		i.clearPendingTurnSettings(method, params)
 		return nil, ctx.Err()
-	case <-time.After(60 * time.Second):
+	case <-timer.C:
+		i.removeRequest(requestKey)
+		i.logRequestFailure(requestKey, method, "App Server request timed out", started)
 		i.clearPendingTurnSettings(method, params)
 		return nil, errors.New("App Server request timed out")
 	}
@@ -1324,9 +1464,21 @@ func sameInitializeCapabilities(first, second []byte) bool {
 	if firstErr != nil || secondErr != nil {
 		return false
 	}
-	var a, b any
-	if json.Unmarshal(firstMessage.Params, &a) != nil || json.Unmarshal(secondMessage.Params, &b) != nil {
+	var firstParams, secondParams struct {
+		Capabilities json.RawMessage `json:"capabilities"`
+	}
+	if json.Unmarshal(firstMessage.Params, &firstParams) != nil || json.Unmarshal(secondMessage.Params, &secondParams) != nil {
 		return false
 	}
-	return reflect.DeepEqual(a, b)
+	normalize := func(raw json.RawMessage) any {
+		if len(bytes.TrimSpace(raw)) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return map[string]any{}
+		}
+		var value any
+		if json.Unmarshal(raw, &value) != nil {
+			return nil
+		}
+		return value
+	}
+	return reflect.DeepEqual(normalize(firstParams.Capabilities), normalize(secondParams.Capabilities))
 }

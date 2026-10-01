@@ -43,7 +43,7 @@ scripts/build-installer.ps1 -Version 0.1.0 -SkipBuild
 - JSON-RPC ID 使用 `json.RawMessage`，支持字符串和数字。
 - 未知字段由 raw payload 保留；未知 request/notification 不因 schema 未识别而关闭代理。
 - 只对 initialize、ID 路由、Turn、action 和 catalog 等需要控制的消息做最小解析。
-- 当前官方 schema fixture 存在 `testdata/app-server-schema/0.151.0-alpha.7.2/`，用于协议回归参考，不在运行时强制校验每条消息。
+- 官方 schema fixture 同时保留 `testdata/app-server-schema/0.151.0-alpha.7.2/` 和当前验证的 `testdata/app-server-schema/0.159.2/`，用于协议回归参考，不在运行时强制校验每条消息。
 
 ## State and persistence
 
@@ -79,7 +79,7 @@ scripts/build-installer.ps1 -Version 0.1.0 -SkipBuild
 - 从 `desktop/` 执行 `scripts/build.ps1`，确认测试通过并生成 Windows x64 EXE/SHA256。
 - `work-anywhere.exe version` 与 PE file/product version 一致。
 - `self-test` 使用当前安装的官方 Codex 成功。
-- 至少使用当前 fixture 版本和一个后续官方版本验证 initialize、未知字段/通知和 fallback。
+- 至少使用旧 fixture 与当前 0.159.2 runtime 验证 initialize、未知字段/通知、慢连接隔离、请求清理和 fallback。
 - install/uninstall 测试备份、恢复及多 Desktop 实例重启后的路径。
 - 在 Inno Setup 6 环境构建安装包，验证 per-user 安装目录、安装后 `CODEX_CLI_PATH`、完成页重启提示和卸载恢复。
 

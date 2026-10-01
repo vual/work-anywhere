@@ -20,6 +20,7 @@ stopped → starting → waiting_initialize → ready
 - App Server 重启时用最新缓存参数自动 initialize。
 - 新 runtime 注册且实例空闲、无待处理 action 时立即重启。
 - 有活跃 Turn 或待处理 action 时标记 `upgrade_pending`，在安全边界后切换。
+- App Server 异常退出时清理 pending request；实例空闲且存在初始化缓存时最多自动重启一次，使用 250 ms 延迟。活跃 Turn、待处理 action 或自动重启失败时保持 `error`，不自动重放工作。
 - Desktop Bridge 全部断开不会触发空闲回收。
 
 ## Interfaces
@@ -44,6 +45,7 @@ supervisor 接收 Bridge 的 WAI1 frames 和 daemon 控制请求，向 App Serve
 - 不因 Desktop 窗口关闭或空闲时间自动回收 App Server。
 - 不强制接管已经被另一个独立 writer 占用的官方 session。
 - V1 不依赖官方 Windows 上不可用的 `app-server daemon` 生命周期模式。
+- 所有写入 App Server stdin 的 JSONL 消息经过实例级串行写入锁。
 
 ## Code ownership
 
