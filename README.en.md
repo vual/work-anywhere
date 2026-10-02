@@ -24,6 +24,8 @@ The complete product is organized into three independent modules:
 
 Mobile conversation sync uses a metadata snapshot, a recent 20-item timeline page, and incremental recovery. Older history is loaded with opaque cursors, while individual content blocks over 64 KiB are available on demand through temporary chunked references. Desktop control responses are capped at 512 KiB and Relay keeps its 1 MiB routed-payload limit.
 
+Mobile synchronizes an authoritative snapshot before sending and preserves drafts on version conflicts. The daemon adapts history reads per conversation, and queued input is available only where the provider supports it.
+
 ## Current capabilities
 
 Desktop V1 provides:

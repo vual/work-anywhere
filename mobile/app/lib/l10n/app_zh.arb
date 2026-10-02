@@ -1,4 +1,6 @@
 {
+  "conversationChangedRetry": "会话状态已变化，请重试",
+  "queueUnavailableWait": "此会话暂不支持消息排队，请等待当前任务结束",
   "@@locale": "zh",
   "appTitle": "Work Any Where",
   "continueOnPhone": "在手机上继续电脑里的工作",

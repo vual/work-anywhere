@@ -20,7 +20,9 @@ wa:c:<control-client>:<sequence>
 
 映射表保留原始 `json.RawMessage` ID，因此字符串和数字 ID 都能原样恢复。App Server response 到达后按前缀路由给原 frontend 并恢复原始 ID；notification 广播给相关 frontend 和控制订阅者。
 
-Turn 通知驱动会话状态：`idle`、`running`、`waiting_action`、`completed`、`failed`、`interrupted`。每个会话维护单调 `sequence` 和 `revision`；控制客户端按 cursor 读取增量，游标不可用时返回 snapshot。
+Turn 通知驱动会话状态：`idle`、`running`、`waiting_action`、`completed`、`failed`、`interrupted`。每个会话分别维护单调 `sequence`（全部会话事件）和 `revision`（业务状态变化）。已识别的 Turn 生命周期、审批、设置、队列、历史和停止状态更新递增 revision；MCP 启动进度、流式 delta、遥测和未知通知只递增 sequence，原始协议仍透明转发。控制客户端按 sequence cursor 读取增量，游标不可用时返回 snapshot。会话归属包含 `threadId`、`conversationId` 和嵌套 `thread.id`；审批解决前保留 action 的 thread 归属。
+
+控制端写操作使用会话级 mutex；开始 Turn 在实例状态锁内同时验证 revision 和可操作状态并预留 pending。无设置的 Turn 同样有 pending 标记；成功确认转为 active，取消、写入失败、无有效 Turn ID、超时或进程停止后释放标记。停止清理 pending origin 并使受影响会话失效，重新初始化后重新判断读取后端。
 
 ## Initialize virtualization
 

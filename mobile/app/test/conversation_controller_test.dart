@@ -35,6 +35,96 @@ Map<String, dynamic> _item(String id) => {
 
 void main() {
   test(
+    'expired history cursor reloads the latest page without stale items',
+    () async {
+      var reads = 0;
+      final controller = ConversationController(
+        gateway: _FakeGateway((method, params) async {
+          if (method == 'conversation.timeline.list') {
+            throw CoreFault('cursor_expired', 'anchor deleted');
+          }
+          reads++;
+          return {
+            'result': {
+              'conversation': {'id': 't'},
+              'timeline': {
+                'items': [_item(reads == 1 ? 'deleted' : 'current')],
+                'nextCursor': reads == 1 ? 'old-cursor' : null,
+              },
+              'sequence': reads,
+              'revision': reads,
+            },
+          };
+        }),
+        agentId: 'a',
+        threadId: 't',
+      );
+      await controller.requireFreshSnapshot();
+      await controller.loadOlder();
+      expect(controller.state.items.map((item) => item['id']), ['current']);
+      expect(controller.state.hasOlder, false);
+      expect(controller.state.loadingOlder, false);
+      controller.dispose();
+    },
+  );
+
+  test('write synchronization requires a successful snapshot and tracks queue capability', () async {
+    var fail = true;
+    final controller = ConversationController(
+      gateway: _FakeGateway((method, params) async {
+        if (fail) throw CoreFault('provider_error', 'read failed');
+        return {
+          'result': {
+            'conversation': {'id': 't1'},
+            'timeline': {'items': []},
+            'revision': 13,
+            'sequence': 20,
+            'capabilities': {'queue': false},
+          },
+        };
+      }),
+      agentId: 'a',
+      threadId: 't1',
+    );
+    expect(controller.state.hasSnapshot, false);
+    await expectLater(
+      controller.requireFreshSnapshot(),
+      throwsA(isA<CoreFault>()),
+    );
+    expect(controller.state.hasSnapshot, false);
+    fail = false;
+    await controller.requireFreshSnapshot();
+    expect(controller.state.hasSnapshot, true);
+    expect(controller.state.revision, 13);
+    expect(controller.state.queueAvailable, false);
+    controller.dispose();
+  });
+
+  test('snapshot finishing after selection changes is discarded', () async {
+    final pending = Completer<Map<String, dynamic>>();
+    var selected = 'daemon-1';
+    final controller = ConversationController(
+      gateway: _FakeGateway((method, params) => pending.future),
+      agentId: 'a',
+      threadId: 't1',
+      daemonId: 'daemon-1',
+      daemonIdProvider: () => selected,
+    );
+    final refresh = controller.refreshConversation();
+    selected = 'daemon-2';
+    pending.complete({
+      'result': {
+        'conversation': {'id': 't1'},
+        'revision': 99,
+        'sequence': 99,
+      },
+    });
+    expect(await refresh, false);
+    expect(controller.state.hasSnapshot, false);
+    controller.dispose();
+  });
+
+  test(
     'conversation snapshot restores the authoritative queued messages',
     () async {
       final gateway = _FakeGateway((method, params) async {
@@ -356,44 +446,211 @@ void main() {
   );
 
   test(
-    'a stale conversation response cannot overwrite a newer snapshot',
+    'concurrent snapshot callers share a read and later calls read again',
     () async {
-      var call = 0;
+      var reads = 0;
       final first = Completer<Map<String, dynamic>>();
-      final second = Completer<Map<String, dynamic>>();
-      final gateway = _FakeGateway((method, params) {
-        call++;
-        return call == 1 ? first.future : second.future;
-      });
       final controller = ConversationController(
-        gateway: gateway,
+        gateway: _FakeGateway((method, params) async {
+          reads++;
+          if (reads == 1) return first.future;
+          return {
+            'result': {
+              'conversation': {'id': 't1'},
+              'revision': 8,
+              'sequence': 21,
+              'timeline': {
+                'items': [_item('new')],
+              },
+            },
+          };
+        }),
         agentId: 'a1',
         threadId: 't1',
       );
-      final olderRequest = controller.refreshConversation();
-      final newerRequest = controller.refreshConversation();
-      second.complete({
-        'result': {
-          'conversation': {'id': 't1'},
-          'sequence': 2,
-          'timeline': {
-            'items': [_item('new')],
-          },
-        },
-      });
-      await newerRequest;
+      addTearDown(controller.dispose);
+      final background = controller.refreshConversation();
+      final required = controller.requireFreshSnapshot();
+      final anotherBackground = controller.refreshConversation();
+      expect(reads, 1);
       first.complete({
         'result': {
           'conversation': {'id': 't1'},
-          'sequence': 1,
+          'revision': 7,
+          'sequence': 20,
           'timeline': {
-            'items': [_item('stale')],
+            'items': [_item('old')],
           },
         },
       });
-      await olderRequest;
-      expect(controller.state.sequence, 2);
-      expect(controller.state.items.map((item) => item['id']), ['new']);
+      await required;
+      expect(await background, true);
+      expect(await anotherBackground, true);
+      expect(controller.state.revision, 7);
+      expect(reads, 1);
+      await controller.requireFreshSnapshot();
+      expect(reads, 2);
+      expect(controller.state.revision, 8);
+      expect(controller.state.sequence, 21);
+    },
+  );
+
+  test('a regressing snapshot cannot overwrite content or settings', () async {
+    var reads = 0;
+    final controller = ConversationController(
+      gateway: _FakeGateway((method, params) async {
+        reads++;
+        return {
+          'result': {
+            'conversation': {'id': 't1'},
+            'revision': reads == 1 ? 8 : 7,
+            'sequence': reads == 1 ? 21 : 20,
+            'settings': {'modelId': reads == 1 ? 'current' : 'stale'},
+            'timeline': {
+              'items': [_item(reads == 1 ? 'new' : 'stale')],
+            },
+          },
+        };
+      }),
+      agentId: 'a1',
+      threadId: 't1',
+    );
+    addTearDown(controller.dispose);
+    expect(await controller.refreshConversation(), true);
+    expect(await controller.refreshConversation(), false);
+    expect(controller.state.sequence, 21);
+    expect(controller.state.revision, 8);
+    expect(controller.state.items.map((item) => item['id']), ['new']);
+    expect(controller.settings?.modelId, 'current');
+  });
+
+  test(
+    'an event during a read schedules one snapshot after that read',
+    () async {
+      final events = StreamController<Map<String, dynamic>>.broadcast();
+      addTearDown(events.close);
+      final first = Completer<Map<String, dynamic>>();
+      final updated = Completer<void>();
+      var reads = 0;
+      final controller = ConversationController(
+        gateway: _FakeGateway((method, params) async {
+          expect(method, 'conversation.read');
+          reads++;
+          if (reads == 1) return first.future;
+          return {
+            'result': {
+              'conversation': {'id': 't1'},
+              'revision': 9,
+              'sequence': 21,
+              'timeline': {
+                'items': [_item('event-update')],
+              },
+            },
+          };
+        }, events: events.stream),
+        agentId: 'a1',
+        threadId: 't1',
+      );
+      addTearDown(controller.dispose);
+      controller.addListener(() {
+        if (controller.state.sequence == 21 && !updated.isCompleted) {
+          updated.complete();
+        }
+      });
+      controller.startLiveSync();
+      final required = controller.requireFreshSnapshot();
+      events.add({'type': 'event', 'conversationId': 't1', 'sequence': 21});
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(reads, 1);
+      first.complete({
+        'result': {
+          'conversation': {'id': 't1'},
+          'revision': 8,
+          'sequence': 20,
+          'timeline': {'items': []},
+        },
+      });
+      await required;
+      await updated.future;
+      expect(reads, 2);
+      expect(controller.state.revision, 9);
+      expect(controller.state.sequence, 21);
+      expect(controller.state.items.single['id'], 'event-update');
+    },
+  );
+
+  test(
+    'live refresh during required sync propagates the actual provider failure',
+    () async {
+      final events = StreamController<Map<String, dynamic>>.broadcast();
+      addTearDown(events.close);
+      final pending = Completer<Map<String, dynamic>>();
+      var reads = 0;
+      final controller = ConversationController(
+        gateway: _FakeGateway((method, params) {
+          expect(method, 'conversation.read');
+          reads++;
+          return pending.future;
+        }, events: events.stream),
+        agentId: 'a1',
+        threadId: 't1',
+      );
+      addTearDown(controller.dispose);
+      controller.startLiveSync();
+      final required = controller.requireFreshSnapshot();
+      final expectedFailure = expectLater(
+        required,
+        throwsA(
+          isA<CoreFault>().having(
+            (fault) => fault.code,
+            'code',
+            'provider_error',
+          ),
+        ),
+      );
+      events.add({'type': 'event', 'conversationId': 't1', 'sequence': 1});
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(reads, 1);
+      pending.completeError(CoreFault('provider_error', 'read failed'));
+      await expectedFailure;
+      expect(controller.state.hasSnapshot, false);
+      expect(controller.state.bodyError?.code, 'provider_error');
+    },
+  );
+
+  test(
+    'required sync reports selection changes before considering old errors',
+    () async {
+      var selected = 'daemon-1';
+      final pending = Completer<Map<String, dynamic>>();
+      final controller = ConversationController(
+        gateway: _FakeGateway((method, params) => pending.future),
+        agentId: 'a1',
+        threadId: 't1',
+        daemonId: 'daemon-1',
+        daemonIdProvider: () => selected,
+      );
+      addTearDown(controller.dispose);
+      final required = controller.requireFreshSnapshot();
+      final expectedFailure = expectLater(
+        required,
+        throwsA(
+          isA<CoreFault>().having(
+            (fault) => fault.code,
+            'code',
+            'selection_changed',
+          ),
+        ),
+      );
+      selected = 'daemon-2';
+      pending.complete({
+        'result': {
+          'conversation': {'id': 't1'},
+          'revision': 8,
+        },
+      });
+      await expectedFailure;
+      expect(controller.state.hasSnapshot, false);
     },
   );
 }

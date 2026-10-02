@@ -397,6 +397,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     if (agentId == null || projectId == null) {
       throw CoreFault('invalid_params', 'A project and agent are required');
     }
+    final selectedWorkspace = ref.read(workspaceProvider).value;
+    final selectedDaemon = selectedWorkspace?.selectedDaemonId;
+    final selectedGeneration = selectedWorkspace?.eventGeneration;
     final response = await ref.read(coreGatewayProvider).call(
       'conversation.create',
       {'agentId': agentId, 'projectId': projectId},
@@ -409,13 +412,19 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         'The new conversation did not include an id',
       );
     }
+    if (!mounted ||
+        ref.read(workspaceProvider).value?.selectedDaemonId != selectedDaemon ||
+        ref.read(workspaceProvider).value?.eventGeneration !=
+            selectedGeneration) {
+      throw CoreFault('selection_changed', 'The selected conversation changed');
+    }
     _activeConversationId = conversationId;
     final controller = ConversationController(
       gateway: ref.read(coreGatewayProvider),
       agentId: agentId,
       threadId: conversationId,
-      daemonId: ref.read(workspaceProvider).value?.selectedDaemonId,
-      selectionGeneration: ref.read(workspaceProvider).value?.eventGeneration,
+      daemonId: selectedDaemon,
+      selectionGeneration: selectedGeneration,
       daemonIdProvider: () =>
           ref.read(workspaceProvider).value?.selectedDaemonId,
       selectionGenerationProvider: () =>
@@ -551,6 +560,8 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       final refreshed = _controller?.state;
       final currentConfirmation = refreshed?.planConfirmation;
       final accepted =
+          error is CoreFault &&
+          (error.code == 'ambiguous_write' || error.code == 'peer_offline') &&
           refreshed != null &&
           (refreshed.revision != expectedRevision ||
               currentConfirmation == null ||
@@ -559,7 +570,11 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       if (accepted && dismissalKey != null) {
         _handledPlanConfirmations.add(dismissalKey);
       } else if (mounted) {
-        _showComposerMessage(context.l10n.planResponseFailed(error.toString()));
+        _showComposerMessage(
+          error is CoreFault && error.code == 'revision_conflict'
+              ? context.l10n.conversationChangedRetry
+              : context.l10n.planResponseFailed(error.toString()),
+        );
       }
     } finally {
       if (mounted) setState(() => _planSubmitting = false);
@@ -737,6 +752,8 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     if (agentId == null || threadId == null || controller == null) return;
     setState(() => _settingsUpdating = true);
     try {
+      await controller.requireFreshSnapshot();
+      if (!mounted || !controller.isCurrent) return;
       await ref.read(coreGatewayProvider).call('conversation.settings.update', {
         'agentId': agentId,
         'threadId': threadId,
@@ -744,15 +761,18 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         'settings': next.toJson(),
       });
       await controller.refreshConversation();
-      if (mounted) {
+      if (mounted && controller.isCurrent) {
         setState(() => _settings = _normalizeSettings(controller.settings));
       }
     } catch (error) {
+      if (!mounted || !controller.isCurrent) return;
       await controller.refreshConversation();
-      if (mounted) {
+      if (mounted && controller.isCurrent) {
         setState(() => _settings = _normalizeSettings(controller.settings));
         _showComposerMessage(
-          context.l10n.settingsUpdateFailed(error.toString()),
+          error is CoreFault && error.code == 'revision_conflict'
+              ? context.l10n.conversationChangedRetry
+              : context.l10n.settingsUpdateFailed(error.toString()),
         );
       }
     } finally {
@@ -1089,8 +1109,18 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         throw CoreFault('invalid_params', 'An agent is required');
       }
       final conversationId = await _ensureConversation();
+      if (!mounted) return;
+      final controller = _controller!;
+      await controller.requireFreshSnapshot();
+      if (!mounted || !controller.isCurrent) return;
+      if (controller.state.metadata?['running'] == true &&
+          !controller.state.queueAvailable) {
+        _showComposerMessage(context.l10n.queueUnavailableWait);
+        return;
+      }
       clientMessageId = '${DateTime.now().microsecondsSinceEpoch}';
       final attachmentIds = await _uploadImages(clientMessageId);
+      if (!mounted || !controller.isCurrent) return;
       queueWrite = _controller?.state.metadata?['running'] == true;
       writeSent = true;
       final envelope = await ref.read(coreGatewayProvider).call(
@@ -1114,10 +1144,19 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
             result['clientMessageId'] as String? ?? clientMessageId;
         _queuedImages[returnedClientId] = selectedImages;
       }
+      if (!mounted || !controller.isCurrent) return;
       _composer.clear();
       setState(_images.clear);
       await _refresh();
     } catch (error) {
+      if (!mounted || (_controller != null && !_controller!.isCurrent)) return;
+      if (error is CoreFault && error.code == 'revision_conflict') {
+        await _controller?.refreshConversation();
+        if (mounted) {
+          _showComposerMessage(context.l10n.conversationChangedRetry);
+        }
+        return;
+      }
       final ambiguous =
           writeSent &&
           error is CoreFault &&
@@ -1553,7 +1592,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                   onSkip: () => _skipPlan(planConfirmation),
                 )
               else ...[
-                if (state.queuedSubmissions.isNotEmpty)
+                if (state.queueAvailable && state.queuedSubmissions.isNotEmpty)
                   _QueuedSubmissionList(
                     items: state.queuedSubmissions,
                     online: online,

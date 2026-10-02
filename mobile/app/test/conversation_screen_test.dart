@@ -206,6 +206,316 @@ final _settingsCatalogs = <String, Map<String, dynamic>>{
 };
 
 void main() {
+  testWidgets('first send waits for snapshot and uses its revision', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final snapshot = Completer<Map<String, dynamic>>();
+    Map<String, dynamic>? sent;
+    var creates = 0;
+    final events = StreamController<Map<String, dynamic>>.broadcast();
+    addTearDown(events.close);
+    final gateway = _FakeGateway((method, params) async {
+      if (method == 'action.list') return {'result': <dynamic>[]};
+      if (method == 'conversation.create') {
+        creates++;
+        return {
+          'result': {'id': 'fresh'},
+        };
+      }
+      if (method == 'conversation.read') return snapshot.future;
+      if (method == 'turn.start') {
+        sent = Map.of(params);
+        throw CoreFault('revision_conflict', 'changed');
+      }
+      return {'result': {}};
+    }, events: events.stream);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          coreGatewayProvider.overrideWithValue(gateway),
+          workspaceProvider.overrideWith(_FakeWorkspaceController.new),
+        ],
+        child: const MaterialApp(
+          locale: Locale('zh', 'CN'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: ConversationScreen(
+            conversationId: null,
+            projectId: 'project-1',
+          ),
+        ),
+      ),
+    );
+    for (var n = 0; n < 5; n++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.enterText(find.byType(TextField), 'retain this draft');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await tester.pump();
+    expect(sent, isNull);
+    // A real event starts a background read while the send prerequisite waits.
+    events.add({'type': 'event', 'conversationId': 'fresh', 'sequence': 20});
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(sent, isNull);
+    snapshot.complete({
+      'result': {
+        'conversation': {'id': 'fresh', 'running': false},
+        'timeline': {'items': []},
+        'revision': 13,
+        'sequence': 20,
+      },
+    });
+    for (var n = 0; n < 5; n++) {
+      await tester.pump();
+    }
+    expect(sent?['expectedRevision'], 13);
+    expect(creates, 1);
+    expect(find.text('retain this draft'), findsOneWidget);
+    expect(find.text('会话状态已变化，请重试'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets(
+    'first send succeeds once despite MCP events during snapshot sync',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final firstSnapshot = Completer<Map<String, dynamic>>();
+      final events = StreamController<Map<String, dynamic>>.broadcast();
+      addTearDown(events.close);
+      var creates = 0;
+      var reads = 0;
+      var starts = 0;
+      final gateway = _FakeGateway((method, params) async {
+        if (method == 'action.list') return {'result': <dynamic>[]};
+        if (method == 'conversation.create') {
+          creates++;
+          return {
+            'result': {'id': 'fresh'},
+          };
+        }
+        if (method == 'conversation.read') {
+          reads++;
+          if (reads == 1) return firstSnapshot.future;
+          return {
+            'result': {
+              'conversation': {'id': 'fresh', 'running': false},
+              'revision': starts == 0 ? 13 : 15,
+              'sequence': 25 + starts,
+              'timeline': {'items': []},
+            },
+          };
+        }
+        if (method == 'turn.start') {
+          starts++;
+          expect(params['expectedRevision'], starts == 1 ? 13 : 15);
+          expect(
+            params['text'],
+            starts == 1 ? 'first message' : 'second message',
+          );
+          return {'result': {}};
+        }
+        return {'result': {}};
+      }, events: events.stream);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            coreGatewayProvider.overrideWithValue(gateway),
+            workspaceProvider.overrideWith(_FakeWorkspaceController.new),
+          ],
+          child: const MaterialApp(
+            locale: Locale('zh', 'CN'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: ConversationScreen(
+              conversationId: null,
+              projectId: 'project-1',
+            ),
+          ),
+        ),
+      );
+      for (var n = 0; n < 5; n++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      await tester.enterText(find.byType(TextField), 'first message');
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await tester.pump();
+      for (var sequence = 21; sequence <= 25; sequence++) {
+        events.add({
+          'type': 'event',
+          'event': 'mcpServer/startupStatus/updated',
+          'conversationId': 'fresh',
+          'sequence': sequence,
+        });
+        await tester.pump(const Duration(milliseconds: 200));
+      }
+      expect(starts, 0);
+      expect(reads, 1);
+      firstSnapshot.complete({
+        'result': {
+          'conversation': {'id': 'fresh', 'running': false},
+          'revision': 13,
+          'sequence': 25,
+          'timeline': {'items': []},
+        },
+      });
+      for (var n = 0; n < 10; n++) {
+        await tester.pump();
+      }
+      expect(starts, 1);
+      expect(creates, 1);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        isEmpty,
+      );
+      expect(find.textContaining('snapshot_unavailable'), findsNothing);
+      await tester.enterText(find.byType(TextField), 'second message');
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      for (var n = 0; n < 10; n++) {
+        await tester.pump();
+      }
+      expect(starts, 2);
+      expect(creates, 1);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        isEmpty,
+      );
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'failed first snapshot retries the same conversation without losing draft',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      var creates = 0;
+      var reads = 0;
+      var starts = 0;
+      final events = StreamController<Map<String, dynamic>>.broadcast();
+      addTearDown(events.close);
+      final gateway = _FakeGateway((method, params) async {
+        if (method == 'action.list') return {'result': <dynamic>[]};
+        if (method == 'conversation.create') {
+          creates++;
+          return {
+            'result': {'id': 'fresh'},
+          };
+        }
+        if (method == 'conversation.read') {
+          reads++;
+          if (reads == 1) throw CoreFault('provider_error', 'read failed');
+          return {
+            'result': {
+              'conversation': {'id': 'fresh', 'running': false},
+              'timeline': {'items': []},
+              'revision': 7,
+              'sequence': 9,
+            },
+          };
+        }
+        if (method == 'turn.start') {
+          starts++;
+          expect(params['expectedRevision'], 7);
+          return {'result': {}};
+        }
+        return {'result': {}};
+      }, events: events.stream);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            coreGatewayProvider.overrideWithValue(gateway),
+            workspaceProvider.overrideWith(_FakeWorkspaceController.new),
+          ],
+          child: const MaterialApp(
+            locale: Locale('zh', 'CN'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: ConversationScreen(
+              conversationId: null,
+              projectId: 'project-1',
+            ),
+          ),
+        ),
+      );
+      for (var n = 0; n < 5; n++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      await tester.enterText(find.byType(TextField), 'retry me');
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      for (var n = 0; n < 5; n++) {
+        await tester.pump();
+      }
+      expect(starts, 0);
+      expect(find.text('retry me'), findsOneWidget);
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      for (var n = 0; n < 5; n++) {
+        await tester.pump();
+      }
+      expect(creates, 1);
+      expect(starts, 1);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets('unsupported queue keeps running conversation draft', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    var writes = 0;
+    final events = StreamController<Map<String, dynamic>>.broadcast();
+    addTearDown(events.close);
+    final gateway = _FakeGateway((method, params) async {
+      if (method == 'action.list') return {'result': <dynamic>[]};
+      if (method == 'conversation.read') {
+        return {
+          'result': {
+            'conversation': {'id': 't', 'running': true},
+            'timeline': {'items': []},
+            'capabilities': {'queue': false},
+            'revision': 2,
+            'sequence': 3,
+          },
+        };
+      }
+      if (method == 'turn.start' || method == 'conversation.queue.add') {
+        writes++;
+      }
+      return {'result': {}};
+    }, events: events.stream);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          coreGatewayProvider.overrideWithValue(gateway),
+          workspaceProvider.overrideWith(_FakeWorkspaceController.new),
+        ],
+        child: const MaterialApp(
+          locale: Locale('zh', 'CN'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: ConversationScreen(conversationId: 't'),
+        ),
+      ),
+    );
+    for (var n = 0; n < 5; n++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.enterText(find.byType(TextField), 'keep waiting');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    for (var n = 0; n < 5; n++) {
+      await tester.pump();
+    }
+    expect(writes, 0);
+    expect(find.text('keep waiting'), findsOneWidget);
+    expect(find.text('此会话暂不支持消息排队，请等待当前任务结束'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('plan confirmation revises and replaces the composer', (
     tester,
   ) async {
@@ -1420,7 +1730,7 @@ void main() {
                 'conversation': {
                   'id': 'thread-settings',
                   'title': 'Settings',
-                  'running': true,
+                  'running': turnParams != null,
                 },
                 'settings': turnParams?['settings'],
                 'timeline': {'items': const []},
@@ -1826,6 +2136,14 @@ void main() {
         case 'turn.start':
           turnStarted = true;
           return {'result': const {}};
+        case 'conversation.read':
+          return {
+            'result': {
+              'conversation': {'id': 'thread-failure', 'running': false},
+              'timeline': {'items': const []},
+              'revision': 0,
+            },
+          };
         case 'conversation.subscribe':
           return {'result': const {}};
         default:
@@ -1917,7 +2235,7 @@ void main() {
               'conversation': {
                 'id': 'thread-images',
                 'title': 'Images',
-                'running': true,
+                'running': turnParams != null,
               },
               'timeline': {'items': const []},
             },

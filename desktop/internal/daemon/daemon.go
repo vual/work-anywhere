@@ -307,7 +307,12 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 			if response.Error != nil {
 				code = response.Error.Code
 			}
-			m.log.Event("mobile.control", map[string]any{"method": request.Method, "durationMs": time.Since(started).Milliseconds(), "responseBytes": len(encoded), "errorCode": code})
+			var target struct {
+				ThreadID string `json:"threadId"`
+				AgentID  string `json:"agentId"`
+			}
+			_ = json.Unmarshal(request.Params, &target)
+			m.log.Event("mobile.control", map[string]any{"requestId": request.ID, "agentId": target.AgentID, "threadId": target.ThreadID, "method": request.Method, "durationMs": time.Since(started).Milliseconds(), "responseBytes": len(encoded), "errorCode": code})
 		}
 	}()
 	if request.Contract != "" && request.Contract != protocol.MobileControlContract {
@@ -317,6 +322,29 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 	if m.controlPaused.Load() && isMutatingControlMethod(request.Method) {
 		response.Error = &protocol.ControlError{Code: "control_paused", Message: "local control is paused from the tray menu"}
 		return response
+	}
+	// Serialize control writes per conversation without holding the instance state lock during RPC.
+	if request.Method == "turn.start" || request.Method == "plan.respond" || request.Method == "conversation.settings.update" || strings.HasPrefix(request.Method, "conversation.queue.") {
+		var instance *Instance
+		var err error
+		if request.Contract == protocol.MobileControlContract {
+			instance, _, err = m.mobileControlTarget(request.Params)
+		} else {
+			instance, _, err = m.controlTarget(request.Params)
+		}
+		if err != nil {
+			response.Error = &protocol.ControlError{Code: "invalid_target", Message: err.Error()}
+			return
+		}
+		var target struct {
+			ThreadID string `json:"threadId"`
+		}
+		_ = json.Unmarshal(request.Params, &target)
+		if target.ThreadID != "" {
+			lock := instance.controlThreadLock(target.ThreadID)
+			lock.Lock()
+			defer lock.Unlock()
+		}
 	}
 	switch request.Method {
 	case "system.status":
@@ -425,12 +453,33 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 			response.Error = &protocol.ControlError{Code: "invalid_params", Message: "projectId is required"}
 			break
 		}
+		projectRoot, resolveErr := m.projectRoot(instance, requestParams.ProjectID)
+		if resolveErr != nil || projectRoot == "" {
+			if resolveErr == nil {
+				resolveErr = errors.New("project has no root directory")
+			}
+			response.Error = &protocol.ControlError{Code: "project_not_resolved", Message: resolveErr.Error()}
+			break
+		}
+		projectRoot, resolveErr = existingDirectory(projectRoot)
+		if resolveErr != nil {
+			response.Error = &protocol.ControlError{Code: "project_not_resolved", Message: resolveErr.Error()}
+			break
+		}
+		params, resolveErr = mobileConversationStartParams(params, projectRoot)
+		if resolveErr != nil {
+			response.Error = &protocol.ControlError{Code: "invalid_params", Message: resolveErr.Error()}
+			break
+		}
 		result, callErr := instance.Call(m.ctx, "thread/start", params)
 		if callErr != nil {
 			response.Error = &protocol.ControlError{Code: "provider_error", Message: callErr.Error()}
 			break
 		}
 		response.Result, callErr = normalizeConversationCreate(result)
+		if callErr == nil {
+			instance.rememberCreatedThread(response.Result.(map[string]any)["id"].(string))
+		}
 		if callErr != nil {
 			response.Error = &protocol.ControlError{Code: "invalid_provider_response", Message: callErr.Error()}
 		}
@@ -491,6 +540,7 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 			response.Error = mobileControlError(err)
 		} else {
 			response.Result = result
+			instance.broadcastEvent("frontend.thread.queue.updated", map[string]any{"threadId": conversationIDFromPayload(json.RawMessage(params))})
 		}
 	case "conversation.list", "turn.start", "turn.interrupt", "catalog.models":
 		var instance *Instance
@@ -522,8 +572,14 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 				response.Error = &protocol.ControlError{Code: "revision_conflict", Message: err.Error()}
 				break
 			}
+			if err = instance.reserveTurn(params); err != nil {
+				response.Error = mobileControlError(err)
+				break
+			}
+			originalParams := params
 			params, err = m.normalizeTurnStart(instance.descriptor.ID, params)
 			if err != nil {
+				instance.clearPendingTurnSettings("turn/start", originalParams)
 				var contractErr *mobileContractError
 				if errors.As(err, &contractErr) {
 					response.Error = mobileControlError(err)

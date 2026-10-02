@@ -21,6 +21,8 @@ Work Anywhere(WAW) 的目标是让你在手机上也能实时与电脑端 ChatGP
 
 Mobile 会话同步使用 metadata snapshot、最近 20 项 timeline 分页和实时增量恢复；旧历史通过 opaque cursor 加载，超过 64 KiB 的单个正文 block 通过临时引用按需分块查看。Desktop control 响应限制为 512 KiB，Relay 继续保持 1 MiB routed payload 上限。
 
+Mobile 发送前同步权威快照，版本冲突保留草稿；daemon 按会话兼容历史读取，队列能力以 provider 实际支持为准。
+
 ## 当前能力
 
 Desktop V1 提供：

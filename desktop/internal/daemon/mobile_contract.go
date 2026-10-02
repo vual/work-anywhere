@@ -828,6 +828,18 @@ func normalizeConversationCreate(raw json.RawMessage) (map[string]any, error) {
 	return result, nil
 }
 
+func mobileConversationStartParams(raw json.RawMessage, projectRoot string) (json.RawMessage, error) {
+	var params map[string]any
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return nil, fmt.Errorf("decode conversation.create params: %w", err)
+	}
+	if strings.TrimSpace(projectRoot) == "" {
+		return nil, errors.New("project root is required")
+	}
+	params["cwd"] = projectRoot
+	return json.Marshal(params)
+}
+
 type mobileTimelineBlock struct {
 	Kind         string `json:"kind"`
 	Text         string `json:"text"`
@@ -858,6 +870,9 @@ type mobilePlanConfirmation struct {
 }
 
 type mobileConversationSnapshot struct {
+	Capabilities struct {
+		Queue bool `json:"queue"`
+	} `json:"capabilities"`
 	Conversation     mobileConversationMetadata `json:"conversation"`
 	Settings         mobileConversationSettings `json:"settings"`
 	Revision         int64                      `json:"revision"`
@@ -1525,11 +1540,19 @@ type mobileTimelineSegment struct {
 }
 
 func (m *Manager) fetchTimelineSegments(instance mobileProviderCaller, threadID, cursor string, limit int) ([]mobileTimelineSegment, error) {
+	return m.fetchTimelineSegmentsScoped(instance, threadID, "", cursor, limit)
+}
+
+func (m *Manager) fetchTimelineSegmentsScoped(instance mobileProviderCaller, threadID, turnID, cursor string, limit int) ([]mobileTimelineSegment, error) {
 	segments := make([]mobileTimelineSegment, 0, 1)
 	remaining := limit
 	providerCursor := cursor
 	for pageCount := 0; pageCount < mobileMaxTimelineProviderPages && remaining > 0; pageCount++ {
 		providerParams := map[string]any{"threadId": threadID, "limit": remaining, "sortDirection": "desc"}
+		if turnID != "" {
+			providerParams["turnId"] = turnID
+			providerParams["sortDirection"] = "asc"
+		}
 		if providerCursor != "" {
 			providerParams["cursor"] = providerCursor
 		}
@@ -1567,7 +1590,7 @@ func (m *Manager) composeTimelineSegments(segments []mobileTimelineSegment, agen
 }
 
 func (m *Manager) readTimelinePageAttempt(instance mobileProviderCaller, agentID, threadID, cursor string, limit int, force bool) (mobileTimelinePage, error) {
-	segments, err := m.fetchTimelineSegments(instance, threadID, cursor, limit)
+	segments, err := m.fetchCompatibleTimeline(instance, agentID, threadID, cursor, limit)
 	if err != nil {
 		return mobileTimelinePage{}, err
 	}
@@ -1602,6 +1625,10 @@ func (m *Manager) readTimelinePage(instance mobileProviderCaller, agentID, threa
 }
 
 func (m *Manager) conversationSnapshot(instance *Instance, agentID string, params json.RawMessage) (mobileConversationSnapshot, error) {
+	return m.stableConversationSnapshot(instance, agentID, params)
+}
+
+func (m *Manager) conversationSnapshotOnce(instance *Instance, agentID string, params json.RawMessage) (mobileConversationSnapshot, error) {
 	var request struct {
 		ThreadID string `json:"threadId"`
 		Limit    int    `json:"limit"`
@@ -1618,17 +1645,30 @@ func (m *Manager) conversationSnapshot(instance *Instance, agentID string, param
 	if err != nil {
 		return mobileConversationSnapshot{}, &mobileContractError{code: "invalid_provider_response", message: err.Error()}
 	}
+	var history struct {
+		Thread struct {
+			Path *string `json:"path"`
+		} `json:"thread"`
+	}
+	_ = json.Unmarshal(raw, &history)
+	unpersisted := history.Thread.Path == nil || metadataOnlyRollout(*history.Thread.Path)
+	allowEmpty := !metadata.Running && instance.emptyCreatedThread(request.ThreadID) && unpersisted
 	page, err := m.readTimelinePage(instance, agentID, request.ThreadID, "", request.Limit)
+	if allowEmpty && (noRollout(err, request.ThreadID) || emptyHistoryUnsupported(err)) {
+		page = mobileTimelinePage{Items: []mobileTimelineItem{}}
+		err = nil
+	}
 	if err != nil {
 		return mobileConversationSnapshot{}, err
 	}
-	queue, err := m.mobileQueueList(instance, request.ThreadID)
+	queue, queueAvailable, err := m.compatibleQueue(instance, request.ThreadID, allowEmpty)
 	if err != nil {
 		return mobileConversationSnapshot{}, err
 	}
 	revision, sequence := instance.ConversationVersion(request.ThreadID)
 	settings, _ := instance.collaborationSettings(request.ThreadID)
 	snapshot := mobileConversationSnapshot{Conversation: metadata, Settings: projectedMobileSettings(settings), Revision: revision, Sequence: sequence, Timeline: page, Queue: queue}
+	snapshot.Capabilities.Queue = queueAvailable
 	snapshot.PlanConfirmation = planConfirmationFor(instance, request.ThreadID, metadata, page, revision)
 	return snapshot, nil
 }
@@ -1701,6 +1741,9 @@ func (m *Manager) mobilePlanRespond(instance *Instance, agentID string, params j
 		return nil, &mobileContractError{code: "plan_mode_unavailable", message: "the plan collaboration settings are unavailable"}
 	}
 	providerParams, _ := json.Marshal(planTurnStartParams(request.ThreadID, request.Decision, request.Text, settings))
+	if err := instance.reserveTurn(params); err != nil {
+		return nil, err
+	}
 	result, callErr := instance.Call(m.ctx, "turn/start", providerParams)
 	if callErr != nil {
 		return nil, &mobileContractError{code: "provider_error", message: callErr.Error()}
@@ -1933,45 +1976,38 @@ func (m *Manager) findTimelineBlock(instance mobileProviderCaller, threadID, tur
 	if threadID == "" || itemID == "" || blockIndex < 0 {
 		return "", &mobileContractError{code: "invalid_params", message: "threadId, itemId and a non-negative blockIndex are required"}
 	}
+	agentID := ""
+	if i, ok := instance.(*Instance); ok {
+		agentID = i.descriptor.ID
+	}
 	cursor := ""
-	seen := make(map[string]struct{})
+	seen := make(map[string]bool)
 	for {
-		if _, duplicate := seen[cursor]; duplicate {
-			return "", &mobileContractError{code: "invalid_provider_response", message: "thread/items/list returned a cursor loop"}
+		if seen[cursor] {
+			return "", &mobileContractError{code: "invalid_provider_response", message: "timeline returned a cursor loop"}
 		}
-		seen[cursor] = struct{}{}
-		providerParams := map[string]any{"threadId": threadID, "limit": mobileMaxTimelineLimit, "sortDirection": "asc"}
-		if turnID != "" {
-			providerParams["turnId"] = turnID
-		}
-		if cursor != "" {
-			providerParams["cursor"] = cursor
-		}
-		rawParams, _ := json.Marshal(providerParams)
-		raw, err := instance.Call(m.ctx, "thread/items/list", rawParams)
+		seen[cursor] = true
+		segments, err := m.fetchCompatibleTimelineScoped(instance, agentID, threadID, turnID, cursor, mobileMaxTimelineLimit)
 		if err != nil {
-			return "", &mobileContractError{code: "provider_error", message: err.Error()}
+			return "", err
 		}
-		page, _, err := normalizeTimelinePage(raw)
-		if err != nil {
-			return "", &mobileContractError{code: "invalid_provider_response", message: err.Error()}
+		next := ""
+		for _, segment := range segments {
+			for _, item := range segment.Page.Items {
+				if item.ID != itemID || (turnID != "" && item.TurnID != "" && item.TurnID != turnID) {
+					continue
+				}
+				if blockIndex >= len(item.Blocks) || item.Blocks[blockIndex].Kind == "summary" || item.Blocks[blockIndex].Text == "" {
+					return "", &mobileContractError{code: "content_not_found", message: "referenced content is not available"}
+				}
+				return item.Blocks[blockIndex].Text, nil
+			}
+			next = segment.Page.NextCursor
 		}
-		for _, item := range page.Items {
-			if item.ID != itemID {
-				continue
-			}
-			if turnID != "" && item.TurnID != "" && item.TurnID != turnID {
-				continue
-			}
-			if blockIndex >= len(item.Blocks) || item.Blocks[blockIndex].Kind == "summary" || item.Blocks[blockIndex].Text == "" {
-				return "", &mobileContractError{code: "content_not_found", message: "referenced content is not available"}
-			}
-			return item.Blocks[blockIndex].Text, nil
-		}
-		if page.NextCursor == "" {
+		if next == "" {
 			break
 		}
-		cursor = page.NextCursor
+		cursor = next
 	}
 	return "", &mobileContractError{code: "content_not_found", message: "referenced content is no longer available"}
 }

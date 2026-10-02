@@ -31,6 +31,8 @@ Store 提供实例/会话/Turn upsert、Timeline append/read、action save/resol
 
 路径、实例 ID、项目/会话/消息 ID、状态、sequence、大小和必要索引元数据是明文。消息正文、工具 payload、diff、action 内容和设置值使用加密列；附件正文不进入数据库，直接落在项目目录普通文件中。旧数据库中的 `content_encrypted` 附件在首次使用时导出为 `legacy-<attachmentId>` 消息目录，成功后清空正文列。若项目根目录、会话 cwd 和实例 cwd 都不可解析，返回 `project_not_resolved` 且不写文件。完整进程环境不持久化。
 
+会话恢复分别读取 `conversations.revision` 和 `conversations.sequence`，sequence 必要时补到已保存事件的最大值；不会把事件序号当作业务 revision。旧数据库中的 revision 保持为升级后的基线，不清零，无需重新配对。并发 upsert 使用单调最大值，旧 sequence 的写入不能覆盖较新 status；不新增数据库列或迁移用户历史。
+
 ## Security and failure handling
 
 - DPAPI 绑定当前 Windows 用户；复制数据库和 key 文件到其他用户不能直接解密。

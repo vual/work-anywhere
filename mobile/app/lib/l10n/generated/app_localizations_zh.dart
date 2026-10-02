@@ -10,6 +10,12 @@ class AppLocalizationsZh extends AppLocalizations {
   AppLocalizationsZh([String locale = 'zh']) : super(locale);
 
   @override
+  String get conversationChangedRetry => '会话状态已变化，请重试';
+
+  @override
+  String get queueUnavailableWait => '此会话暂不支持消息排队，请等待当前任务结束';
+
+  @override
   String get appTitle => 'Work Any Where';
 
   @override

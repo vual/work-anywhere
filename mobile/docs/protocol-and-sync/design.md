@@ -22,7 +22,7 @@
 | --- | --- | --- |
 | `status.read` | Daemon/Agent 状态 | `system.status`, `instance.list/get`, `agent.list` |
 | `conversation.read` | 项目/对话列表、搜索、snapshot、增量与大内容读取 | `project.list`, `conversation.list/read/subscribe`, `conversation.timeline.list`, `conversation.content.read/resolve` |
-| `conversation.create` | 首次发送时在当前项目创建 Codex thread | `conversation.create` |
+| `conversation.create` | 首次发送时以当前项目 ID 创建 Codex thread；Desktop 解析项目主目录并适配 provider 的 cwd 归属协议 | `conversation.create` |
 | `turn.start` | 继续已有 thread、管理运行中消息队列、修改会话设置或响应已完成计划 | `turn.start`, `conversation.queue.add/update/delete/start`, `conversation.settings.update`, `plan.respond` |
 | `turn.interrupt` | 中断活跃 Turn | `turn.interrupt` |
 | `action.read` | 查看待处理 action | `action.list` |
@@ -157,6 +157,14 @@ V1 只支持图片附件，一条消息最多 10 张；单文件和图片总大�
 
 点击后弹出轻确认，提交一次 `turn.interrupt`。response 不代表 Turn 已停止；直到 interrupted/completed/failed event 或 snapshot 才移除“正在停止”。断线时不自动重发 interrupt，重连后若仍 active 再允许用户操作。
 
+### 权威快照与版本冲突
+
+控制器使用 `hasSnapshot` 区分未加载状态与真实 revision 0。创建返回 ID 后先监听事件并等待 `conversation.read` 成功，再上传图片和发送；普通发送与会话设置修改都先同步快照。失败时保留草稿、图片和已创建 ID，重试不会重复创建。读请求绑定 Daemon/选择代次；同一控制器只保留一个进行中的 `conversation.read`，页面加载、发送前同步与事件刷新共同等待该权威结果，不使用缓存代替读取。事件在读取期间继续按 burst 合并，必要的后续刷新在当前请求完成后执行。成功读取不能因为另一调用者请求刷新而被判为失败；完成后清除共享请求，下一次发送重新读取。sequence 倒退的响应不更新正文或设置，退出页面或选择改变后不得写入旧结果。
+
+`revision_conflict` 刷新状态并提示用户重试，不自动重发；计划确认继续使用原 plan ID/revision，冲突不能被误判为已提交。`snapshot_unstable` 是可重试读取错误，写入被阻止。`cursor_expired` 清除旧历史分页依据，成功刷新后重建最新 Timeline。业务 revision 与事件 sequence 的权威定义见 [Desktop 会话设计](../../../desktop/docs/json-rpc-and-actions/design.md)。
+
+快照可新增 `capabilities.queue=false`；缺失仍按支持处理。不支持队列的运行中会话保留输入并提示等待任务结束，不将排队请求转为普通发送。读取兼容、空会话与错误降级的唯一规范见 [Desktop 控制设计](../../../desktop/docs/local-control/design.md)。
+
 ## 请求安全与重试表
 
 | 类型 | 自动重试 | 断线后的处理 |
@@ -193,7 +201,7 @@ Mobile 获取新 APNs/FCM token 后递增本地 generation，并由 host 直接�
 
 - 无已验证 grant 就没有持久 pairing；无完成 Noise handshake 就不发送 control JSON。
 - 任一 session 每方向 sequence 单调；gap/tamper/revoke 必须重建而非继续。
-- 不提供离线 outbox、自动重放写命令、exactly-once 承诺或通知内审批。`conversation.create` 只接受当前项目 ID，结果未知时不自动重放。
+- 不提供离线 outbox、自动重放写命令、exactly-once 承诺或通知内审批。`conversation.create` 只接受当前项目 ID，不接受 Mobile 提供 cwd；Desktop 必须使用 provider 项目目录解析出的可信主目录创建 thread，结果未知时不自动重放。
 - V1 只发布 Codex `projects` adapter；Hermes `bots` 和其他 Provider 仅保留 capability/DTO 边界，不作为已实现能力。
 - Mobile 不拥有 Relay schema 或 Desktop 业务 DTO 的平行副本。
 

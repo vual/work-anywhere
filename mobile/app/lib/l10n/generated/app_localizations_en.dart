@@ -10,6 +10,14 @@ class AppLocalizationsEn extends AppLocalizations {
   AppLocalizationsEn([String locale = 'en']) : super(locale);
 
   @override
+  String get conversationChangedRetry =>
+      'The conversation changed. Please retry.';
+
+  @override
+  String get queueUnavailableWait =>
+      'Queued messages are unavailable for this conversation. Wait for the current task to finish.';
+
+  @override
   String get appTitle => 'Work Any Where';
 
   @override

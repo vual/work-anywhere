@@ -71,6 +71,10 @@ type Instance struct {
 
 	mu                       sync.Mutex
 	serverWriteMu            sync.Mutex
+	controlWrites            map[string]*sync.Mutex
+	pendingTurnStarts        map[string]bool
+	createdThreads           map[string]bool
+	legacyTimeline           map[string]uint64
 	descriptor               protocol.InstanceDescriptor
 	runtime                  protocol.RuntimeDescriptor
 	pendingRuntime           *protocol.RuntimeDescriptor
@@ -126,6 +130,7 @@ func NewInstance(manager *Manager, hello protocol.Hello) *Instance {
 		conversations:       make(map[string]*conversationProjection),
 		threadSettings:      make(map[string]threadCollaborationSettings),
 		pendingTurnSettings: make(map[string]threadCollaborationSettings),
+		pendingTurnStarts:   make(map[string]bool), createdThreads: make(map[string]bool), legacyTimeline: make(map[string]uint64),
 	}
 }
 
@@ -273,7 +278,9 @@ func (i *Instance) clearPendingTurnSettings(method string, params json.RawMessag
 	}
 	i.mu.Lock()
 	delete(i.pendingTurnSettings, threadID)
+	delete(i.pendingTurnStarts, threadID)
 	i.mu.Unlock()
+	i.broadcastEvent("frontend.turn.failed", map[string]any{"threadId": threadID})
 }
 
 func (i *Instance) observeThreadSettingsNotification(params json.RawMessage) {
@@ -446,6 +453,27 @@ func (i *Instance) stopProcess(release bool) {
 	i.mu.Lock()
 	i.generation++
 	cmd := i.cmd
+	origins := i.requests
+	i.requests = make(map[string]requestOrigin)
+	affected := make(map[string]bool)
+	for threadID := range i.activeTurns {
+		affected[threadID] = true
+	}
+	for threadID := range i.pendingTurnStarts {
+		affected[threadID] = true
+	}
+	for _, action := range i.actions {
+		if action.ConversationID != "" {
+			affected[action.ConversationID] = true
+		}
+	}
+	i.activeTurns = make(map[string]string)
+	i.pendingTurnStarts = make(map[string]bool)
+	i.pendingTurnSettings = make(map[string]threadCollaborationSettings)
+	i.actions = make(map[string]*pendingAction)
+	i.createdThreads = make(map[string]bool)
+	i.legacyTimeline = make(map[string]uint64)
+	i.cachedInitializeResponse = nil
 	i.cmd, i.stdin = nil, nil
 	if release && i.lease != nil {
 		_ = i.lease.Close()
@@ -453,6 +481,12 @@ func (i *Instance) stopProcess(release bool) {
 	}
 	i.state = "stopped"
 	i.mu.Unlock()
+	for id, origin := range origins {
+		i.notifyRequestFailure(id, origin, "App Server stopped")
+	}
+	for threadID := range affected {
+		i.broadcastEvent("frontend.thread.state.reset", map[string]any{"threadId": threadID})
+	}
 	if cmd != nil && cmd.Process != nil {
 		_ = cmd.Process.Kill()
 	}
@@ -592,7 +626,7 @@ func (i *Instance) resolveServerRequest(message jsonrpc.Message, raw []byte) err
 	if err := i.writeServer(raw); err != nil {
 		return err
 	}
-	i.broadcastEvent("action.resolved", map[string]any{"id": json.RawMessage(message.ID)})
+	i.broadcastEvent("action.resolved", map[string]any{"id": json.RawMessage(message.ID), "threadId": action.ConversationID})
 	return nil
 }
 
@@ -725,8 +759,20 @@ func (i *Instance) handleServerFrame(generation uint64, raw []byte) {
 		return
 	}
 	if message.IsNotification() {
+		eventPayload := map[string]any{"method": message.Method, "params": json.RawMessage(message.Params)}
+		if message.Method == "serverRequest/resolved" {
+			var resolved struct {
+				RequestID json.RawMessage `json:"requestId"`
+			}
+			_ = json.Unmarshal(message.Params, &resolved)
+			i.mu.Lock()
+			if action := i.actions[string(resolved.RequestID)]; action != nil {
+				eventPayload["threadId"] = action.ConversationID
+			}
+			i.mu.Unlock()
+		}
 		i.observeNotification(message.Method, message.Params)
-		i.broadcastEvent("provider."+message.Method, map[string]any{"method": message.Method, "params": json.RawMessage(message.Params)})
+		i.broadcastEvent("provider."+message.Method, eventPayload)
 	}
 	i.broadcast(raw)
 }
@@ -773,6 +819,8 @@ func (i *Instance) observeNotification(method string, params json.RawMessage) {
 		turnID := firstNonempty(identifiers.TurnID, identifiers.Turn.ID)
 		if threadID != "" {
 			i.activeTurns[threadID] = turnID
+			delete(i.pendingTurnStarts, threadID)
+			delete(i.createdThreads, threadID)
 			if settings, ok := i.pendingTurnSettings[threadID]; ok {
 				settings.TurnID = turnID
 				settings.Succeeded = false
@@ -912,6 +960,9 @@ func (i *Instance) waitServer(generation uint64, cmd *exec.Cmd) {
 	}
 	i.cmd, i.stdin = nil, nil
 	i.activeTurns = make(map[string]string)
+	i.pendingTurnStarts = make(map[string]bool)
+	i.createdThreads = make(map[string]bool)
+	i.legacyTimeline = make(map[string]uint64)
 	i.actions = make(map[string]*pendingAction)
 	i.cachedInitializeResponse = nil
 	i.initializeInFlight = false
@@ -1014,14 +1065,14 @@ func (i *Instance) broadcastEvent(eventType string, payload any) {
 	i.mu.Lock()
 	sequence := int64(0)
 	if conversationID != "" {
-		projection := i.conversations[conversationID]
-		if projection == nil {
-			last := i.manager.store.MaxSequence(i.descriptor.ID, conversationID)
-			projection = &conversationProjection{ID: conversationID, Status: "idle", Sequence: last, Revision: last}
-			i.conversations[conversationID] = projection
+		projection := i.projectionLocked(conversationID)
+		if eventType == "frontend.turn.start" {
+			delete(i.createdThreads, conversationID)
 		}
 		projection.Sequence++
-		projection.Revision++
+		if revisionEvent(eventType) {
+			projection.Revision++
+		}
 		projection.Status = statusForEvent(eventType, projection.Status)
 		sequence = projection.Sequence
 	} else {
@@ -1064,11 +1115,7 @@ func (i *Instance) CheckExpectedRevision(params json.RawMessage) error {
 		return nil
 	}
 	i.mu.Lock()
-	projection := i.conversations[request.ThreadID]
-	current := int64(0)
-	if projection != nil {
-		current = projection.Revision
-	}
+	current := i.projectionLocked(request.ThreadID).Revision
 	i.mu.Unlock()
 	if current != *request.ExpectedRevision {
 		return fmt.Errorf("revision conflict: expected %d, current %d", *request.ExpectedRevision, current)
@@ -1096,12 +1143,13 @@ func (i *Instance) conversationSubscription(params json.RawMessage, mobile bool)
 	projection := i.conversations[request.ThreadID]
 	if projection == nil && request.ThreadID != "" {
 		stored, _ := i.manager.store.ReadEvents(i.descriptor.ID, request.ThreadID, 0, 1000)
-		projection = &conversationProjection{ID: request.ThreadID, Status: "idle"}
+		projection = i.projectionLocked(request.ThreadID)
 		for _, item := range stored {
 			event := protocol.Event{Type: "event", Sequence: item.Sequence, Event: item.EventType, InstanceID: i.descriptor.ID, ConversationID: request.ThreadID, Payload: item.Payload}
 			projection.Events = append(projection.Events, event)
-			projection.Sequence, projection.Revision = item.Sequence, item.Sequence
-			projection.Status = statusForEvent(item.EventType, projection.Status)
+			if item.Sequence > projection.Sequence {
+				projection.Sequence = item.Sequence
+			}
 		}
 		i.conversations[request.ThreadID] = projection
 	}
@@ -1148,10 +1196,8 @@ func (i *Instance) conversationSubscription(params json.RawMessage, mobile bool)
 func (i *Instance) ConversationVersion(threadID string) (revision, sequence int64) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	if projection := i.conversations[threadID]; projection != nil {
-		return projection.Revision, projection.Sequence
-	}
-	return 0, 0
+	projection := i.projectionLocked(threadID)
+	return projection.Revision, projection.Sequence
 }
 
 func (i *Instance) Snapshot() InstanceSnapshot {
@@ -1175,14 +1221,17 @@ func (i *Instance) callWithoutSettingsProjection(ctx context.Context, method str
 
 func (i *Instance) commitThreadSettings(params json.RawMessage) {
 	i.observeOutgoingThreadSettings("thread/settings/update", params)
+	i.broadcastEvent("frontend.thread.settings.updated", map[string]any{"threadId": conversationIDFromPayload(json.RawMessage(params))})
 }
 
 func (i *Instance) call(ctx context.Context, method string, params json.RawMessage, observeSettings bool) (json.RawMessage, error) {
 	i.mu.Lock()
 	if i.stdin == nil {
 		i.mu.Unlock()
+		i.clearPendingTurnSettings(method, params)
 		return nil, errors.New("App Server is not running")
 	}
+	createdBeforeStart := method == "turn/start" && i.createdThreads[conversationIDFromPayload(json.RawMessage(params))]
 	i.nextRequest++
 	id := fmt.Sprintf("wa:c:local:%d", i.nextRequest)
 	response := make(chan []byte, 1)
@@ -1223,7 +1272,31 @@ func (i *Instance) call(ctx context.Context, method string, params json.RawMessa
 		}
 		if len(message.Error) > 0 && !bytes.Equal(bytes.TrimSpace(message.Error), []byte("null")) {
 			i.clearPendingTurnSettings(method, params)
+			if createdBeforeStart {
+				i.rememberCreatedThread(conversationIDFromPayload(json.RawMessage(params)))
+			}
 			return nil, fmt.Errorf("App Server: %s", message.Error)
+		}
+		if method == "turn/start" {
+			threadID := conversationIDFromPayload(json.RawMessage(params))
+			var result struct {
+				Turn struct {
+					ID string `json:"id"`
+				} `json:"turn"`
+			}
+			_ = json.Unmarshal(message.Result, &result)
+			i.mu.Lock()
+			reserved := i.pendingTurnStarts[threadID]
+			if i.pendingTurnStarts[threadID] && result.Turn.ID != "" {
+				i.activeTurns[threadID] = result.Turn.ID
+				delete(i.pendingTurnStarts, threadID)
+				delete(i.createdThreads, threadID)
+			}
+			i.mu.Unlock()
+			if reserved && result.Turn.ID == "" {
+				i.clearPendingTurnSettings(method, params)
+				return nil, errors.New("turn/start response has no turn id")
+			}
 		}
 		return append(json.RawMessage(nil), message.Result...), nil
 	case <-ctx.Done():
@@ -1252,23 +1325,7 @@ func (i *Instance) Actions() []pendingAction {
 func (i *Instance) CanStartTurn(threadID string) bool {
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	if i.stdin == nil || threadID == "" || i.state == "starting" || i.state == "waiting_initialize" || i.state == "stopped" || i.state == "error" || i.state == "upgrade_pending" {
-		return false
-	}
-	if _, active := i.activeTurns[threadID]; active {
-		return false
-	}
-	if _, pending := i.pendingTurnSettings[threadID]; pending {
-		return false
-	}
-	for _, action := range i.actions {
-		// Unknown action ownership is blocked conservatively; a request that is
-		// tied to another thread must not prevent this thread from progressing.
-		if action.ConversationID == "" || action.ConversationID == threadID {
-			return false
-		}
-	}
-	return true
+	return i.canStartTurnLocked(threadID)
 }
 
 // CanSubmitQueue allows queue changes while a turn is active, but keeps the
@@ -1336,7 +1393,7 @@ func (i *Instance) ResolveAction(id, result json.RawMessage) error {
 	if err := i.writeServer(append(raw, '\n')); err != nil {
 		return err
 	}
-	i.broadcastEvent("action.resolved", map[string]any{"id": json.RawMessage(id)})
+	i.broadcastEvent("action.resolved", map[string]any{"id": json.RawMessage(id), "threadId": action.ConversationID})
 	return nil
 }
 
@@ -1390,7 +1447,17 @@ func conversationIDFromPayload(payload any) string {
 			return value
 		}
 	}
+	if thread, ok := object["thread"].(map[string]any); ok {
+		if id, ok := thread["id"].(string); ok {
+			return id
+		}
+	}
 	if params, ok := object["params"].(map[string]any); ok {
+		if thread, ok := params["thread"].(map[string]any); ok {
+			if id, ok := thread["id"].(string); ok {
+				return id
+			}
+		}
 		for _, key := range []string{"conversationId", "threadId"} {
 			if value, ok := params[key].(string); ok {
 				return value
@@ -1449,7 +1516,7 @@ func statusForEvent(eventType, current string) string {
 		return "waiting_action"
 	case strings.Contains(lower, "turn/completed"):
 		return "completed"
-	case strings.Contains(lower, "turn/failed"):
+	case strings.Contains(lower, "turn/failed") || lower == "frontend.thread.state.reset":
 		return "failed"
 	case strings.Contains(lower, "turn/interrupted"):
 		return "interrupted"

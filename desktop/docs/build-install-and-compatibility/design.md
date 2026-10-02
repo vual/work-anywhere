@@ -45,6 +45,16 @@ scripts/build-installer.ps1 -Version 0.1.0 -SkipBuild
 - 只对 initialize、ID 路由、Turn、action 和 catalog 等需要控制的消息做最小解析。
 - 官方 schema fixture 同时保留 `testdata/app-server-schema/0.151.0-alpha.7.2/` 和当前验证的 `testdata/app-server-schema/0.159.2/`，用于协议回归参考，不在运行时强制校验每条消息。
 
+Mobile 的接口可用性按会话和进程代次判断，不以 schema 中的方法存在或版本号代替真实调用。原生与兼容历史共享归一化器，空会话、队列降级和恢复语义以 [本机控制设计](../local-control/design.md) 为准。对应实现和回归测试为 [`mobile_history.go`](../../internal/daemon/mobile_history.go)、[`mobile_history_test.go`](../../internal/daemon/mobile_history_test.go)。
+
+真实 Codex 验证由 [`codex_mobile_integration_test.go`](../../internal/daemon/codex_mobile_integration_test.go) 提供 opt-in 测试：设置 `WORK_ANYWHERE_TEST_CODEX` 为官方 exe，`WORK_ANYWHERE_TEST_AUTH` 为授权使用的 auth.json 路径，再执行：
+
+```powershell
+.\.tools\go-sdk\go\bin\go.exe test ./internal/daemon -run '^TestCodexMobileLifecycleIntegration$' -v -timeout 240s
+```
+
+测试将鉴权材料复制到测试临时 CODEX_HOME，不打印凭据；创建临时项目，执行两次短文本模型请求，验证空快照、首次/后续发送、流式 delta、控制订阅重连和隔离 App Server 重启。测试结束清理临时配置与会话，不替换用户当前 daemon。默认单元测试跳过真实模型请求。
+
 ## State and persistence
 
 安装备份属于用户级设置；发布产物和构建工具不写入业务数据库。runtime 版本/SHA256 由 daemon 记录，用于检测 Desktop 升级并安全切换。

@@ -49,7 +49,7 @@ Desktop 从 `turn/start`、`thread/settings/update` 和 `thread/settings/updated
 
 `attachment.begin` 在 Mobile contract 下接受 `agentId`、`projectId`、`conversationId`、`clientMessageId`、`mimeType`、文件名和大小。一次发送生成的 `clientMessageId` 同时用于 begin 和 `turn.start`。Desktop 先用 `agentId` 解析并绑定上传所属实例，再将 provider 路由字段从下游参数中移除；这样上传完成后只能由同一实例的 `turn.start` 使用。附件内容直接写入项目目录的 `.work-anywhere-remote-attachments/<conversationId>/<clientMessageId>/`，文件名为清理后的原名加唯一 attachment ID 后缀。
 
-`conversation.create` 仅在 `mobile-control-v1` 下可用，接受 `agentId` 和当前 Codex `projectId`，映射为 App Server `thread/start`，返回稳定的 `{id, projectId?}`。它是受控写操作，要求在线 App Server；新 pairing 使用 `conversation.create` scope，已有仅授予 `turn.start` 的 pairing 也保持向后兼容。Mobile 收到结果前断线时不得自动重试。
+`conversation.create` 仅在 `mobile-control-v1` 下可用，接受 `agentId` 和当前 Codex `projectId`。Desktop 必须先从 provider 项目目录解析并验证主目录，再向 App Server `thread/start` 同时传递 `projectId` 与可信 `cwd`：旧 runtime 使用项目 ID，新 runtime 根据 cwd 建立项目归属；Mobile 不能直接指定 provider cwd。响应返回稳定的 `{id, projectId?}`。项目不存在、没有主目录或目录不可访问时返回 `project_not_resolved`，不得回退到 daemon 进程目录。它是受控写操作，要求在线 App Server；新 pairing 使用 `conversation.create` scope，已有仅授予 `turn.start` 的 pairing 也保持向后兼容。Mobile 收到结果前断线时不得自动重试。
 
 Mobile-facing `conversation.list` 的每条 `ConversationSummary` 同时包含 Desktop 从完整项目目录解析的 `projectId + projectName`。即使对应项目不在 Mobile 当前加载的首个项目分页中，进入会话详情也不需要再用有限项目列表反查名称；历史 thread 的项目 ID 缺失或失效时，Desktop 使用 cwd/environment workspace roots 恢复归属。
 
@@ -64,6 +64,18 @@ Mobile control 响应序列化后上限为 512 KiB。时间线超预算时以同
 CLI 对应提供 daemon、instance、conversation、turn、action、catalog、traffic、通用 `call`、`ui`、`self-test`、install/uninstall 和 version 命令。CLI 通过本机受保护管理 Pipe 调用，不自行启动第二个 App Server。
 
 Provider capabilities 当前包含 history、live stream、text/image input、approval、question、interrupt、steer、model/reasoning selection、permission mode 和 desktop mirror。Codex 是唯一 driver；部分能力标志表示协议边界，不代表所有 provider 已实现。
+
+### 会话读取兼容与写入版本
+
+Mobile 快照携带可选 `capabilities.queue`；缺失按支持处理，`false` 表示当前会话的 provider 明确不支持队列，客户端不显示队列编辑且运行中保留草稿。普通队列读取错误不会被转换为空队列。
+
+Timeline 优先调用 `thread/items/list`。仅官方 JSON-RPC `-32601` 方法不支持错误触发 `thread/read(includeTurns=true)` 回退，按 Turn/item 原始顺序展开，再按最近项优先返回。成功的兼容后端只缓存到当前实例进程代次和 thread；空会话的暂时不支持不缓存为永久后端。原生页继续使用 provider cursor；兼容 cursor 使用 `wa:history:` 前缀、base64url JSON，携带版本 1、backend、Agent/thread、Turn/item 锚点，不携带正文，最长 4096 字符。归属错误返回 `invalid_params`，锚点删除或原生后端变更返回 `cursor_expired`，Mobile 重新加载最新页。大内容定位和引用重签复用同一后端；兼容读取需要完整 provider history，但 Mobile 响应、预览和正文分块限制保持不变。
+
+仅 daemon 在当前进程中确认刚创建、尚未提交过输入、metadata 不运行、没有待启动或活跃 Turn 的会话，才允许将明确的无 rollout 错误或 `list_turns is not supported yet` 转为空 timeline。历史路径须不存在或经最多 1 MiB 的只读检查确认文件仅含 `session_meta`；有任何其他记录、读取失败或已有会话均保留错误。队列仅在相同边界下将无 rollout 错误转换为空结果。首次输入提交即撤销空会话资格，不重放任务。
+
+快照在读取前后比较业务 revision，最多共读取三次；仍有业务变化时返回 `snapshot_unstable`。发送、设置和队列控制写入按 thread 串行；启动 Turn 时在实例锁内检查版本、busy/action 并建立 pending 标记，provider 错误、取消或超时清理标记，成功响应或通知转为 active。官方 Desktop 请求继续由 App Server 仲裁，不承诺跨所有 frontend 的官方 CAS。
+
+业务 revision 与订阅 sequence 的区别由 [JSON-RPC 会话设计](../json-rpc-and-actions/design.md) 定义，持久化恢复由 [存储设计](../persistence-and-security/design.md) 定义。日志只新增 request/Agent/thread 标识和状态，不记录 prompt。
 
 ## State and persistence
 
@@ -100,6 +112,7 @@ Provider capabilities 当前包含 history、live stream、text/image input、ap
 - metadata/timeline DTO、结构化 summary、本地化边界、opaque cursor、自适应页大小、UTF-8 内容分块和引用越权/过期/重新签发测试。
 - queue DTO 路径脱敏、文字更新保留非文字输入、四种 provider 方法映射、阻塞 action 门禁和 `turn.start` scope 测试。
 - plan/default 配置投影、重启恢复、成功 Plan 门禁、计划身份/revision/action 冲突、模式切换和 `turn.start` scope 复用测试。
+- Mobile 新建会话只传项目 ID；Desktop 注入 provider 项目主目录，并验证真实 App Server 返回的 thread 保持同一项目归属。
 - Origin、CSRF、一次性 token、控制暂停和慢订阅者测试。
 
 ## Documentation update triggers

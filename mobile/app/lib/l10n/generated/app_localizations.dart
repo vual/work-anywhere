@@ -100,6 +100,18 @@ abstract class AppLocalizations {
     Locale('zh', 'CN'),
   ];
 
+  /// No description provided for @conversationChangedRetry.
+  ///
+  /// In zh, this message translates to:
+  /// **'会话状态已变化，请重试'**
+  String get conversationChangedRetry;
+
+  /// No description provided for @queueUnavailableWait.
+  ///
+  /// In zh, this message translates to:
+  /// **'此会话暂不支持消息排队，请等待当前任务结束'**
+  String get queueUnavailableWait;
+
   /// No description provided for @appTitle.
   ///
   /// In zh, this message translates to:

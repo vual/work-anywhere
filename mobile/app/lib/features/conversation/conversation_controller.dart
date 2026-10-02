@@ -14,6 +14,8 @@ class ConversationState {
     this.planConfirmation,
     this.olderCursor,
     this.revision = 0,
+    this.hasSnapshot = false,
+    this.queueAvailable = true,
     this.sequence = 0,
     this.loading = false,
     this.loadingOlder = false,
@@ -30,6 +32,8 @@ class ConversationState {
   final Map<String, dynamic>? planConfirmation;
   final String? olderCursor;
   final int revision;
+  final bool hasSnapshot;
+  final bool queueAvailable;
   final int sequence;
   final bool loading;
   final bool loadingOlder;
@@ -62,8 +66,17 @@ class ConversationController extends ChangeNotifier {
   ConversationState _state = const ConversationState();
   ConversationSettings? _settings;
   bool _disposed = false;
+  Future<bool>? _snapshotRefresh;
+  bool get isCurrent =>
+      !_disposed &&
+      (daemonId == null ||
+          (daemonIdProvider?.call() ?? daemonId) == daemonId) &&
+      (selectionGeneration == null ||
+          (selectionGenerationProvider?.call() ?? selectionGeneration) ==
+              selectionGeneration);
   bool _syncing = false;
   bool _loadedOlder = false;
+  bool _resetTimelineOnNextSnapshot = false;
   bool _eventRefreshRunning = false;
   bool _eventRefreshPending = false;
   bool _actionRefreshRunning = false;
@@ -166,6 +179,8 @@ class ConversationController extends ChangeNotifier {
       planConfirmation: _state.planConfirmation,
       olderCursor: _state.olderCursor,
       revision: _state.revision,
+      hasSnapshot: _state.hasSnapshot,
+      queueAvailable: _state.queueAvailable,
       sequence: _state.sequence,
       loading: _state.loading,
       loadingOlder: _state.loadingOlder,
@@ -195,6 +210,10 @@ class ConversationController extends ChangeNotifier {
     if (_eventRefreshRunning || _disposed) return;
     _eventRefreshRunning = true;
     try {
+      // Events may arrive after the in-flight snapshot was assembled. Keep one
+      // follow-up read so coalescing cannot lose those updates.
+      final inFlight = _snapshotRefresh;
+      if (inFlight != null) await inFlight;
       while (_eventRefreshPending && !_disposed) {
         _eventRefreshPending = false;
         await refreshConversation();
@@ -259,6 +278,7 @@ class ConversationController extends ChangeNotifier {
   }
 
   Future<void> load() async {
+    if (!isCurrent) return;
     _state = ConversationState(
       metadata: _state.metadata,
       items: _state.items,
@@ -267,12 +287,15 @@ class ConversationController extends ChangeNotifier {
       planConfirmation: _state.planConfirmation,
       olderCursor: _state.olderCursor,
       revision: _state.revision,
+      hasSnapshot: _state.hasSnapshot,
+      queueAvailable: _state.queueAvailable,
       sequence: _state.sequence,
       loading: true,
       online: _state.online,
     );
     _notify();
     await Future.wait([refreshConversation(), refreshActions()]);
+    if (!isCurrent) return;
     _state = ConversationState(
       metadata: _state.metadata,
       items: _state.items,
@@ -281,6 +304,8 @@ class ConversationController extends ChangeNotifier {
       planConfirmation: _state.planConfirmation,
       olderCursor: _state.olderCursor,
       revision: _state.revision,
+      hasSnapshot: _state.hasSnapshot,
+      queueAvailable: _state.queueAvailable,
       sequence: _state.sequence,
       online: _state.online,
       bodyError: _state.bodyError,
@@ -290,18 +315,24 @@ class ConversationController extends ChangeNotifier {
     _notify();
   }
 
-  Future<void> refreshConversation() async {
+  Future<bool> refreshConversation() {
+    if (!isCurrent) return Future.value(false);
+    // Background events and writes await the same authoritative read. Starting
+    // another read must not invalidate a successful send prerequisite.
+    return _snapshotRefresh ??= _readConversation().whenComplete(() {
+      _snapshotRefresh = null;
+    });
+  }
+
+  Future<bool> _readConversation() async {
     try {
       final envelope = await gateway.call('conversation.read', {
         'agentId': agentId,
         'threadId': threadId,
         'limit': 20,
       });
+      if (!isCurrent) return false;
       final result = envelope['result'] as Map<String, dynamic>? ?? const {};
-      final settings = result['settings'];
-      if (settings is Map<String, dynamic>) {
-        _settings = ConversationSettings.fromJson(settings);
-      }
       final timeline = result['timeline'] as Map<String, dynamic>? ?? const {};
       final queue = result['queue'] as Map<String, dynamic>? ?? const {};
       final newestFirst = _maps(timeline['items']);
@@ -309,11 +340,18 @@ class ConversationController extends ChangeNotifier {
           .map(QueuedSubmission.fromJson)
           .toList(growable: false);
       final sequence = (result['sequence'] as num?)?.toInt() ?? 0;
-      if (sequence < _state.sequence) return;
+      if (sequence < _state.sequence) return false;
+      final settings = result['settings'];
+      if (settings is Map<String, dynamic>) {
+        _settings = ConversationSettings.fromJson(settings);
+      }
       final latest = _dedupe(newestFirst.reversed);
       _state = ConversationState(
         metadata: result['conversation'] as Map<String, dynamic>?,
-        items: _mergeLatest(_state.items, latest),
+        items: _mergeLatest(
+          _resetTimelineOnNextSnapshot ? const [] : _state.items,
+          latest,
+        ),
         queuedSubmissions: queuedSubmissions,
         actions: _state.actions,
         planConfirmation: result['planConfirmation'] as Map<String, dynamic>?,
@@ -321,12 +359,20 @@ class ConversationController extends ChangeNotifier {
             ? _state.olderCursor
             : timeline['nextCursor'] as String?,
         revision: (result['revision'] as num?)?.toInt() ?? 0,
+        hasSnapshot: true,
+        queueAvailable:
+            (result['capabilities'] as Map<String, dynamic>?)?['queue'] !=
+            false,
         sequence: sequence,
         loading: _state.loading,
         online: true,
         actionError: _state.actionError,
       );
+      _resetTimelineOnNextSnapshot = false;
+      _notify();
+      return true;
     } catch (error) {
+      if (!isCurrent) return false;
       _state = ConversationState(
         metadata: _state.metadata,
         items: _state.items,
@@ -335,6 +381,8 @@ class ConversationController extends ChangeNotifier {
         planConfirmation: _state.planConfirmation,
         olderCursor: _state.olderCursor,
         revision: _state.revision,
+        hasSnapshot: _state.hasSnapshot,
+        queueAvailable: _state.queueAvailable,
         sequence: _state.sequence,
         loading: _state.loading,
         online: error is CoreFault && error.code == 'peer_offline'
@@ -345,11 +393,30 @@ class ConversationController extends ChangeNotifier {
       );
     }
     _notify();
+    return false;
+  }
+
+  Future<void> requireFreshSnapshot() async {
+    final synchronized = await refreshConversation();
+    if (!isCurrent) {
+      throw CoreFault('selection_changed', 'The selected conversation changed');
+    }
+    if (!synchronized) {
+      throw _state.bodyError ??
+          CoreFault(
+            'snapshot_unavailable',
+            'Could not synchronize the conversation',
+          );
+    }
+    if (!isCurrent || !_state.hasSnapshot) {
+      throw CoreFault('selection_changed', 'The selected conversation changed');
+    }
   }
 
   Future<void> refreshActions() async {
     try {
       final envelope = await gateway.call('action.list', {'agentId': agentId});
+      if (!isCurrent) return;
       final actions = _maps(envelope['result'])
           .where(
             (item) =>
@@ -365,6 +432,8 @@ class ConversationController extends ChangeNotifier {
         planConfirmation: _state.planConfirmation,
         olderCursor: _state.olderCursor,
         revision: _state.revision,
+        hasSnapshot: _state.hasSnapshot,
+        queueAvailable: _state.queueAvailable,
         sequence: _state.sequence,
         loading: _state.loading,
         online: true,
@@ -372,6 +441,7 @@ class ConversationController extends ChangeNotifier {
         olderError: _state.olderError,
       );
     } catch (error) {
+      if (!isCurrent) return;
       _state = ConversationState(
         metadata: _state.metadata,
         items: _state.items,
@@ -380,6 +450,8 @@ class ConversationController extends ChangeNotifier {
         planConfirmation: _state.planConfirmation,
         olderCursor: _state.olderCursor,
         revision: _state.revision,
+        hasSnapshot: _state.hasSnapshot,
+        queueAvailable: _state.queueAvailable,
         sequence: _state.sequence,
         loading: _state.loading,
         online: error is CoreFault && error.code == 'peer_offline'
@@ -404,6 +476,8 @@ class ConversationController extends ChangeNotifier {
       planConfirmation: _state.planConfirmation,
       olderCursor: cursor,
       revision: _state.revision,
+      hasSnapshot: _state.hasSnapshot,
+      queueAvailable: _state.queueAvailable,
       sequence: _state.sequence,
       loadingOlder: true,
       online: _state.online,
@@ -418,6 +492,7 @@ class ConversationController extends ChangeNotifier {
         'cursor': cursor,
         'limit': 20,
       });
+      if (!isCurrent) return;
       final page = envelope['result'] as Map<String, dynamic>? ?? const {};
       final older = _maps(page['items']).reversed;
       _loadedOlder = true;
@@ -429,12 +504,21 @@ class ConversationController extends ChangeNotifier {
         planConfirmation: _state.planConfirmation,
         olderCursor: page['nextCursor'] as String?,
         revision: _state.revision,
+        hasSnapshot: _state.hasSnapshot,
+        queueAvailable: _state.queueAvailable,
         sequence: _state.sequence,
         online: true,
         bodyError: _state.bodyError,
         actionError: _state.actionError,
       );
     } catch (error) {
+      if (!isCurrent) return;
+      if (error is CoreFault && error.code == 'cursor_expired') {
+        _loadedOlder = false;
+        _resetTimelineOnNextSnapshot = true;
+        await refreshConversation();
+        return;
+      }
       _state = ConversationState(
         metadata: _state.metadata,
         items: _state.items,
@@ -443,6 +527,8 @@ class ConversationController extends ChangeNotifier {
         planConfirmation: _state.planConfirmation,
         olderCursor: cursor,
         revision: _state.revision,
+        hasSnapshot: _state.hasSnapshot,
+        queueAvailable: _state.queueAvailable,
         sequence: _state.sequence,
         online: error is CoreFault && error.code == 'peer_offline'
             ? false

@@ -222,8 +222,14 @@ func (s *Store) UpsertInstance(value InstanceRecord) error {
 func (s *Store) UpsertConversation(instanceID, conversationID, status string, revision, sequence int64) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := s.db.Exec(`INSERT INTO conversations(instance_id,conversation_id,status,revision,sequence,created_at,updated_at) VALUES(?,?,?,?,?,?,?)
-		ON CONFLICT(instance_id,conversation_id) DO UPDATE SET status=excluded.status,revision=excluded.revision,sequence=excluded.sequence,updated_at=excluded.updated_at`, instanceID, conversationID, status, revision, sequence, now, now)
+		ON CONFLICT(instance_id,conversation_id) DO UPDATE SET status=CASE WHEN excluded.sequence >= conversations.sequence THEN excluded.status ELSE conversations.status END,revision=MAX(conversations.revision,excluded.revision),sequence=MAX(conversations.sequence,excluded.sequence),updated_at=MAX(conversations.updated_at,excluded.updated_at)`, instanceID, conversationID, status, revision, sequence, now, now)
 	return err
+}
+
+// ConversationVersion restores independently persisted business and event versions.
+func (s *Store) ConversationVersion(instanceID, conversationID string) (status string, revision, sequence int64) {
+	_ = s.db.QueryRow(`SELECT status,revision,sequence FROM conversations WHERE instance_id=? AND conversation_id=?`, instanceID, conversationID).Scan(&status, &revision, &sequence)
+	return
 }
 
 func (s *Store) UpsertTurn(instanceID, conversationID, turnID, status string) error {

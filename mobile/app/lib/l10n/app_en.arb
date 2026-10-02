@@ -1,4 +1,6 @@
 {
+  "conversationChangedRetry": "The conversation changed. Please retry.",
+  "queueUnavailableWait": "Queued messages are unavailable for this conversation. Wait for the current task to finish.",
   "@@locale": "en",
   "appTitle": "Work Any Where",
   "continueOnPhone": "Continue your computer work from your phone",

@@ -119,6 +119,8 @@ mobile/scripts/build-android.ps1    Android tester APK
 
 每个 phase 的 exit criteria 是进入下一阶段的必要条件。跨模块改动分别运行 Desktop 和 Relay 的仓库规定验证；Mobile scaffold 后运行 analyze/test/build、真机 E2E 和生成物 no-diff。文档链接与命令在每个阶段结束时一并检查。
 
+会话发送修复验收包含：首次发送同步期间连续收到 MCP 事件仍只提交一个 Turn、后续发送重新读取快照、共享读取失败仍阻止写入、选择改变后丢弃迟到结果、首次快照失败后复用会话 ID、MCP 启动通知不误触业务版本、并发启动最多一次、真实业务冲突保留草稿、按会话读取回退、空历史、cursor 失效、大内容及队列降级。真实模型互操作使用 [Desktop opt-in 验证入口](../../../desktop/docs/build-install-and-compatibility/design.md)，不能以 schema fixture 或 mock 测试替代。Android debug APK 和 Windows exe 的版本、源码状态及 SHA-256 随构建交付记录；物理手机完整 E2E 和 iOS 验收仍是独立未完成项。
+
 ## 文档更新触发
 
 阶段依赖、范围、Daemon/Agent/Project/Bot 模型、列表数量、分页搜索、Provider 优先级、发布门槛、技术栈、目标平台、CI、DTO/vector 策略或验收方式变化时直接重写本文档，并同步 Mobile README、相关功能设计与 Relay remaining plan。

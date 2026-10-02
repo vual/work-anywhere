@@ -437,14 +437,14 @@ func TestMobileConversationSettingsUpdateCommitsOnlyAfterProviderSuccess(t *test
 	}
 
 	instance.activeTurns["thread-1"] = "turn-running"
-	runningRequest := json.RawMessage(`{"threadId":"thread-1","expectedRevision":3,"settings":{"mode":"plan","modelId":"model-a","reasoningEffort":"high","permissionModeId":"autoReview"}}`)
+	runningRequest := json.RawMessage(`{"threadId":"thread-1","expectedRevision":4,"settings":{"mode":"plan","modelId":"model-a","reasoningEffort":"high","permissionModeId":"autoReview"}}`)
 	if _, err = instance.manager.mobileConversationSettingsUpdate(instance, runningRequest); err != nil {
 		t.Fatalf("settings update should be accepted for a running turn: %v", err)
 	}
 	delete(instance.activeTurns, "thread-1")
 
 	failUpdate.Store(true)
-	request = json.RawMessage(`{"threadId":"thread-1","expectedRevision":3,"settings":{"mode":"default","modelId":"model-a","reasoningEffort":"high","permissionModeId":"readOnly"}}`)
+	request = json.RawMessage(`{"threadId":"thread-1","expectedRevision":5,"settings":{"mode":"default","modelId":"model-a","reasoningEffort":"high","permissionModeId":"readOnly"}}`)
 	if _, err = instance.manager.mobileConversationSettingsUpdate(instance, request); err == nil {
 		t.Fatal("provider rejection must fail the settings update")
 	}
@@ -969,6 +969,20 @@ func TestNormalizeConversationCreate(t *testing.T) {
 	}
 	if _, err := normalizeConversationCreate(json.RawMessage(`{"thread":{}}`)); err == nil {
 		t.Fatal("expected missing thread id to be rejected")
+	}
+}
+
+func TestMobileConversationStartParamsAddsResolvedProjectRoot(t *testing.T) {
+	params, err := mobileConversationStartParams(json.RawMessage(`{"projectId":"p1","cwd":"C:/untrusted"}`), `D:\CodeSpace\work-anywhere`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err = json.Unmarshal(params, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["projectId"] != "p1" || decoded["cwd"] != `D:\CodeSpace\work-anywhere` {
+		t.Fatalf("unexpected thread/start params: %#v", decoded)
 	}
 }
 
