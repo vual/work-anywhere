@@ -5,25 +5,25 @@
   <p><strong>简体中文</strong> | <a href="README.en.md">English</a></p>
 </div>
 
-Desktop 支持无人工 token 的 Relay 自助接入：部署者显式设置 `ENROLLMENT_MODE=self_service` 后，用户在本机管理页填写 Relay 地址并点击“启用远程访问”，自动完成签名注册和连接，再扫码并在电脑批准手机。Relay 默认仍为 `invite`；已有身份和配对升级后继续使用。协议与部署步骤见 [自助注册设计](relay/docs/daemon-enrollment/design.md) 和 [Relay 入口](relay/README.md)。
+Work Anywhere（WAW）让你在手机上管理电脑端的官方 ChatGPT Codex Desktop：查看任务进度、继续会话、在已有项目中新建对话，以及处理审批和问题，离开电脑也能继续推进工作。
 
-Work Anywhere(WAW) 的目标是让你在手机上也能实时与电脑端 ChatGPT Codex Desktop 进行交互，让你离开电脑时，能够在手机上随时掌控任务运行状态，或者发出新的指令。
+**Windows Desktop → Relay → Android 的主要远程控制功能已实现。** 电脑端继续使用官方 Codex Desktop，WAW 提供本机 Bridge、加密中继和手机工作台。无需注册 WAW 账号；Codex 的认证和服务访问仍由官方 Desktop 的配置决定。
 
-适合谁：
-- 喜欢使用官方ChatGPT Codex桌面端，但是没有ChatGPT账号，或者你有账号，但是苦于网络问题，官方Remote功能时常连不上。
-- 需要随时在手机上掌控电脑端ChatGPT Codex任务运行状态，并且需要能够派发新的任务。
+## 模块状态
 
-项目由三个相互独立的模块组成：
+| 模块 | 已实现能力 | 当前状态 |
+| --- | --- | --- |
+| [Desktop](desktop/README.md) | 官方 App Server 托管、多实例、本机管理页与托盘、远程控制、二维码配对 | 支持 Windows x64 |
+| [Relay](relay/README.md) | 设备认证、邀请/自助注册、配对、密文路由、PostgreSQL 持久化 | 单节点 V1 已实现，可通过 Docker Compose 部署 |
+| [Mobile](mobile/README.md) | 多电脑工作台、项目与会话、实时时间线、文字/图片输入、问题与审批、消息排队 | Android 实现和测试 APK 构建已提供，发布验收尚未完成 |
 
-- `desktop`：连接官方 ChatGPT Codex Desktop，托管官方 Codex App Server，并提供本机控制能力。
-- `relay`：在 Desktop daemon 与移动端之间中继加密连接、状态和通知。
-- `mobile`：查看任务进度、处理审批/问题并继续输入；Android-first Flutter/Go Core、配对流程和工作台已建立，当前仍处于未发布的测试前阶段。
+## 快速上手
 
-**Desktop V1 与单节点 Relay V1 已实现**。Desktop 已包含 Relay 出站连接、设备注册、真实二维码配对、Noise 端到端加密和 Mobile control adapter；Relay 可使用 Docker Compose 与 PostgreSQL 部署。Mobile 已建立 Android-first Flutter 应用、Go endpoint core、Pigeon/Keystore host 和 tester APK CI，会话输入区可按 thread 选择计划模式、模型、思考等级和四种执行权限，并可在 Turn 运行时继续输入、排队及编辑/立即引导/取消排队消息；`request_user_input` 已使用稳定问题 DTO、待处理提醒和多问题回答弹窗，命令审批兼容允许/拒绝。真机、iOS、push、完整 approval DTO 与发布验收尚未完成，浏览器 Mobile simulator 仍仅用于协议联调。
-
-Mobile 会话同步使用 metadata snapshot、最近 20 项 timeline 分页和实时增量恢复；旧历史通过 opaque cursor 加载，超过 64 KiB 的单个正文 block 通过临时引用按需分块查看。Desktop control 响应限制为 512 KiB，Relay 继续保持 1 MiB routed payload 上限。
-
-Mobile 发送前同步权威快照，版本冲突保留草稿；daemon 按会话兼容历史读取，队列能力以 provider 实际支持为准。
+1. 安装或构建 Desktop，执行 `self-test`、`install` 后完全重启 Codex Desktop，详见[安装部署](#安装部署)。
+2. 使用 Docker Compose 和 PostgreSQL 部署 Relay，配置手机可访问的地址；公网部署建议使用 HTTPS，详见 [Relay 指南](relay/README.md)。
+3. 执行 `work-anywhere.exe ui` 打开电脑管理页，填写 Relay 地址并启用远程访问。默认 `invite` 模式需要邀请码；部署者可显式设置 `ENROLLMENT_MODE=self_service`，启用自动签名注册。
+4. 构建 [Android 测试应用](mobile/README.md#build-and-verification)，扫描电脑端配对二维码，再在电脑上批准手机。
+5. 在手机上选择电脑和项目，查看任务、继续会话或新建对话。
 
 ## 当前能力
 
@@ -43,10 +43,22 @@ Desktop V1 提供：
 
 Relay V1 提供：
 
-- Ed25519 设备认证、一次性 daemon enrollment、显式二维码配对和逐边 scope。
+- Ed25519 设备认证、邀请或签名自助注册、显式二维码配对和逐边 scope。
 - 单节点在线密文路由、Noise KK 端到端加密和 Desktop remote control 闭环。
 - PostgreSQL 最小持久化、River push job、APNs/FCM adapters、健康检查和 Prometheus 指标。
 - Linux container 与本机 Docker Compose 部署；开发浏览器 Mobile simulator 可完成真实配对和加密调用。
+
+Android Mobile 提供：
+
+- 多电脑扫码配对与切换，以及排序、启用/禁用、名称和 Relay 地址管理。
+- 项目与会话浏览、搜索、实时增量更新、历史分页和大内容按需读取。
+- 在已有 Codex 项目中新建对话、发送文字/图片和中断 Turn。
+- 按会话选择计划模式、模型、思考等级和执行权限。
+- 在 Turn 运行中继续输入，并按 provider 支持编辑、立即引导或取消排队消息。
+- 多问题回答弹窗、待处理提醒和命令审批的允许/拒绝操作。
+- 中英文界面，以及 Android Keystore 保护的配对凭据存储。
+
+Mobile 发送前同步 Desktop 权威状态，版本冲突时保留草稿。iOS、手机推送、完整 approval DTO、应用锁和生产发布验收尚未完成，详见 [Mobile 指南](mobile/README.md)。
 
 ## 总体架构
 
@@ -213,10 +225,11 @@ cd D:\CodeSpace\work-anywhere\relay
 Copy-Item .env.example .env
 # 按 relay/README.md 生成 RELAY_DATA_KEY 后启动
 docker compose up --build -d
+# invite 模式：创建邀请码；self_service 模式无需此步骤。
 docker compose exec relay /relay enrollment create --ttl 24h --uses 1
 ```
 
-然后在 Desktop 管理页配置 Relay 地址并生成配对二维码，在 Mobile 应用中扫码，回到 Desktop 批准配对。完整命令、真机网络要求和故障排查见 [`relay/README.md`](relay/README.md) 与 [`mobile/README.md`](mobile/README.md)。当前 Mobile 仍是测试客户端，不能作为生产应用发布。
+然后在 Desktop 管理页配置 Relay 地址并启用远程访问（`invite` 模式填写上方邀请码），生成配对二维码，在 Mobile 应用中扫码，回到 Desktop 批准配对。完整命令、真机网络要求和故障排查见 [`relay/README.md`](relay/README.md) 与 [`mobile/README.md`](mobile/README.md)。当前 Mobile 仍是测试客户端，不能作为生产应用发布。
 
 ## 使用方式
 

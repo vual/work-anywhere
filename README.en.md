@@ -5,28 +5,25 @@
   <p><strong>English</strong> | <a href="README.md">简体中文</a></p>
 </div>
 
-Desktop supports Relay enrollment without manually issued tokens. Deployers explicitly set `ENROLLMENT_MODE=self_service`; users enter the Relay origin and enable remote access in the local administration page, then scan the pairing QR and approve the phone on the computer. Signed device enrollment and connection happen automatically. The default remains `invite`, and existing identities and pairings survive upgrades. See the [enrollment design](relay/docs/daemon-enrollment/design.md) and [Relay guide](relay/README.md).
+Work Anywhere (WAW) lets you manage the official ChatGPT Codex Desktop from your phone: follow running tasks, continue conversations, create conversations within existing projects, and respond to approvals and questions while away from your computer.
 
-Work Anywhere (WAW) aims to let you interact with ChatGPT Codex Desktop on your computer in real time from your phone, so you can monitor and control running tasks or issue new instructions whenever you are away from your computer.
+The main Windows Desktop → Relay → Android control flow is implemented. The official Codex Desktop remains the desktop interface; WAW adds a local Bridge, an encrypted relay, and a mobile workspace. You do not need a WAW account. Codex authentication and service access still depend on your official Desktop configuration.
 
-Who is it for?
+## Module status
 
-- People who prefer the official ChatGPT Codex Desktop but either do not have a ChatGPT account or have an account but frequently cannot connect to the official Remote feature because of network issues.
-- People who need to monitor ChatGPT Codex tasks on their computer from a phone and dispatch new tasks while away.
+| Module | Implemented capabilities | Status |
+| --- | --- | --- |
+| [Desktop](desktop/README.md) | Official App Server supervision, multiple instances, local administration and tray, remote control, QR pairing | Windows x64 supported |
+| [Relay](relay/README.md) | Device authentication, invitation/self-service enrollment, pairing, encrypted routing, PostgreSQL persistence | Single-node V1 implemented; Docker Compose deployment |
+| [Mobile](mobile/README.md) | Multi-computer workspace, projects and conversations, live timeline, text/image input, questions, approvals, and queued messages | Android implementation and tester APK build available; release validation incomplete |
 
-The official ChatGPT Codex Desktop remains the only desktop presentation layer; this project does not introduce a separate desktop chat UI.
+## Getting started
 
-The complete product is organized into three independent modules:
-
-- `desktop`: integrates with the official ChatGPT Codex Desktop, supervises official Codex App Server processes, and exposes local control capabilities.
-- `relay`: relays encrypted connections, task state, and notifications between Desktop daemons and mobile clients.
-- `mobile`: displays task progress, handles approvals and questions, and continues conversations; the Android-first Flutter/Go Core, pairing flow, and workspace are established but remain pre-release.
-
-**Desktop V1 and the single-node Relay V1 are implemented.** Desktop includes the outbound Relay connector, device enrollment, scannable QR pairing, Noise end-to-end encryption, and the Mobile control adapter. Relay can be deployed with Docker Compose and PostgreSQL. Mobile now has an Android-first Flutter app, Go endpoint core, Pigeon/Keystore host, and tester-APK CI; its conversation composer supports per-thread plan mode, model, reasoning-effort, and four execution-permission choices, plus continued input while a turn is running with queued-message edit, guide-now, and cancel controls. `request_user_input` now uses a stable question DTO, attention indicators, and an all-questions response dialog, while command approvals retain allow/deny handling. Physical-device, iOS, push, complete approval DTO, and release validation remain incomplete. The browser Mobile simulator is still only for protocol development.
-
-Mobile conversation sync uses a metadata snapshot, a recent 20-item timeline page, and incremental recovery. Older history is loaded with opaque cursors, while individual content blocks over 64 KiB are available on demand through temporary chunked references. Desktop control responses are capped at 512 KiB and Relay keeps its 1 MiB routed-payload limit.
-
-Mobile synchronizes an authoritative snapshot before sending and preserves drafts on version conflicts. The daemon adapts history reads per conversation, and queued input is available only where the provider supports it.
+1. Install or build Desktop, run `self-test`, then run `install` and fully restart Codex Desktop. See [Desktop installation](#installation-and-deployment).
+2. Deploy Relay with Docker Compose and PostgreSQL. Use a phone-reachable origin; public deployments should use HTTPS. See the [Relay guide](relay/README.md).
+3. Open the Desktop administration page with `work-anywhere.exe ui`, enter the Relay origin, and enable remote access. The default `invite` mode requires an invitation token; deployers can explicitly enable `ENROLLMENT_MODE=self_service` for automatic signed enrollment.
+4. Build the [Android test app](mobile/README.md#build-and-verification), scan the Desktop pairing QR, and approve the phone on the computer.
+5. Select a computer and project on your phone to view tasks, continue a conversation, or create a new one.
 
 ## Current capabilities
 
@@ -46,10 +43,22 @@ Desktop V1 provides:
 
 Relay V1 provides:
 
-- Ed25519 device authentication, one-time daemon enrollment, explicit QR pairing, and per-edge scopes.
+- Ed25519 device authentication, invitation or signed self-service enrollment, explicit QR pairing, and per-edge scopes.
 - Single-node online ciphertext routing, Noise KK end-to-end encryption, and the Desktop remote-control loop.
 - Minimal PostgreSQL persistence, River push jobs, APNs/FCM adapters, health checks, and Prometheus metrics.
 - A Linux container and local Docker Compose deployment; the browser Mobile simulator performs real pairing and encrypted control calls.
+
+Mobile for Android provides:
+
+- Pairing with multiple computers, switching between them, and managing their order, enabled state, names, and Relay origins.
+- Project and conversation navigation, search, live updates, paginated history, and on-demand large-content loading.
+- New conversations within existing Codex projects, text/image input, and Turn interruption.
+- Per-conversation plan mode, model, reasoning effort, and execution permissions.
+- Queued input during running Turns, including edit, guide-now, and cancel where supported by the provider.
+- Multi-question response dialogs, pending-action indicators, and allow/deny command approvals.
+- Chinese and English UI, with pairing credentials protected by Android Keystore.
+
+Mobile refreshes authoritative Desktop state before sending and preserves drafts on revision conflicts. iOS, mobile push, complete approval DTOs, application lock, and production release validation remain incomplete. See the [Mobile guide](mobile/README.md).
 
 ## Architecture
 
@@ -216,10 +225,11 @@ cd D:\CodeSpace\work-anywhere\relay
 Copy-Item .env.example .env
 # Generate RELAY_DATA_KEY as described in relay/README.md, then start Relay.
 docker compose up --build -d
+# invite mode: create a token; skip this step in self_service mode.
 docker compose exec relay /relay enrollment create --ttl 24h --uses 1
 ```
 
-Configure the Relay origin in the Desktop administration page, generate a pairing QR code, scan it in the Mobile app, and approve the pending pairing from Desktop. See [`relay/README.md`](relay/README.md) and [`mobile/README.md`](mobile/README.md) for the full commands, device-network requirements, and troubleshooting. Mobile is still a test client and is not ready for production release.
+Configure the Relay origin in the Desktop administration page and enable remote access (enter the token above in `invite` mode), generate a pairing QR code, scan it in the Mobile app, and approve the pending pairing from Desktop. See [`relay/README.md`](relay/README.md) and [`mobile/README.md`](mobile/README.md) for the full commands, device-network requirements, and troubleshooting. Mobile is still a test client and is not ready for production release.
 
 ## Usage
 
