@@ -31,7 +31,7 @@ extension WawThemeColors on ThemeData {
       : const Color(0xFFF1F1F3);
   Color get mutedInk => brightness == Brightness.dark
       ? const Color(0xFFA7A7AA)
-      : const Color(0xFF8D8D92);
+      : const Color(0xFF68686D);
   Color get userBubble => brightness == Brightness.dark
       ? const Color(0xFF17365C)
       : const Color(0xFFE4F0FF);
@@ -78,7 +78,7 @@ abstract final class WawCompact {
 
 ThemeData buildLightTheme() => _theme(
   Brightness.light,
-  Colors.white,
+  const Color(0xFFF3F3F3),
   const Color(0xFF111111),
   const Color(0xFFF2F2F4),
 );
@@ -93,11 +93,32 @@ ThemeData _theme(Brightness brightness, Color surface, Color ink, Color soft) {
   final floatingSurface = brightness == Brightness.dark
       ? const Color(0xFF202124)
       : Colors.white;
-  final scheme = ColorScheme.fromSeed(
-    seedColor: wawBlue,
-    brightness: brightness,
-    surface: surface,
-  );
+  final scheme =
+      ColorScheme.fromSeed(
+        seedColor: wawBlue,
+        brightness: brightness,
+        surface: floatingSurface,
+      ).copyWith(
+        onSurface: ink,
+        onSurfaceVariant: brightness == Brightness.dark
+            ? const Color(0xFFB8B8BD)
+            : const Color(0xFF68686D),
+        surfaceContainerLowest: surface,
+        surfaceContainerLow: floatingSurface,
+        surfaceContainer: soft,
+        surfaceContainerHigh: brightness == Brightness.dark
+            ? const Color(0xFF2D2E32)
+            : const Color(0xFFEAEAEA),
+        surfaceContainerHighest: brightness == Brightness.dark
+            ? const Color(0xFF36373B)
+            : const Color(0xFFE3E3E3),
+        outline: brightness == Brightness.dark
+            ? const Color(0xFF74757B)
+            : const Color(0xFF9A9A9F),
+        outlineVariant: brightness == Brightness.dark
+            ? const Color(0xFF3D3E43)
+            : const Color(0xFFDEDEDE),
+      );
   return ThemeData(
     useMaterial3: true,
     brightness: brightness,
@@ -117,12 +138,29 @@ ThemeData _theme(Brightness brightness, Color surface, Color ink, Color soft) {
       systemOverlayStyle: wawSystemUiOverlayStyle(brightness),
     ),
     cardColor: soft,
+    filledButtonTheme: FilledButtonThemeData(
+      style: FilledButton.styleFrom(
+        backgroundColor: ink,
+        foregroundColor: floatingSurface,
+        disabledBackgroundColor: scheme.surfaceContainerHighest,
+        disabledForegroundColor: scheme.onSurfaceVariant,
+      ),
+    ),
     splashFactory: InkSparkle.splashFactory,
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: soft,
+      hintStyle: TextStyle(color: scheme.onSurfaceVariant),
       border: OutlineInputBorder(
-        borderSide: BorderSide.none,
+        borderSide: BorderSide(color: scheme.outlineVariant),
+        borderRadius: BorderRadius.circular(28),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderSide: BorderSide(color: scheme.outlineVariant),
+        borderRadius: BorderRadius.circular(28),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderSide: BorderSide(color: ink, width: 1.5),
         borderRadius: BorderRadius.circular(28),
       ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),

@@ -164,7 +164,7 @@ class WorkspaceScreen extends ConsumerWidget {
                             ),
                           ),
                         ),
-                      const SliverToBoxAdapter(child: SizedBox(height: 88)),
+                      const SliverToBoxAdapter(child: SizedBox(height: 12)),
                     ],
                   ],
                 ),
@@ -173,23 +173,35 @@ class WorkspaceScreen extends ConsumerWidget {
           ],
         ),
       ),
-      bottomSheet: SafeArea(
-        minimum: const EdgeInsets.fromLTRB(
-          WawCompact.horizontalPadding,
-          6,
-          WawCompact.horizontalPadding,
-          14,
+      bottomNavigationBar: Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(context).bottom,
         ),
-        child: WawFloatingSurface(
-          child: TextField(
-            onChanged: ref.read(workspaceProvider.notifier).setSearch,
-            decoration: InputDecoration(
-              filled: false,
-              prefixIcon: const Icon(Icons.search_rounded),
-              hintText: context.l10n.searchProjectsConversations,
-              border: InputBorder.none,
-              enabledBorder: InputBorder.none,
-              focusedBorder: InputBorder.none,
+        child: SafeArea(
+          top: false,
+          minimum: const EdgeInsets.fromLTRB(
+            WawCompact.horizontalPadding,
+            6,
+            WawCompact.horizontalPadding,
+            14,
+          ),
+          child: WawFloatingSurface(
+            child: TextField(
+              style: WawCompact.body,
+              onChanged: ref.read(workspaceProvider.notifier).setSearch,
+              decoration: InputDecoration(
+                filled: false,
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
+                prefixIcon: const Icon(Icons.search_rounded, size: 22),
+                hintText: context.l10n.searchProjectsConversations,
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+              ),
             ),
           ),
         ),
@@ -382,8 +394,14 @@ class _TopBar extends ConsumerWidget {
                             vertical: 8,
                           ),
                           decoration: BoxDecoration(
-                            color: Theme.of(context).cardColor,
+                            color: Theme.of(context).floatingSurface,
+                            border: Border.all(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .outlineVariant,
+                            ),
                             borderRadius: BorderRadius.circular(28),
+                            boxShadow: Theme.of(context).floatingShadow,
                           ),
                           child: Row(
                             children: [

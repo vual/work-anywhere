@@ -76,5 +76,9 @@ void main() {
     expect(button.tooltip, '新建对话');
     expect(find.byIcon(Icons.edit_outlined), findsOneWidget);
     expect(find.text('新建对话'), findsNothing);
+    final back = find.widgetWithIcon(IconButton, Icons.arrow_back_rounded);
+    expect(tester.getSize(back), const Size(48, 48));
+    expect(tester.getTopLeft(back), const Offset(12, 12));
+    expect((tester.widget<IconButton>(back).icon as Icon).size, 24);
   });
 }

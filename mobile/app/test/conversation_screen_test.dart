@@ -1070,13 +1070,24 @@ void main() {
     final appBar = tester.widget<AppBar>(find.byType(AppBar));
     final scaffold = tester.widget<Scaffold>(find.byType(Scaffold));
     final title = tester.widget<Text>(find.text('Command thread'));
-    expect(appBar.toolbarHeight, 60);
+    expect(appBar.toolbarHeight, 72);
     expect(scaffold.extendBodyBehindAppBar, isTrue);
     expect(appBar.backgroundColor?.a, closeTo(.72, .001));
     final backButton = tester.widget<IconButton>(
       find.widgetWithIcon(IconButton, Icons.arrow_back_rounded),
     );
     expect(backButton.style?.shape?.resolve({}), isA<CircleBorder>());
+    expect(
+      tester.getSize(find.widgetWithIcon(IconButton, Icons.arrow_back_rounded)),
+      const Size(48, 48),
+    );
+    expect(
+      tester.getTopLeft(
+        find.widgetWithIcon(IconButton, Icons.arrow_back_rounded),
+      ),
+      const Offset(12, 12),
+    );
+    expect((backButton.icon as Icon).size, 24);
     final timeline = tester.widget<ListView>(find.byType(ListView));
     expect((timeline.padding! as EdgeInsets).top, greaterThan(60));
     expect(title.style?.fontSize, 15);

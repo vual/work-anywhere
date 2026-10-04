@@ -23,7 +23,7 @@ const _maxImageCount = 10;
 const _maxImageBytes = 48 * 1024 * 1024;
 const _bottomFollowThreshold = 24.0;
 const _showJumpToBottomThreshold = 96.0;
-const _conversationToolbarHeight = 60.0;
+const _conversationToolbarHeight = WawBackButton.toolbarHeight;
 const _dismissedPlanConfirmationsKey = 'dismissedPlanConfirmations';
 
 @visibleForTesting
@@ -1441,15 +1441,10 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         toolbarHeight: _conversationToolbarHeight,
         backgroundColor: Theme.of(context).scaffoldBackgroundColor
             .withValues(alpha: .72),
-        leadingWidth: 64,
-        leading: Padding(
-          padding: const EdgeInsets.only(left: 12),
-          child: WawCircleButton(
-            size: 44,
-            icon: Icons.arrow_back_rounded,
-            tooltip: MaterialLocalizations.of(context).backButtonTooltip,
-            onPressed: () => Navigator.maybePop(context),
-          ),
+        leadingWidth: WawBackButton.leadingWidth,
+        leading: WawBackButton(
+          tooltip: context.l10n.back,
+          onPressed: () => Navigator.maybePop(context),
         ),
         titleSpacing: 4,
         title: WawTitleBlock(
@@ -2087,7 +2082,8 @@ class _ComposerPanelState extends State<_ComposerPanel> {
       tooltip: widget.running && !widget.canSend
           ? context.l10n.stop
           : context.l10n.send,
-      color: widget.running && !widget.canSend ? Colors.black : wawBlue,
+      color: Theme.of(context).colorScheme.onSurface,
+      keepEnabledColors: widget.running && !widget.canSend,
       onPressed: widget.canSend
           ? widget.onSend
           : widget.running
@@ -2206,6 +2202,7 @@ class _CompactActionButton extends StatelessWidget {
     required this.color,
     required this.onPressed,
     required this.child,
+    this.keepEnabledColors = false,
   });
 
   final bool enabled;
@@ -2213,10 +2210,14 @@ class _CompactActionButton extends StatelessWidget {
   final Color color;
   final VoidCallback? onPressed;
   final Widget child;
+  final bool keepEnabledColors;
 
   @override
   Widget build(BuildContext context) {
-    final background = enabled ? color : Theme.of(context).disabledColor;
+    final theme = Theme.of(context);
+    final background = enabled || keepEnabledColors
+        ? color
+        : theme.colorScheme.surfaceContainerHighest;
     return Semantics(
       button: true,
       enabled: enabled,
@@ -2238,7 +2239,11 @@ class _CompactActionButton extends StatelessWidget {
                   maximumSize: const Size.square(32),
                   padding: EdgeInsets.zero,
                   backgroundColor: background,
-                  foregroundColor: Colors.white,
+                  foregroundColor: theme.colorScheme.surface,
+                  disabledBackgroundColor: background,
+                  disabledForegroundColor: keepEnabledColors
+                      ? theme.colorScheme.surface
+                      : theme.colorScheme.onSurfaceVariant,
                 ),
                 icon: child,
               ),

@@ -73,13 +73,11 @@ class _ProjectScreenState extends ConsumerState<ProjectScreen> {
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
-        leadingWidth: 80,
-        leading: Padding(
-          padding: const EdgeInsets.only(left: 20, top: 8, bottom: 8),
-          child: WawCircleButton(
-            icon: Icons.arrow_back_rounded,
-            onPressed: () => context.pop(),
-          ),
+        toolbarHeight: WawBackButton.toolbarHeight,
+        leadingWidth: WawBackButton.leadingWidth,
+        leading: WawBackButton(
+          tooltip: context.l10n.back,
+          onPressed: () => context.pop(),
         ),
         titleSpacing: 12,
         title: WawTitleBlock(

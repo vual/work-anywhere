@@ -9,6 +9,41 @@ import 'package:work_anywhere/features/workspace/workspace_screen.dart';
 import 'package:work_anywhere/l10n/generated/app_localizations.dart';
 
 void main() {
+  testWidgets(
+    'workspace search stays above the keyboard and returns on dismissal',
+    (tester) async {
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetViewInsets);
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            theme: buildLightTheme(),
+            home: const WorkspaceScreen(
+              data: WorkspaceState(needsPairing: false),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final search = find.byType(TextField);
+      final initial = tester.getRect(search);
+      await tester.tap(search);
+      tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+      await tester.pumpAndSettle();
+      expect(tester.getRect(search).bottom, lessThanOrEqualTo(500));
+      expect(tester.getRect(search).top, closeTo(initial.top - 300, 1));
+      expect(tester.takeException(), isNull);
+      tester.view.resetViewInsets();
+      await tester.pumpAndSettle();
+      expect(tester.getRect(search).top, closeTo(initial.top, 1));
+    },
+  );
+
   testWidgets('pairing screen offers scan and paste paths', (tester) async {
     await tester.pumpWidget(
       const ProviderScope(
