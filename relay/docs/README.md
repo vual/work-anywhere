@@ -11,6 +11,7 @@
 | 技术选型 | [`technology-selection/design.md`](technology-selection/design.md) | 架构、部署 | `go.mod`, `cmd/relay/`, `Dockerfile` |
 | 总体架构与信任边界 | [`architecture/design.md`](architecture/design.md) | 全部设计 | `cmd/relay/`, `internal/server/` |
 | 设备身份与二维码配对 | [`identity-and-pairing/design.md`](identity-and-pairing/design.md) | E2EE、存储、滥用防护 | `internal/server/`, `internal/store/`, `pkg/endpoint/protocol/` |
+| Daemon 自助注册 | [`daemon-enrollment/design.md`](daemon-enrollment/design.md) | 身份、存储、滥用防护、Desktop connector | `internal/server/enrollment.go`, `internal/store/enrollment.go` |
 | 端到端加密会话 | [`end-to-end-encryption/design.md`](end-to-end-encryption/design.md) | wire、Desktop connector | `pkg/endpoint/e2ee/`, `desktop/internal/remote/` |
 | Relay wire protocol | [`wire-protocol/design.md`](wire-protocol/design.md) | E2EE、路由、Desktop connector | `proto/waw/relay/v1/`, `internal/gen/` |
 | 在线路由与可靠性 | [`routing-and-reliability/design.md`](routing-and-reliability/design.md) | wire、部署 | `internal/routing/`, `internal/server/` |
@@ -31,7 +32,7 @@
 ## Current invariants
 
 - 双端主动 WS(S)；家庭网络不需要端口映射。
-- 无 WAW 用户账号；设备 Ed25519 公钥是服务身份，daemon 初始登记由 enrollment token 约束。
+- 无 WAW 用户账号；设备 Ed25519 公钥是服务身份，daemon 可显式启用自助签名注册，默认邀请登记仍由 enrollment token 约束。
 - 每条 daemon—Mobile pairing 独立授权，天然支持多对多。
 - 在线业务 payload 使用双方静态身份绑定的 Noise KK 端到端加密；Relay 不持有解密 key。
 - Relay 不保存会话 payload，也不提供离线写命令。

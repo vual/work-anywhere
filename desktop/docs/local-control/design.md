@@ -20,6 +20,8 @@ daemon 将控制方法路由到实例 supervisor；Codex driver/能力描述用�
 
 ## Interfaces
 
+新增本机 `remote.register`，参数可选 `displayName`、`token`，执行签名注册并返回 remote status。`remote.configure` 接受 `resetIdentity`；已登记身份更换 origin 未确认返回 `relay_change_requires_reset`，明确重置后清除身份和配对。这些操作只属于本机控制，不进入 Remote 业务 allowlist，协议见 [连接器](../remote-relay-connector/design.md)。
+
 当前固定控制方法：
 
 - 系统：`system.status`, `system.ui_url`, `system.control.pause`, `system.control.resume`, `system.shutdown`
@@ -33,7 +35,7 @@ daemon 将控制方法路由到实例 supervisor；Codex driver/能力描述用�
 - catalog：`catalog.models`, `catalog.permissionProfiles`
 - 附件：`attachment.begin`, `attachment.chunk`, `attachment.commit`, `attachment.abort`
 - 流量：`traffic.enable`, `traffic.disable`
-- Remote：`remote.status`, `remote.configure`, `remote.enroll`, `remote.reconnect`, `remote.pair.start/list/resolve/cancel/revoke`
+- Remote：`remote.status`, `remote.configure`, `remote.register`, `remote.enroll`, `remote.reconnect`, `remote.pair.start/list/resolve/cancel/revoke`
 
 `turn.start` 当前接受 `instanceId`、`threadId`、文字、attachment IDs、model、reasoning effort、approval policy、sandbox policy、client message ID 和 expected revision。附件中的图片被转换为官方 App Server 支持的输入项；调用必须指向已有 thread。忙碌门禁按目标 thread 判断：同一 thread 已有活跃 Turn、等待该 thread 的 action，或 action 无法归属 thread 时拒绝；同一 Agent 的其他 thread 正在运行或等待自身 action 时不阻塞本 thread。实例仍汇总保存全部活跃 Turn，用于状态、升级和强制退出。
 

@@ -17,6 +17,8 @@ Relay 只保存公钥。daemon 私钥由 Desktop 平台 secret store 保护（Wi
 
 ## Daemon enrollment
 
+daemon 自助签名注册、恢复、注册模式与错误协议由 [Daemon 自助注册设计](../daemon-enrollment/design.md) 定义。`self_service` 无需运维发 token；Desktop 先安全保存密钥，再申请 challenge、签署绑定 origin/双公钥的 transcript。相同 active 身份恢复原 ID；重复绑定、撤销和迁移规则也由该文档拥有。
+
 公网 Relay 默认使用 `invite` enrollment mode：
 
 1. 运维方生成一次性、高熵 enrollment token，Relay 只保存 token hash、expiry 和剩余次数。
@@ -24,7 +26,7 @@ Relay 只保存公钥。daemon 私钥由 Desktop 平台 secret store 保护（Wi
 3. Relay 原子消费 token，创建 `daemon` device，返回随机 daemon ID。
 4. 此后 daemon 不使用长期 bearer token，而是在每次 WS(S) 连接中签署 server challenge。
 
-开发环境可显式启用 `open` enrollment 并强制严格 IP/device rate limit；生产默认禁止 open。`disabled` 模式只允许已有 daemon 重连。
+开发环境可显式启用 `open` enrollment；公共自助服务显式使用 `self_service`，默认仍为 `invite`。`disabled` 模式允许已有 daemon 重连和有私钥证明的 active 身份恢复，拒绝新增。
 
 ## Connection authentication
 

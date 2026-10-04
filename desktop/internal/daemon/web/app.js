@@ -3,6 +3,10 @@ let socket=null;
 let socketPromise=null;
 let sequence=0;
 let pairQrObjectUrl='';
+let pairQrGeneration=0;
+let remoteErrorText='';
+let remoteIdentity=null;
+const remoteMessages={relay_upgrade_required:'Relay 版本不支持自动注册，请升级 Relay 或使用旧版邀请码注册。',invite_required:'此 Relay 需要邀请码，请输入后完成注册。',invalid_invite:'邀请码无效或已过期。',enrollment_disabled:'Relay 已暂停新设备注册。',device_revoked:'设备已被 Relay 撤销，请联系部署者。',identity_conflict:'设备身份或 Relay 地址不匹配，请检查地址；需要恢复时可明确重置远程身份。',auth_failed:'设备认证失败，请检查 Relay 配置或联系部署者。',daemon_capacity_reached:'Relay 登记设备数量已达上限，请联系部署者。',rate_limited:'请求过于频繁，稍后将重试。',temporarily_unavailable:'暂时无法连接 Relay，将自动重试。'};
 const pending=new Map();
 const q=(id)=>document.getElementById(id);
 
@@ -31,7 +35,7 @@ function openSocket(){
       try{message=JSON.parse(event.data);}catch{return;}
       if(message.type==='response'&&pending.has(message.id)){
         const waiter=pending.get(message.id);pending.delete(message.id);
-        if(message.error)waiter.reject(new Error(message.error.message||'daemon 请求失败'));
+        if(message.error){const error=new Error(message.error.message||'daemon 请求失败');error.code=message.error.code;waiter.reject(error);}
         else waiter.resolve(message.result);
       }else if(message.type==='event'){
         refresh().catch(()=>{});
@@ -72,12 +76,20 @@ async function refresh(){
 }
 
 function renderRemote(remote){
+  const identity=`${remote.relayUrl||''}:${remote.deviceId||''}`;
+  if(remoteIdentity!==null&&remoteIdentity!==identity){q('pair-uri').value='';renderPairQR('').catch(showError);}
+  remoteIdentity=identity;
   if(document.activeElement!==q('relay-url'))q('relay-url').value=remote.relayUrl||'';
   q('relay-connection').textContent=remote.connected?'已连接':'未连接';
   q('relay-connection').className=remote.connected?'state':'state warn';
   q('relay-fingerprint').textContent=remote.fingerprint||'—';
   q('relay-device').textContent=remote.deviceId||'—';
-  if(remote.lastError)q('error').textContent=remote.lastError;
+  const phases={unconfigured:'请填写 Relay 地址',disabled:'远程访问已停用',pending_registration:'等待注册',registering:'正在注册',invite_required:'请输入邀请码完成注册',connecting:'正在连接',connected:'已连接，可以配对手机',needs_attention:'连接需要处理，请重试或检查配置'};
+  q('relay-progress').textContent=(phases[remote.phase]||'')+(remote.nextRetryAt&&Date.parse(remote.nextRetryAt)>Date.now()?`，下次重试：${new Date(remote.nextRetryAt).toLocaleTimeString()}`:'');
+  q('relay-token-label').hidden=remote.registrationMode!=='invite'&&remote.lastErrorCode!=='relay_upgrade_required';
+  q('relay-legacy').hidden=remote.lastErrorCode!=='relay_upgrade_required';
+  q('pair-start').disabled=!remote.connected;
+  if(remote.lastError){remoteErrorText=remoteMessages[remote.lastErrorCode]||remote.lastError;q('error').textContent=remoteErrorText;}else if(q('error').textContent===remoteErrorText){q('error').textContent='';remoteErrorText='';}
   const attempts=Array.isArray(remote.pairAttempts)?remote.pairAttempts:[];
   if(!q('pair-uri').value&&attempts[0]&&attempts[0].uri){q('pair-uri').value=attempts[0].uri;renderPairQR(attempts[0].uri).catch(showError);}
   q('pair-attempts').innerHTML=attempts.map(attempt=>{
@@ -91,22 +103,28 @@ function renderRemote(remote){
 }
 
 async function renderPairQR(uri){
-  if(!uri){q('pair-qr-wrap').hidden=true;return;}
+  const generation=++pairQrGeneration;
+  if(!uri){if(pairQrObjectUrl)URL.revokeObjectURL(pairQrObjectUrl);pairQrObjectUrl='';q('pair-qr').removeAttribute('src');q('pair-qr-wrap').hidden=true;return;}
   const response=await fetch('/api/pair-qr',{method:'POST',headers:{'content-type':'application/json','X-WA-CSRF':csrf},body:JSON.stringify({uri})});
+  if(generation!==pairQrGeneration)return;
   if(!response.ok)throw new Error('无法生成配对二维码');
+  const blob=await response.blob();
+  if(generation!==pairQrGeneration)return;
   if(pairQrObjectUrl)URL.revokeObjectURL(pairQrObjectUrl);
-  pairQrObjectUrl=URL.createObjectURL(await response.blob());
+  pairQrObjectUrl=URL.createObjectURL(blob);
   q('pair-qr').src=pairQrObjectUrl;
   q('pair-qr-wrap').hidden=false;
 }
 
 function escapeHtml(v){return String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));}
-function showError(error){q('error').textContent=error.message||String(error);}
+function showError(error){q('error').textContent=remoteMessages[error.code]||error.message||String(error);}
 async function action(fn){q('error').textContent='';try{await fn();await refresh();}catch(error){showError(error);}}
 
 q('refresh').onclick=()=>action(async()=>{});
-q('relay-configure').onclick=()=>action(()=>call('remote.configure',{relayUrl:q('relay-url').value.trim(),enabled:true}));
-q('relay-enroll').onclick=()=>action(async()=>{await call('remote.enroll',{token:q('relay-token').value,displayName:q('relay-name').value.trim()});q('relay-token').value='';});
+q('relay-configure').onclick=()=>action(async()=>{const params={relayUrl:q('relay-url').value.trim(),displayName:q('relay-name').value.trim(),enabled:true};try{await call('remote.configure',params);}catch(error){if(error.code!=='relay_change_requires_reset')throw error;if(!confirm('更换 Relay 将清除当前远程身份和手机配对，继续吗？'))return;await call('remote.configure',{...params,resetIdentity:true});q('pair-uri').value='';await renderPairQR('');}});
+q('relay-enroll').onclick=()=>action(async()=>{try{await call('remote.register',{token:q('relay-token').value,displayName:q('relay-name').value.trim()});}finally{q('relay-token').value='';}});
+q('relay-legacy').onclick=()=>action(async()=>{try{await call('remote.enroll',{token:q('relay-token').value,displayName:q('relay-name').value.trim()});}finally{q('relay-token').value='';}});
+q('relay-reset').onclick=()=>{if(!confirm('重置会删除远程身份和所有手机配对，需要重新扫码，继续吗？'))return;action(async()=>{await call('remote.configure',{relayUrl:q('relay-url').value.trim(),enabled:true,resetIdentity:true});q('pair-uri').value='';await renderPairQR('');});};
 q('relay-reconnect').onclick=()=>action(()=>call('remote.reconnect'));
 q('pair-start').onclick=()=>action(async()=>{const result=await call('remote.pair.start',{ttlSeconds:300});if(result&&result.uri){q('pair-uri').value=result.uri;await renderPairQR(result.uri);}});
 q('pair-refresh').onclick=()=>action(()=>call('remote.pair.list'));

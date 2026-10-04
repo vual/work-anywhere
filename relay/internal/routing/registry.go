@@ -41,14 +41,19 @@ func (r *Registry) Register(connection *Connection) (*Connection, error) {
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
 	previous := shard.items[connection.DeviceID]
-	if previous == nil && r.count.Load() >= r.max {
-		return nil, ErrCapacity
+	if previous == nil {
+		for {
+			count := r.count.Load()
+			if count >= r.max {
+				return nil, ErrCapacity
+			}
+			if r.count.CompareAndSwap(count, count+1) {
+				break
+			}
+		}
 	}
 	connection.Epoch = r.next.Add(1)
 	shard.items[connection.DeviceID] = connection
-	if previous == nil {
-		r.count.Add(1)
-	}
 	if previous != nil {
 		previous.Close()
 	}

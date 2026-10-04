@@ -3,6 +3,7 @@ package remote
 import (
 	"bytes"
 	"context"
+	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -14,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -53,6 +55,8 @@ type Pairing struct {
 }
 
 type persistedState struct {
+	Generation     uint64             `json:"-"`
+	DisplayName    string             `json:"displayName,omitempty"`
 	Enabled        bool               `json:"enabled"`
 	RelayURL       string             `json:"relayUrl"`
 	DeviceID       string             `json:"deviceId"`
@@ -84,14 +88,18 @@ type PairAttempt struct {
 }
 
 type Status struct {
-	Enabled      bool          `json:"enabled"`
-	RelayURL     string        `json:"relayUrl,omitempty"`
-	DeviceID     string        `json:"deviceId,omitempty"`
-	Fingerprint  string        `json:"fingerprint,omitempty"`
-	Connected    bool          `json:"connected"`
-	LastError    string        `json:"lastError,omitempty"`
-	Pairings     []Pairing     `json:"pairings"`
-	PairAttempts []PairAttempt `json:"pairAttempts"`
+	Phase            string        `json:"phase"`
+	RegistrationMode string        `json:"registrationMode,omitempty"`
+	LastErrorCode    string        `json:"lastErrorCode,omitempty"`
+	NextRetryAt      time.Time     `json:"nextRetryAt,omitempty"`
+	Enabled          bool          `json:"enabled"`
+	RelayURL         string        `json:"relayUrl,omitempty"`
+	DeviceID         string        `json:"deviceId,omitempty"`
+	Fingerprint      string        `json:"fingerprint,omitempty"`
+	Connected        bool          `json:"connected"`
+	LastError        string        `json:"lastError,omitempty"`
+	Pairings         []Pairing     `json:"pairings"`
+	PairAttempts     []PairAttempt `json:"pairAttempts"`
 }
 
 type Service struct {
@@ -101,17 +109,27 @@ type Service struct {
 	log       logSink
 	ctx       context.Context
 
-	mu           sync.RWMutex
-	state        persistedState
-	attempts     map[string]*PairAttempt
-	sessions     map[string]*sessionState
-	conn         *websocket.Conn
-	connDeviceID uuid.UUID
-	connected    bool
-	lastError    string
-	wake         chan struct{}
-	writeMu      sync.Mutex
-	sentControl  map[string]sentControlDelivery
+	mu                 sync.RWMutex
+	lifecycleMu        sync.RWMutex
+	enrollMu           sync.Mutex
+	generation         uint64
+	operationCancel    context.CancelFunc
+	registrationCancel context.CancelFunc
+	phase              string
+	registrationMode   string
+	lastErrorCode      string
+	nextRetryAt        time.Time
+	blocked            bool
+	state              persistedState
+	attempts           map[string]*PairAttempt
+	sessions           map[string]*sessionState
+	conn               *websocket.Conn
+	connDeviceID       uuid.UUID
+	connected          bool
+	lastError          string
+	wake               chan struct{}
+	writeMu            sync.Mutex
+	sentControl        map[string]sentControlDelivery
 }
 
 type sentControlDelivery struct {
@@ -133,6 +151,11 @@ func New(stateStore settingsStore, control func(protocol.ControlRequest) protoco
 	} else if found && service.state.Pairings == nil {
 		service.state.Pairings = make(map[string]Pairing)
 	}
+	if service.state.RelayURL != "" {
+		if normalized, err := normalizeRelayURL(service.state.RelayURL); err == nil {
+			service.state.RelayURL = normalized
+		}
+	}
 	return service, nil
 }
 
@@ -143,7 +166,11 @@ func (s *Service) Run(ctx context.Context) {
 	backoff := time.Second
 	for {
 		state := s.snapshotState()
-		if !state.Enabled || state.RelayURL == "" || state.DeviceID == "" {
+		s.mu.RLock()
+		blocked := s.blocked
+		retryAt := s.nextRetryAt
+		s.mu.RUnlock()
+		if !state.Enabled || state.RelayURL == "" || blocked {
 			select {
 			case <-ctx.Done():
 				return
@@ -151,22 +178,76 @@ func (s *Service) Run(ctx context.Context) {
 				continue
 			}
 		}
-		err := s.connectOnce(ctx, state)
+		if wait := time.Until(retryAt); wait > 0 {
+			timer := time.NewTimer(wait)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-s.wake:
+				timer.Stop()
+				continue
+			case <-timer.C:
+			}
+		}
+		var err error
+		if state.DeviceID == "" {
+			err = s.register(ctx, state.DisplayName, "", false, state.Generation)
+			if err == nil {
+				continue
+			}
+		} else {
+			s.mu.Lock()
+			if s.generation != state.Generation || !s.state.Enabled {
+				s.mu.Unlock()
+				continue
+			}
+			if err = s.ensureIdentityLocked(); err != nil {
+				s.recordErrorLocked(err)
+				s.blocked = true
+				s.phase = "needs_attention"
+				s.mu.Unlock()
+				continue
+			}
+			operationCtx, cancel := context.WithCancel(ctx)
+			s.operationCancel = cancel
+			s.phase = "connecting"
+			s.mu.Unlock()
+			err = s.connectOnce(operationCtx, state)
+			cancel()
+		}
 		if ctx.Err() != nil {
 			return
 		}
 		s.mu.Lock()
-		s.lastError = errString(err)
+		if s.generation != state.Generation || (state.DeviceID == "" && s.state.DeviceID != "") {
+			s.mu.Unlock()
+			continue
+		}
+		s.recordErrorLocked(err)
+		s.blocked = !retryable(err)
+		s.phase = "needs_attention"
+		if ErrorCode(err) == "invite_required" {
+			s.phase = "invite_required"
+		}
 		s.connected = false
 		s.conn = nil
 		s.connDeviceID = uuid.Nil
 		s.sessions = make(map[string]*sessionState)
 		s.sentControl = make(map[string]sentControlDelivery)
+		delay := time.Duration(0)
+		if retryable(err) {
+			delay = retryDelay(err, backoff)
+			s.nextRetryAt = time.Now().Add(delay)
+		}
 		s.mu.Unlock()
 		if err != nil {
 			s.log.Event("remote.disconnected", map[string]any{"error": err.Error()})
 		}
-		timer := time.NewTimer(backoff)
+		if !retryable(err) {
+			continue
+		}
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -177,40 +258,103 @@ func (s *Service) Run(ctx context.Context) {
 		case <-timer.C:
 			if backoff < 30*time.Second {
 				backoff *= 2
+				if backoff > 30*time.Second {
+					backoff = 30 * time.Second
+				}
 			}
 		}
 	}
 }
 
 func (s *Service) Configure(relayURL string, enabled bool) error {
+	return s.ConfigureWithReset(relayURL, enabled, false)
+}
+
+func (s *Service) ConfigureWithReset(relayURL string, enabled, resetIdentity bool, displayNames ...string) error {
 	normalized, err := normalizeRelayURL(relayURL)
 	if err != nil {
-		return err
+		return &remoteError{code: "invalid_remote_config"}
 	}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
 	s.mu.Lock()
-	s.state.RelayURL = normalized
-	s.state.Enabled = enabled
-	err = s.persistLocked()
+	defer s.mu.Unlock()
+	changed := s.state.RelayURL != "" && s.state.RelayURL != normalized
+	hasIdentity := s.state.DeviceID != "" || len(s.state.Ed25519Private) > 0 || len(s.state.X25519Private) > 0 || len(s.state.Ed25519Public) > 0 || len(s.state.X25519Public) > 0 || len(s.state.CapabilityHash) > 0 || len(s.state.Pairings) > 0
+	if changed && hasIdentity && !resetIdentity {
+		return &remoteError{code: "relay_change_requires_reset"}
+	}
+	next := s.state
+	if resetIdentity {
+		next = persistedState{Pairings: make(map[string]Pairing)}
+	}
+	next.RelayURL, next.Enabled = normalized, enabled
+	if len(displayNames) > 0 && displayNames[0] != "" && next.DeviceID == "" {
+		if len(displayNames[0]) > 256 {
+			return &remoteError{code: "invalid_remote_config"}
+		}
+		next.DisplayName = displayNames[0]
+	}
+	if s.operationCancel != nil {
+		s.operationCancel()
+	}
+	if s.registrationCancel != nil {
+		s.registrationCancel()
+	}
+	s.generation++
+	next.Generation = s.generation
+	s.state.Generation = s.generation
 	connection := s.conn
-	s.mu.Unlock()
+	s.conn, s.connected, s.connDeviceID = nil, false, uuid.Nil
 	if connection != nil {
 		connection.CloseNow()
+	}
+	for _, attempt := range s.attempts {
+		wipeAttempt(attempt)
+	}
+	s.attempts = make(map[string]*PairAttempt)
+	s.sessions = make(map[string]*sessionState)
+	s.sentControl = make(map[string]sentControlDelivery)
+	s.blocked = false
+	s.phase, s.lastError, s.lastErrorCode = "pending_registration", "", ""
+	s.nextRetryAt = time.Time{}
+	if err = s.store.PutSetting(remoteStateKey, next); err != nil {
+		s.signalWake()
+		return err
+	}
+	s.state = next
+	if changed || resetIdentity {
+		s.registrationMode = ""
 	}
 	s.signalWake()
 	return err
 }
 
 func (s *Service) Enroll(ctx context.Context, token, displayName string) error {
+	generation := s.snapshotState().Generation
+	s.enrollMu.Lock()
+	defer s.enrollMu.Unlock()
 	if token == "" {
 		return errors.New("enrollment token is required")
 	}
 	s.mu.Lock()
+	if s.generation != generation || ctx.Err() != nil {
+		s.mu.Unlock()
+		return context.Canceled
+	}
+	if s.state.DeviceID != "" {
+		s.mu.Unlock()
+		return &remoteError{code: "identity_conflict"}
+	}
 	if err := s.ensureIdentityLocked(); err != nil {
 		s.mu.Unlock()
 		return err
 	}
 	state := s.state
+	operationCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	s.registrationCancel = cancel
 	s.mu.Unlock()
+	defer cancel()
 	if state.RelayURL == "" {
 		return errors.New("configure relay URL before enrollment")
 	}
@@ -218,9 +362,9 @@ func (s *Service) Enroll(ctx context.Context, token, displayName string) error {
 		displayName, _ = os.Hostname()
 	}
 	body, _ := json.Marshal(map[string]string{"token": token, "displayName": displayName, "ed25519PublicKey": base64.StdEncoding.EncodeToString(state.Ed25519Public), "x25519PublicKey": base64.StdEncoding.EncodeToString(state.X25519Public), "capabilityHash": base64.StdEncoding.EncodeToString(state.CapabilityHash)})
-	request, _ := http.NewRequestWithContext(ctx, http.MethodPost, state.RelayURL+"/v1/enroll/daemon", bytes.NewReader(body))
+	request, _ := http.NewRequestWithContext(operationCtx, http.MethodPost, state.RelayURL+"/v1/enroll/daemon", bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
-	response, err := (&http.Client{Timeout: 15 * time.Second}).Do(request)
+	response, err := (&http.Client{Timeout: 15 * time.Second, CheckRedirect: func(request *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }}).Do(request)
 	if err != nil {
 		return err
 	}
@@ -235,9 +379,20 @@ func (s *Service) Enroll(ctx context.Context, token, displayName string) error {
 		return errors.New("relay returned an invalid device ID")
 	}
 	s.mu.Lock()
-	s.state.DeviceID = result.DeviceID
-	s.state.Enabled = true
-	err = s.persistLocked()
+	if s.generation != state.Generation {
+		s.mu.Unlock()
+		return context.Canceled
+	}
+	next := s.state
+	next.DeviceID, next.Enabled = result.DeviceID, true
+	err = s.store.PutSetting(remoteStateKey, next)
+	if err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	s.state = next
+	s.blocked = false
+	s.recordErrorLocked(nil)
 	connection := s.conn
 	s.mu.Unlock()
 	// Enrollment creates a new Relay device identity. Do not keep using a
@@ -250,6 +405,8 @@ func (s *Service) Enroll(ctx context.Context, token, displayName string) error {
 }
 
 func (s *Service) StartPairing(ttl time.Duration) (PairAttempt, error) {
+	s.lifecycleMu.RLock()
+	defer s.lifecycleMu.RUnlock()
 	if ttl <= 0 {
 		ttl = 5 * time.Minute
 	}
@@ -294,6 +451,8 @@ func (s *Service) StartPairing(ttl time.Duration) (PairAttempt, error) {
 }
 
 func (s *Service) ResolvePairing(id string, approved bool, scopes []string) error {
+	s.lifecycleMu.RLock()
+	defer s.lifecycleMu.RUnlock()
 	s.mu.Lock()
 	attempt := s.attempts[id]
 	state := s.state
@@ -342,6 +501,8 @@ func (s *Service) ResolvePairing(id string, approved bool, scopes []string) erro
 }
 
 func (s *Service) RevokePairing(id string) error {
+	s.lifecycleMu.RLock()
+	defer s.lifecycleMu.RUnlock()
 	pairingID, err := uuid.Parse(id)
 	if err != nil {
 		return err
@@ -356,6 +517,8 @@ func (s *Service) RevokePairing(id string) error {
 }
 
 func (s *Service) CancelPairing(id string) error {
+	s.lifecycleMu.RLock()
+	defer s.lifecycleMu.RUnlock()
 	pairingID, err := uuid.Parse(id)
 	if err != nil {
 		return err
@@ -380,7 +543,20 @@ func (s *Service) CancelPairing(id string) error {
 func (s *Service) Status() Status {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	status := Status{Enabled: s.state.Enabled, RelayURL: s.state.RelayURL, DeviceID: s.state.DeviceID, Connected: s.connected, LastError: s.lastError}
+	status := Status{Enabled: s.state.Enabled, RelayURL: s.state.RelayURL, DeviceID: s.state.DeviceID, Connected: s.connected, LastError: s.lastError, Phase: s.phase, RegistrationMode: s.registrationMode, LastErrorCode: s.lastErrorCode, NextRetryAt: s.nextRetryAt}
+	if s.state.RelayURL == "" {
+		status.Phase = "unconfigured"
+	} else if !s.state.Enabled {
+		status.Phase = "disabled"
+	} else if s.connected {
+		status.Phase = "connected"
+	} else if status.Phase == "" {
+		if s.state.DeviceID == "" {
+			status.Phase = "pending_registration"
+		} else {
+			status.Phase = "connecting"
+		}
+	}
 	if len(s.state.Ed25519Public) > 0 {
 		digest := sha256.Sum256(s.state.Ed25519Public)
 		status.Fingerprint = base64.RawURLEncoding.EncodeToString(digest[:12])
@@ -398,9 +574,10 @@ func (s *Service) Status() Status {
 }
 
 func (s *Service) Reconnect() {
-	s.mu.RLock()
+	s.mu.Lock()
+	s.blocked = false
 	connection := s.conn
-	s.mu.RUnlock()
+	s.mu.Unlock()
 	if connection != nil {
 		connection.CloseNow()
 	}
@@ -408,17 +585,23 @@ func (s *Service) Reconnect() {
 }
 
 func (s *Service) connectOnce(ctx context.Context, state persistedState) error {
+	authCtx, cancelAuth := context.WithTimeout(ctx, 30*time.Second)
+	defer cancelAuth()
 	endpoint, err := websocketURL(state.RelayURL, "/v1/connect")
 	if err != nil {
 		return err
 	}
-	connection, _, err := websocket.Dial(ctx, endpoint, &websocket.DialOptions{CompressionMode: websocket.CompressionDisabled})
+	connection, dialResponse, err := websocket.Dial(authCtx, endpoint, &websocket.DialOptions{CompressionMode: websocket.CompressionDisabled})
 	if err != nil {
+		if dialResponse != nil && dialResponse.StatusCode == http.StatusTooManyRequests {
+			seconds, _ := strconv.Atoi(dialResponse.Header.Get("Retry-After"))
+			return &remoteError{code: "rate_limited", retryAfter: time.Duration(seconds) * time.Second}
+		}
 		return err
 	}
 	defer connection.CloseNow()
 	connection.SetReadLimit(2 << 20)
-	challengeFrame, err := readServerFrame(ctx, connection)
+	challengeFrame, err := readServerFrame(authCtx, connection)
 	if err != nil || challengeFrame.GetServerChallenge() == nil {
 		return errors.New("relay did not provide an authentication challenge")
 	}
@@ -426,31 +609,60 @@ func (s *Service) connectOnce(ctx context.Context, state persistedState) error {
 	deviceID, _ := uuid.Parse(state.DeviceID)
 	signature := ed25519.Sign(ed25519.PrivateKey(state.Ed25519Private), authSignatureInput(challenge.ConnectionId, challenge.Challenge, challenge.ExpiresAtMs, state.CapabilityHash))
 	auth := &relayv1.ClientFrame{WireMajor: wireMajor, WireMinor: wireMinor, MessageId: newMessageID(), Body: &relayv1.ClientFrame_ClientAuth{ClientAuth: &relayv1.ClientAuth{DeviceId: deviceID[:], Role: relayv1.DeviceRole_DEVICE_ROLE_DAEMON, CapabilityHash: state.CapabilityHash, Signature: signature}}}
-	if err = writeClientFrame(ctx, connection, auth); err != nil {
+	if err = writeClientFrame(authCtx, connection, auth); err != nil {
 		return err
 	}
-	response, err := readServerFrame(ctx, connection)
-	if err != nil || response.GetAuthOk() == nil {
-		return errors.New("relay device authentication failed")
+	response, err := readServerFrame(authCtx, connection)
+	if err != nil {
+		return err
+	}
+	if response.GetAuthOk() == nil {
+		if failure := response.GetProtocolError(); failure != nil && failure.Code == "temporarily_unavailable" {
+			return &remoteError{code: "temporarily_unavailable"}
+		}
+		return &remoteError{code: "auth_failed"}
+	}
+	if !bytes.Equal(response.GetAuthOk().DeviceId, deviceID[:]) {
+		return &remoteError{code: "auth_failed"}
 	}
 	s.mu.Lock()
+	if s.generation != state.Generation || !s.state.Enabled || ctx.Err() != nil {
+		s.mu.Unlock()
+		return context.Canceled
+	}
 	s.conn, s.connDeviceID, s.connected, s.lastError = connection, deviceID, true, ""
+	s.phase, s.lastErrorCode, s.nextRetryAt = "connected", "", time.Time{}
 	s.mu.Unlock()
 	s.log.Event("remote.connected", map[string]any{"relay": state.RelayURL, "deviceId": state.DeviceID})
 	events, unsubscribe := s.subscribe()
 	defer unsubscribe()
 	eventCtx, cancelEvents := context.WithCancel(ctx)
 	defer cancelEvents()
-	go s.forwardEvents(eventCtx, events)
+	go s.forwardEvents(eventCtx, events, state.Generation)
 	for {
 		frame, readErr := readServerFrame(ctx, connection)
 		if readErr != nil {
 			return readErr
 		}
-		if err = s.handleFrame(frame); err != nil {
+		if err = s.handleCurrentFrame(connection, state.Generation, frame); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return err
+			}
 			s.log.Event("remote.frame_rejected", map[string]any{"error": err.Error()})
 		}
 	}
+}
+
+func (s *Service) handleCurrentFrame(connection *websocket.Conn, generation uint64, frame *relayv1.ServerFrame) error {
+	s.lifecycleMu.RLock()
+	defer s.lifecycleMu.RUnlock()
+	s.mu.RLock()
+	current := s.generation == generation && s.state.Enabled && s.connected && s.conn == connection
+	s.mu.RUnlock()
+	if !current {
+		return context.Canceled
+	}
+	return s.handleFrame(frame)
 }
 
 func (s *Service) handleFrame(frame *relayv1.ServerFrame) error {
@@ -726,11 +938,20 @@ func (s *Service) closeSession(sessionID []byte) {
 	s.mu.Unlock()
 }
 
-func (s *Service) forwardEvents(ctx context.Context, events <-chan protocol.Event) {
+func (s *Service) forwardEvents(ctx context.Context, events <-chan protocol.Event, generation uint64) {
 	pending := make(map[string]protocol.Event)
 	var timer *time.Timer
 	var timerC <-chan time.Time
 	flush := func() {
+		s.lifecycleMu.RLock()
+		defer s.lifecycleMu.RUnlock()
+		s.mu.RLock()
+		current := s.generation == generation && s.state.Enabled && s.connected && ctx.Err() == nil
+		s.mu.RUnlock()
+		if !current {
+			clear(pending)
+			return
+		}
 		for _, event := range pending {
 			s.forwardEvent(event)
 		}
@@ -837,7 +1058,18 @@ func (s *Service) send(frame *relayv1.ClientFrame) error {
 }
 
 func (s *Service) ensureIdentityLocked() error {
-	if len(s.state.Ed25519Private) == ed25519.PrivateKeySize && len(s.state.X25519Private) == 32 {
+	if len(s.state.Ed25519Private) > 0 || len(s.state.X25519Private) > 0 || s.state.DeviceID != "" || len(s.state.Ed25519Public) > 0 || len(s.state.X25519Public) > 0 || len(s.state.CapabilityHash) > 0 || len(s.state.Pairings) > 0 {
+		if len(s.state.Ed25519Private) != 64 || len(s.state.X25519Private) != 32 || len(s.state.CapabilityHash) != 32 {
+			return &remoteError{code: "identity_conflict"}
+		}
+		edPrivate := ed25519.NewKeyFromSeed(s.state.Ed25519Private[:32])
+		noisePrivate, err := ecdh.X25519().NewPrivateKey(s.state.X25519Private)
+		if err != nil || !bytes.Equal(edPrivate, s.state.Ed25519Private) || !bytes.Equal(edPrivate[32:], s.state.Ed25519Public) || !bytes.Equal(noisePrivate.PublicKey().Bytes(), s.state.X25519Public) {
+			return &remoteError{code: "identity_conflict"}
+		}
+		if s.state.DeviceID != "" && uuid.Validate(s.state.DeviceID) != nil {
+			return &remoteError{code: "identity_conflict"}
+		}
 		return nil
 	}
 	edPublic, edPrivate, err := ed25519.GenerateKey(rand.Reader)
@@ -849,13 +1081,21 @@ func (s *Service) ensureIdentityLocked() error {
 		return err
 	}
 	capability := sha256.Sum256([]byte(strings.Join(defaultScopes, "\n") + "\ndesktop-control-json-v1"))
-	s.state.Ed25519Private, s.state.Ed25519Public = edPrivate, edPublic
-	s.state.X25519Private, s.state.X25519Public = xKey.Private, xKey.Public
-	s.state.CapabilityHash = capability[:]
-	if s.state.Pairings == nil {
-		s.state.Pairings = make(map[string]Pairing)
+	next := s.state
+	next.Ed25519Private, next.Ed25519Public = edPrivate, edPublic
+	next.X25519Private, next.X25519Public = xKey.Private, xKey.Public
+	next.CapabilityHash = capability[:]
+	if next.DisplayName == "" {
+		next.DisplayName, _ = os.Hostname()
 	}
-	return s.persistLocked()
+	if next.Pairings == nil {
+		next.Pairings = make(map[string]Pairing)
+	}
+	if err = s.store.PutSetting(remoteStateKey, next); err != nil {
+		return err
+	}
+	s.state = next
+	return nil
 }
 
 func (s *Service) persistLocked() error { return s.store.PutSetting(remoteStateKey, s.state) }
@@ -931,11 +1171,18 @@ func equalStrings(first, second []string) bool {
 
 func normalizeRelayURL(value string) (string, error) {
 	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(value), "/"))
-	if err != nil || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
 		return "", errors.New("relay URL must be an origin without path, query, or fragment")
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return "", errors.New("relay URL must use HTTP or HTTPS")
+	}
+	parsed.Host = strings.ToLower(parsed.Host)
+	if (parsed.Scheme == "https" && parsed.Port() == "443") || (parsed.Scheme == "http" && parsed.Port() == "80") {
+		parsed.Host = parsed.Hostname()
+		if strings.Contains(parsed.Host, ":") {
+			parsed.Host = "[" + parsed.Host + "]"
+		}
 	}
 	return strings.TrimRight(parsed.String(), "/"), nil
 }

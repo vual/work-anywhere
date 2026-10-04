@@ -904,27 +904,37 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 		response.Result = m.remote.Status()
 	case "remote.configure":
 		var params struct {
-			RelayURL string `json:"relayUrl"`
-			Enabled  bool   `json:"enabled"`
+			RelayURL      string `json:"relayUrl"`
+			Enabled       bool   `json:"enabled"`
+			ResetIdentity bool   `json:"resetIdentity"`
+			DisplayName   string `json:"displayName"`
 		}
 		if json.Unmarshal(request.Params, &params) != nil {
 			response.Error = &protocol.ControlError{Code: "invalid_params", Message: "relayUrl and enabled are required"}
-		} else if err := m.remote.Configure(params.RelayURL, params.Enabled); err != nil {
-			response.Error = &protocol.ControlError{Code: "invalid_remote_config", Message: err.Error()}
+		} else if err := m.remote.ConfigureWithReset(params.RelayURL, params.Enabled, params.ResetIdentity, params.DisplayName); err != nil {
+			response.Error = &protocol.ControlError{Code: remote.ErrorCode(err), Message: err.Error()}
 		} else {
 			response.Result = m.remote.Status()
 		}
-	case "remote.enroll":
+	case "remote.register", "remote.enroll":
 		var params struct {
 			Token       string `json:"token"`
 			DisplayName string `json:"displayName"`
 		}
-		if json.Unmarshal(request.Params, &params) != nil || params.Token == "" {
+		if json.Unmarshal(request.Params, &params) != nil || (request.Method == "remote.enroll" && params.Token == "") {
 			response.Error = &protocol.ControlError{Code: "invalid_params", Message: "token is required"}
-		} else if err := m.remote.Enroll(m.ctx, params.Token, params.DisplayName); err != nil {
-			response.Error = &protocol.ControlError{Code: "enrollment_failed", Message: err.Error()}
 		} else {
-			response.Result = m.remote.Status()
+			var err error
+			if request.Method == "remote.register" {
+				err = m.remote.Register(m.ctx, params.DisplayName, params.Token)
+			} else {
+				err = m.remote.Enroll(m.ctx, params.Token, params.DisplayName)
+			}
+			if err != nil {
+				response.Error = &protocol.ControlError{Code: remote.ErrorCode(err), Message: err.Error()}
+			} else {
+				response.Result = m.remote.Status()
+			}
 		}
 	case "remote.pair.start":
 		var params struct {

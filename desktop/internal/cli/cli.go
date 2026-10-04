@@ -229,7 +229,7 @@ func parse(args []string) (string, json.RawMessage, bool, error) {
 		}
 	case "remote":
 		if len(args) < 2 {
-			return "", nil, false, errors.New("remote requires status|configure|enroll|pair|reconnect")
+			return "", nil, false, errors.New("remote requires status|configure|register|enroll|pair|reconnect")
 		}
 		switch args[1] {
 		case "status":
@@ -239,11 +239,22 @@ func parse(args []string) (string, json.RawMessage, bool, error) {
 				return "", nil, false, errors.New("remote configure requires relay URL")
 			}
 			enabled := true
-			if len(args) > 3 && args[3] == "off" {
-				enabled = false
+			reset := false
+			for _, option := range args[3:] {
+				switch option {
+				case "off":
+					enabled = false
+				case "--reset-identity":
+					reset = true
+				default:
+					return "", nil, false, errors.New("unknown remote configure option")
+				}
 			}
-			params, _ := json.Marshal(map[string]any{"relayUrl": args[2], "enabled": enabled})
+			params, _ := json.Marshal(map[string]any{"relayUrl": args[2], "enabled": enabled, "resetIdentity": reset})
 			return "remote.configure", params, true, nil
+		case "register":
+			params, _ := json.Marshal(map[string]any{"displayName": strings.Join(args[2:], " ")})
+			return "remote.register", params, true, nil
 		case "enroll":
 			if len(args) < 3 {
 				return "", nil, false, errors.New("remote enroll requires token")
@@ -367,5 +378,5 @@ func printJSON(value any) error {
 }
 
 func usage() error {
-	return errors.New("usage: work-anywhere daemon <run|start|status|stop|force-stop> | status | instance <list|get|restart> | conversation list | action list | catalog <models|permissions> | remote <status|configure|enroll|pair|reconnect> | call <method> [json] | ui | install | uninstall | self-test | version")
+	return errors.New("usage: work-anywhere daemon <run|start|status|stop|force-stop> | status | instance <list|get|restart> | conversation list | action list | catalog <models|permissions> | remote <status|configure|register|enroll|pair|reconnect> | call <method> [json] | ui | install | uninstall | self-test | version")
 }

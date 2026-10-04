@@ -24,6 +24,8 @@ type Store struct {
 	Pool *pgxpool.Pool
 }
 
+var ErrDeviceNotFound = errors.New("device not found")
+
 type Device struct {
 	ID               uuid.UUID
 	Role             int16
@@ -155,41 +157,21 @@ func (s *Store) RevokeEnrollmentToken(ctx context.Context, token string) error {
 }
 
 func (s *Store) Enroll(ctx context.Context, input EnrollmentInput, allowOpen bool) (Device, error) {
-	if input.Role != 1 || len(input.Ed25519PublicKey) != 32 || len(input.X25519PublicKey) != 32 {
-		return Device{}, errors.New("invalid device enrollment")
+	mode := "invite"
+	if allowOpen {
+		mode = "open"
 	}
-	tx, err := s.Pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return Device{}, err
-	}
-	defer tx.Rollback(ctx)
-	if !allowOpen {
-		digest := sha256.Sum256([]byte(input.Token))
-		var tokenID uuid.UUID
-		err = tx.QueryRow(ctx, `UPDATE enrollment_tokens SET remaining_uses=remaining_uses-1
-			WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at>now() AND remaining_uses>0 RETURNING id`, digest[:]).Scan(&tokenID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Device{}, errors.New("invalid or expired enrollment token")
-		}
-		if err != nil {
-			return Device{}, err
-		}
-	}
-	device := Device{ID: uuid.New(), Role: input.Role, DisplayName: input.DisplayName, Ed25519PublicKey: input.Ed25519PublicKey, X25519PublicKey: input.X25519PublicKey, CapabilityHash: input.CapabilityHash, Status: "active"}
-	_, err = tx.Exec(ctx, `INSERT INTO devices(id,role,display_name,ed25519_public_key,x25519_public_key,capability_hash,status) VALUES($1,$2,$3,$4,$5,$6,'active')`, device.ID, device.Role, device.DisplayName, device.Ed25519PublicKey, device.X25519PublicKey, device.CapabilityHash)
-	if err != nil {
-		return Device{}, err
-	}
-	if err = tx.Commit(ctx); err != nil {
-		return Device{}, err
-	}
-	return device, nil
+	device, _, err := s.RegisterDaemon(ctx, input, mode, 10_000, false)
+	return device, err
 }
 
 func (s *Store) Device(ctx context.Context, id uuid.UUID) (Device, error) {
 	var value Device
 	err := s.Pool.QueryRow(ctx, `SELECT id,role,display_name,ed25519_public_key,x25519_public_key,capability_hash,status FROM devices WHERE id=$1`, id).
 		Scan(&value.ID, &value.Role, &value.DisplayName, &value.Ed25519PublicKey, &value.X25519PublicKey, &value.CapabilityHash, &value.Status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return value, ErrDeviceNotFound
+	}
 	return value, err
 }
 

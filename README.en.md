@@ -5,6 +5,8 @@
   <p><strong>English</strong> | <a href="README.md">简体中文</a></p>
 </div>
 
+Desktop supports Relay enrollment without manually issued tokens. Deployers explicitly set `ENROLLMENT_MODE=self_service`; users enter the Relay origin and enable remote access in the local administration page, then scan the pairing QR and approve the phone on the computer. Signed device enrollment and connection happen automatically. The default remains `invite`, and existing identities and pairings survive upgrades. See the [enrollment design](relay/docs/daemon-enrollment/design.md) and [Relay guide](relay/README.md).
+
 Work Anywhere (WAW) aims to let you interact with ChatGPT Codex Desktop on your computer in real time from your phone, so you can monitor and control running tasks or issue new instructions whenever you are away from your computer.
 
 Who is it for?

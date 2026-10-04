@@ -7,6 +7,8 @@
 Relay 只持久化认证、授权和通知所需数据：
 
 - `devices`：ID、role、显示名、公钥、capability hash、状态和时间；
+
+daemon Ed25519 公钥有包含 active/revoked 的部分唯一索引。新设备登记与邀请码消费、全局登记额度检查在事务中串行执行。签名恢复返回原 ID，不修改密钥、能力摘要或显示名。迁移检测期间锁定设备写入，发现重复公钥时停止并报告设备 ID，不合并或删除授权关系。注册 challenge 只在有界内存中保留，不写数据库，规则见 [自助注册](../daemon-enrollment/design.md)。
 - `enrollment_tokens`：随机 token 的 SHA-256 hash、expiry、剩余次数和 revoke；
 - `pairing_sessions`：daemon、expiry、attempt count 和状态，不含二维码 secret；
 - `pairings`：daemon/Mobile、scope、grant hash、状态和 revoke 时间；

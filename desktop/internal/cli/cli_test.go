@@ -34,3 +34,30 @@ func TestPrintJSONKeepsPairingURISeparators(t *testing.T) {
 		t.Fatalf("pairing URI still contains JSON escaped ampersand: %s", data)
 	}
 }
+
+func TestRemoteRegistrationAndExplicitResetCommands(t *testing.T) {
+	method, params, _, err := parse([]string{"remote", "register", "My", "PC"})
+	if err != nil || method != "remote.register" {
+		t.Fatalf("register: %s %v", method, err)
+	}
+	var registration struct {
+		DisplayName string `json:"displayName"`
+	}
+	if err = json.Unmarshal(params, &registration); err != nil || registration.DisplayName != "My PC" {
+		t.Fatalf("name: %s %v", params, err)
+	}
+	method, params, _, err = parse([]string{"remote", "configure", "https://relay.example", "--reset-identity", "off"})
+	if err != nil || method != "remote.configure" {
+		t.Fatal("configure command", err)
+	}
+	var configuration struct {
+		Enabled       bool `json:"enabled"`
+		ResetIdentity bool `json:"resetIdentity"`
+	}
+	if err = json.Unmarshal(params, &configuration); err != nil || configuration.Enabled || !configuration.ResetIdentity {
+		t.Fatal("reset option lost", err)
+	}
+	if _, _, _, err = parse([]string{"remote", "configure", "https://relay.example", "--typo"}); err == nil {
+		t.Fatal("unknown flag accepted")
+	}
+}

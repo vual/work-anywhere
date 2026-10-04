@@ -35,6 +35,7 @@ import (
 type Store interface {
 	Ping(context.Context) error
 	Enroll(context.Context, store.EnrollmentInput, bool) (store.Device, error)
+	RegisterDaemon(context.Context, store.EnrollmentInput, string, int, bool) (store.Device, bool, error)
 	Device(context.Context, uuid.UUID) (store.Device, error)
 	TouchDevice(context.Context, uuid.UUID)
 	ActivePairing(context.Context, uuid.UUID, uuid.UUID) (uuid.UUID, []string, error)
@@ -57,19 +58,21 @@ type Option func(*Server)
 func WithPushQueue(queue PushQueue) Option { return func(server *Server) { server.push = queue } }
 
 type Server struct {
-	cfg      config.Config
-	store    Store
-	registry *routing.Registry
-	acl      *routing.ACLCache
-	limits   *limits.Limiter
-	box      *secretbox.Box
-	push     PushQueue
-	metrics  *observability.Metrics
-	logger   *slog.Logger
-	ready    atomic.Bool
-	http     *http.Server
-	pairMu   sync.Mutex
-	pairs    map[uuid.UUID]*pendingPair
+	cfg          config.Config
+	store        Store
+	registry     *routing.Registry
+	acl          *routing.ACLCache
+	limits       *limits.Limiter
+	box          *secretbox.Box
+	push         PushQueue
+	metrics      *observability.Metrics
+	logger       *slog.Logger
+	ready        atomic.Bool
+	http         *http.Server
+	pairMu       sync.Mutex
+	pairs        map[uuid.UUID]*pendingPair
+	enrollmentMu sync.Mutex
+	enrollments  map[uuid.UUID]pendingEnrollment
 }
 
 type pendingPair struct {
@@ -82,6 +85,7 @@ type pendingPair struct {
 func New(cfg config.Config, state Store, logger *slog.Logger, options ...Option) *Server {
 	server := &Server{cfg: cfg, store: state, registry: routing.NewRegistry(cfg.MaxConnections), acl: routing.NewACLCache(cfg.ACLCacheTTL), limits: limits.New(100_000), logger: logger, pairs: make(map[uuid.UUID]*pendingPair), metrics: &observability.Metrics{}}
 	server.box, _ = secretbox.New(cfg.DataKey)
+	server.enrollments = make(map[uuid.UUID]pendingEnrollment)
 	for _, option := range options {
 		option(server)
 	}
@@ -90,6 +94,9 @@ func New(cfg config.Config, state Store, logger *slog.Logger, options ...Option)
 	mux.HandleFunc("GET /health/ready", server.readiness)
 	mux.HandleFunc("GET /metrics", server.prometheus)
 	mux.HandleFunc("POST /v1/enroll/daemon", server.enrollDaemon)
+	mux.HandleFunc("GET /v1/enrollment/policy", server.enrollmentPolicy)
+	mux.HandleFunc("POST /v1/enrollment/challenges", server.enrollmentChallenge)
+	mux.HandleFunc("POST /v1/enrollment/complete", server.completeEnrollment)
 	mux.HandleFunc("GET /v1/connect", server.connect)
 	mux.HandleFunc("GET /v1/pair", server.pair)
 	server.http = &http.Server{Addr: cfg.ListenAddr, Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 90 * time.Second}
@@ -97,6 +104,7 @@ func New(cfg config.Config, state Store, logger *slog.Logger, options ...Option)
 }
 
 func (s *Server) Run(ctx context.Context) error {
+	go s.cleanEnrollments(ctx)
 	s.ready.Store(true)
 	errCh := make(chan error, 1)
 	go func() {
@@ -155,55 +163,48 @@ type enrollmentRequest struct {
 }
 
 func (s *Server) enrollDaemon(w http.ResponseWriter, r *http.Request) {
-	succeeded := false
-	defer func() {
-		if !succeeded {
-			s.metrics.EnrollmentFailure.Add(1)
-		}
-	}()
-	if !s.limits.Allow("enroll:"+peerIP(r), 0.2, 5) {
+	if !s.limits.Allow("enroll:"+s.peerIP(r), 0.2, 5) {
+		s.metrics.EnrollmentRateLimited.Add(1)
+		w.Header().Set("Retry-After", "5")
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"code": "rate_limited"})
 		return
 	}
-	if s.cfg.EnrollmentMode == "disabled" {
-		writeJSON(w, http.StatusForbidden, map[string]string{"code": "enrollment_disabled"})
+	if s.cfg.EnrollmentMode == "disabled" || s.cfg.EnrollmentMode == "self_service" {
+		s.enrollmentError(w, store.EnrollmentError("enrollment_disabled"))
 		return
 	}
 	var request enrollmentRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"code": "invalid_request"})
+	if !s.decodeEnrollment(w, r, &request) {
 		return
 	}
 	edKey, err := decodeBase64(request.Ed25519PublicKeyBase64)
 	if err != nil || len(edKey) != ed25519.PublicKeySize {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"code": "invalid_ed25519_key"})
+		s.enrollmentError(w, store.EnrollmentError("invalid_request"))
 		return
 	}
 	xKey, err := decodeBase64(request.X25519PublicKeyBase64)
 	if err != nil || len(xKey) != 32 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"code": "invalid_x25519_key"})
+		s.enrollmentError(w, store.EnrollmentError("invalid_request"))
 		return
 	}
 	capabilityHash, err := decodeBase64(request.CapabilityHashBase64)
-	if err != nil || len(capabilityHash) == 0 || len(capabilityHash) > 64 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"code": "invalid_capability_hash"})
+	if err != nil || len(capabilityHash) != 32 {
+		s.enrollmentError(w, store.EnrollmentError("invalid_request"))
 		return
 	}
-	device, err := s.store.Enroll(r.Context(), store.EnrollmentInput{Token: request.Token, Role: int16(relayv1.DeviceRole_DEVICE_ROLE_DAEMON), DisplayName: request.DisplayName, Ed25519PublicKey: edKey, X25519PublicKey: xKey, CapabilityHash: capabilityHash}, s.cfg.EnrollmentMode == "open")
+	device, _, err := s.store.RegisterDaemon(r.Context(), store.EnrollmentInput{Token: request.Token, Role: int16(relayv1.DeviceRole_DEVICE_ROLE_DAEMON), DisplayName: request.DisplayName, Ed25519PublicKey: edKey, X25519PublicKey: xKey, CapabilityHash: capabilityHash}, s.cfg.EnrollmentMode, s.cfg.MaxDaemons, false)
 	if err != nil {
-		s.logger.Warn("enrollment.rejected", "code", "invalid_enrollment")
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"code": "invalid_enrollment"})
+		s.enrollmentError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]string{"deviceId": device.ID.String()})
-	succeeded = true
 	s.metrics.EnrollmentSuccess.Add(1)
+	s.metrics.EnrollmentCreated.Add(1)
 }
 
 func (s *Server) pair(w http.ResponseWriter, r *http.Request) {
-	if !s.limits.Allow("pair:"+peerIP(r), 0.5, 10) {
+	if !s.limits.Allow("pair:"+s.peerIP(r), 0.5, 10) {
+		w.Header().Set("Retry-After", "2")
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"code": "rate_limited"})
 		return
 	}
@@ -286,7 +287,8 @@ func (s *Server) pair(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
-	if !s.limits.Allow("connect:"+peerIP(r), 1, 20) {
+	if !s.limits.Allow("connect:"+s.peerIP(r), 1, 20) {
+		w.Header().Set("Retry-After", "1")
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"code": "rate_limited"})
 		return
 	}
@@ -332,6 +334,10 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	device, err := s.store.Device(r.Context(), deviceID)
+	if err != nil && !errors.Is(err, store.ErrDeviceNotFound) {
+		_ = writeProto(r.Context(), ws, protocolError("temporarily_unavailable", "device lookup temporarily unavailable", frame.MessageId))
+		return
+	}
 	if err != nil || device.Status != "active" || int32(device.Role) != int32(auth.Role) || subtle.ConstantTimeCompare(device.CapabilityHash, auth.CapabilityHash) != 1 || !ed25519.Verify(device.Ed25519PublicKey, waProtocol.AuthSignatureInput(connectionID, challenge, expiresAt, auth.CapabilityHash), auth.Signature) {
 		_ = writeProto(r.Context(), ws, protocolError("auth_failed", "device authentication failed", frame.MessageId))
 		return

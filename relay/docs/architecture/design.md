@@ -4,6 +4,8 @@
 
 ## 目标与范围
 
+daemon 的自助签名登记由 [注册协议](../daemon-enrollment/design.md) 定义。Relay 登记服务身份与电脑授权手机是独立边界：自动登记不建立 pairing，也不授予业务 scope；账号和验证码不属于本次自助接入范围。
+
 Relay 为 NAT/防火墙后的 Desktop daemon 和 Mobile 提供设备认证、配对、在线密文路由和通用 push。Relay 不运行 Codex、不管理官方 session，也不是消息历史数据库。
 
 ## 当前架构与数据流

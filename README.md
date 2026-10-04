@@ -5,6 +5,8 @@
   <p><strong>简体中文</strong> | <a href="README.en.md">English</a></p>
 </div>
 
+Desktop 支持无人工 token 的 Relay 自助接入：部署者显式设置 `ENROLLMENT_MODE=self_service` 后，用户在本机管理页填写 Relay 地址并点击“启用远程访问”，自动完成签名注册和连接，再扫码并在电脑批准手机。Relay 默认仍为 `invite`；已有身份和配对升级后继续使用。协议与部署步骤见 [自助注册设计](relay/docs/daemon-enrollment/design.md) 和 [Relay 入口](relay/README.md)。
+
 Work Anywhere(WAW) 的目标是让你在手机上也能实时与电脑端 ChatGPT Codex Desktop 进行交互，让你离开电脑时，能够在手机上随时掌控任务运行状态，或者发出新的指令。
 
 适合谁：

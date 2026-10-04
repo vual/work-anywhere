@@ -18,9 +18,10 @@
       <div class="form-grid">
         <label>Relay 地址<input id="relay-url" type="url" placeholder="http://127.0.0.1:18080"></label>
         <label>设备名称<input id="relay-name" type="text" placeholder="我的 Desktop"></label>
-        <label class="wide">Enrollment Token<input id="relay-token" type="password" autocomplete="off" placeholder="从 Relay 管理端生成的一次性 token"></label>
+        <label id="relay-token-label" class="wide" hidden>邀请码<input id="relay-token" type="password" autocomplete="off" placeholder="此 Relay 需要一次性邀请码"></label>
       </div>
-      <div class="actions"><button id="relay-configure">保存地址</button><button id="relay-enroll" class="primary">注册 Desktop</button><button id="relay-reconnect">重新连接</button></div>
+      <div class="actions"><button id="relay-configure" class="primary">启用远程访问</button><button id="relay-enroll">完成注册 / 重试</button><button id="relay-legacy" hidden>使用旧版邀请码注册</button><button id="relay-reset">重置远程身份</button><button id="relay-reconnect">重新连接</button></div>
+      <p id="relay-progress" class="meta"></p>
       <div class="relay-meta"><span>设备指纹：<code id="relay-fingerprint">—</code></span><span>设备 ID：<code id="relay-device">—</code></span></div>
     </section>
     <section class="panel">

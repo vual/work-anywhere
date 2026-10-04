@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -22,6 +23,7 @@ type Config struct {
 	ShutdownTimeout    time.Duration
 	ACLCacheTTL        time.Duration
 	MaxConnections     int
+	MaxDaemons         int
 	APNsTeamID         string
 	APNsKeyID          string
 	APNsKeyFile        string
@@ -38,6 +40,7 @@ func Load() (Config, error) {
 		ShutdownTimeout:    20 * time.Second,
 		ACLCacheTTL:        30 * time.Second,
 		MaxConnections:     10_000,
+		MaxDaemons:         10_000,
 		APNsTeamID:         strings.TrimSpace(os.Getenv("APNS_TEAM_ID")),
 		APNsKeyID:          strings.TrimSpace(os.Getenv("APNS_KEY_ID")),
 		APNsKeyFile:        strings.TrimSpace(os.Getenv("APNS_KEY_FILE")),
@@ -64,6 +67,27 @@ func Load() (Config, error) {
 		}
 		cfg.MaxConnections = value
 	}
+	if raw := strings.TrimSpace(os.Getenv("RELAY_MAX_DAEMONS")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value <= 0 {
+			return Config{}, errors.New("invalid RELAY_MAX_DAEMONS")
+		}
+		cfg.MaxDaemons = value
+	}
+	if parsed, err := url.Parse(cfg.PublicURL); err == nil && parsed.Host != "" {
+		parsed.Scheme = strings.ToLower(parsed.Scheme)
+		parsed.Host = strings.ToLower(parsed.Host)
+		if (parsed.Scheme == "https" && parsed.Port() == "443") || (parsed.Scheme == "http" && parsed.Port() == "80") {
+			parsed.Host = parsed.Hostname()
+			if strings.Contains(parsed.Host, ":") {
+				parsed.Host = "[" + parsed.Host + "]"
+			}
+		}
+		if parsed.Path == "/" {
+			parsed.Path = ""
+		}
+		cfg.PublicURL = parsed.String()
+	}
 	key, err := loadDataKey()
 	if err != nil {
 		return Config{}, err
@@ -84,9 +108,14 @@ func (c Config) Validate() error {
 		return errors.New("RELAY_PUBLIC_URL must be an HTTP or HTTPS origin without path, query, or fragment")
 	}
 	switch c.EnrollmentMode {
-	case "invite", "open", "disabled":
+	case "invite", "open", "disabled", "self_service":
 	default:
-		return errors.New("ENROLLMENT_MODE must be invite, open, or disabled")
+		return errors.New("ENROLLMENT_MODE must be invite, open, disabled, or self_service")
+	}
+	for _, cidr := range c.TrustedProxyCIDRs {
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			return errors.New("invalid TRUSTED_PROXY_CIDRS")
+		}
 	}
 	if len(c.DataKey) != 32 {
 		return errors.New("RELAY_DATA_KEY must decode to exactly 32 bytes")

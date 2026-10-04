@@ -37,6 +37,30 @@ type fakeStore struct {
 }
 
 func (f *fakeStore) Ping(context.Context) error { return nil }
+func (f *fakeStore) RegisterDaemon(ctx context.Context, input store.EnrollmentInput, mode string, maxDaemons int, recoverIdentity bool) (store.Device, bool, error) {
+	f.mu.Lock()
+	for _, device := range f.devices {
+		if bytes.Equal(device.Ed25519PublicKey, input.Ed25519PublicKey) && device.Role == 1 {
+			f.mu.Unlock()
+			if device.Status != "active" {
+				return store.Device{}, false, store.EnrollmentError("device_revoked")
+			}
+			if !recoverIdentity || !bytes.Equal(device.X25519PublicKey, input.X25519PublicKey) || !bytes.Equal(device.CapabilityHash, input.CapabilityHash) {
+				return store.Device{}, false, store.EnrollmentError("identity_conflict")
+			}
+			return device, false, nil
+		}
+	}
+	f.mu.Unlock()
+	if mode == "disabled" {
+		return store.Device{}, false, store.EnrollmentError("enrollment_disabled")
+	}
+	if mode == "invite" && input.Token == "" {
+		return store.Device{}, false, store.EnrollmentError("invite_required")
+	}
+	device, err := f.Enroll(ctx, input, mode == "open" || mode == "self_service")
+	return device, true, err
+}
 func (f *fakeStore) Enroll(_ context.Context, input store.EnrollmentInput, _ bool) (store.Device, error) {
 	value := store.Device{ID: uuid.New(), Role: input.Role, DisplayName: input.DisplayName, Ed25519PublicKey: input.Ed25519PublicKey, X25519PublicKey: input.X25519PublicKey, CapabilityHash: input.CapabilityHash, Status: "active"}
 	f.mu.Lock()

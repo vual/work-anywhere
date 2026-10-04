@@ -2,6 +2,8 @@
 
 ## Goal and scope
 
+Relay 注册必须先将本地设备密钥写入 encrypted settings，再执行网络登记；device ID 写入失败时保留原密钥供签名恢复。身份重置或 origin 变更由本机明确确认，原子保存配置并隔离旧异步结果；规则见 [Relay connector](../remote-relay-connector/design.md)。邀请码、challenge 和签名不进入持久化或日志。
+
 本功能为 daemon 保存可重连的会话投影和诊断信息，同时降低消息、工具输出、diff、审批内容和附件落盘后的泄露风险。它不替代官方 Codex session 存储。
 
 ## Current architecture and data flow

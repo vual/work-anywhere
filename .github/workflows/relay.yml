@@ -26,6 +26,20 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-bookworm
+        env:
+          POSTGRES_DB: enrollment_test
+          POSTGRES_USER: enrollment_test
+          POSTGRES_PASSWORD: enrollment_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U enrollment_test -d enrollment_test"
+          --health-interval 2s --health-timeout 2s --health-retries 30
+    env:
+      RELAY_TEST_DATABASE_URL: postgres://enrollment_test:enrollment_test@localhost:5432/enrollment_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -61,6 +75,17 @@ jobs:
       - name: Build production image
         working-directory: relay
         run: docker build --tag work-anywhere-relay:test .
+      - name: Verify Compose migrations and enrollment policy
+        working-directory: relay
+        env:
+          RELAY_DATA_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          ENROLLMENT_MODE: self_service
+        run: |
+          trap 'docker compose --project-name enrollment-smoke logs; docker compose --project-name enrollment-smoke down --volumes' EXIT
+          docker compose --project-name enrollment-smoke up --build --detach
+          curl --fail --retry 30 --retry-delay 2 --retry-connrefused http://127.0.0.1:18080/health/ready
+          docker compose --project-name enrollment-smoke exec --no-TTY relay /relay migrate status
+          curl --fail http://127.0.0.1:18080/v1/enrollment/policy | jq -e '.protocol == "daemon-enrollment-v1" and .mode == "self_service"'
 
   desktop-windows:
     runs-on: windows-latest

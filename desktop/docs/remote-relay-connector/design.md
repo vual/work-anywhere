@@ -22,6 +22,7 @@ Desktop daemon 主动连接 Relay，把已授权 Mobile 的 E2EE 请求交给现
 - remote.status
 - remote.configure
 - remote.enroll
+- remote.register
 - remote.pair.start/list/resolve/cancel/revoke
 - remote.reconnect
 
@@ -31,11 +32,15 @@ remote.configure 接受合法的 HTTP 或 HTTPS origin，IP 和域名均可，�
 
 ## Identity, pairing, and storage
 
-首次 enroll 生成 Ed25519 identity 与 X25519 Noise static key。整个 remote state（配置、私钥、公钥、device ID 和 pairings）写入 Desktop encrypted settings；SQLite row 使用 AES-256-GCM，master key 由 Windows current-user DPAPI 保护。
+首次注册生成并先安全保存 Ed25519 identity 与 X25519 Noise static key。整个 remote state（配置、私钥、公钥、device ID 和 pairings）写入 Desktop encrypted settings；SQLite row 使用 AES-256-GCM，master key 由 Windows current-user DPAPI 保护。
 
 pairing secret 仅在内存，最长五分钟；pairing 保存 peer keys、capability hash 和 scopes。daemon 验证 QR HMAC 后签署 grant，收到 Relay result 时再次要求 expiry、signature 和 scopes 与本机批准值完全一致。revoked pairing 从本地 state 删除并关闭相关 session。
 
-当前没有“删除远程身份/轮换 key”命令；需重新建立身份的恢复流程尚未产品化。新 pairing 的默认 scopes 还包含 `conversation.create`，用于项目内创建 Codex thread；为兼容已授权设备，已有 `turn.start` scope 也允许该方法。
+本机管理页提供明确确认的远程身份重置；CLI 使用 `remote configure <origin> --reset-identity`，本机 control 使用 `remote.configure.resetIdentity`。重置清除全部远程密钥、device ID、手机配对和内存 session，随后重新登记并扫码。切换规范化 origin 时已有身份必须显式重置，只保存一个 Relay；普通升级/停用不删除身份。密钥不完整或公私钥不匹配时停止连接并要求本机处理，不自动生成替代身份。新 pairing 的默认 scopes 还包含 `conversation.create`，用于项目内创建 Codex thread；为兼容已授权设备，已有 `turn.start` scope 也允许该方法。
+
+启用且无 device ID 时，remote Service 串行读取注册策略并执行 [Relay 自助注册协议](../../../relay/docs/daemon-enrollment/design.md)。先安全持久化密钥，再提交签名；响应或本地 ID 保存失败后用同一密钥恢复原 ID。invite 提示邀请码，旧 Relay 明确显示需要升级，允许用户主动执行 remote.enroll，不自动降级。状态包含 phase、registrationMode、lastErrorCode、nextRetryAt；网络/5xx 使用 1–30 秒 capped exponential backoff 和随机抖动，429 遵守 Retry-After，永久身份/协议错误暂停。邀请码不持久化。配置 generation 与取消 context 防止旧注册/连接写回；加载旧配置保留身份和配对。
+
+配置提交先隔离配对操作、入站 frame 和事件转发，取消旧注册/连接、关闭 socket、清理临时配对与 Noise session，再原子保存新配置。保存失败保留旧配置、密钥和已授权配对，但旧任务仍失效并唤醒 Service 重新连接；旧 socket 的迟到 frame 和事件不得操作新配置。
 
 ## Remote request adapter
 
@@ -61,7 +66,7 @@ socket 断开会销毁内存 Noise sessions，不中断 Desktop Turn。重连后
 
 ## Security and failure handling
 
-- production URL 必须 HTTPS/WSS，不提供跳过证书校验。
+- 公网部署应使用 HTTPS/WSS，不提供跳过证书校验；保留显式 HTTP/WS 开发配置。
 - pairing secret、enrollment token、private key、ciphertext 和 control body不写结构化日志。
 - malformed JSON、Noise tamper、binding/sequence/expiry 或 endpoint mismatch 会拒绝 frame；无效 control request 关闭 session。旧 session 的迟到 frame 不会迁移到新 session。Relay route ACK 明确拒绝配对决定时，daemon 清除本地 submitted 状态并允许重新提交；response/event 的拒绝 ACK 只记录 kind 和 error code，业务消息不自动重发，其中 `peer_offline` 还会使对应 session 失效以阻止后续事件风暴。发送前若发现本地 device identity 与当前 WebSocket 身份不一致，则拒绝发送并要求重连。
 - socket writes 串行化并有 10 秒 timeout；失败只影响 remote connector。

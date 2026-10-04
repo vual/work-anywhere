@@ -52,6 +52,12 @@ Compose 默认只把端口绑定到 loopback，适合本机联调。需要从其
 
 创建一次性 daemon enrollment token：
 
+公共 Relay 可以显式使用自助模式。在 `.env` 中设置 `ENROLLMENT_MODE=self_service` 后启动或重建 Compose；默认 `invite` 不会因升级自动开放。Desktop 管理页填写与 `RELAY_PUBLIC_URL` 相同的规范化 origin，点击“启用远程访问”即可自动签名注册，然后扫码并在电脑批准手机。自助模式无需执行下方 token 创建命令。`open` 仍供可信开发环境使用，`disabled` 拒绝新设备但允许签名恢复已有 active 身份。协议见 [Daemon 自助注册](docs/daemon-enrollment/design.md)。
+
+升级顺序：先备份 PostgreSQL，执行 `migrate up` 并升级 Relay（保留 `invite`），再升级 Desktop，通过联调后开启 `self_service`。迁移检测到重复 daemon 公钥会报告设备 ID 并停止，必须人工处理，不自动删除身份或配对。`RELAY_MAX_DAEMONS` 默认 10,000，包含 revoked 登记；恢复原身份不占新增额度。
+
+真实 PostgreSQL 注册测试通过 `RELAY_TEST_DATABASE_URL` 指向测试数据库后运行 `go test ./internal/store`，测试使用独立随机 schema，不修改既有表。未提供该变量时测试会明确跳过。
+
 ```powershell
 docker compose exec relay /relay enrollment create --ttl 24h --uses 1
 ```

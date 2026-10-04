@@ -17,6 +17,8 @@ Bridge 首次需要 daemon 时会隐藏启动 `work-anywhere.exe daemon run`；�
 
 ## Interfaces
 
+管理页“启用远程访问”保存地址后自动注册和连接，按 Relay 模式显示邀请码或旧版注册入口。状态展示注册阶段与重试时间，仅连接成功时允许生成二维码。切换地址和重置远程身份需要本机确认，清除配对 URI/QR 和旧身份后重新注册。管理权限与 CSRF/Origin 校验沿用下述本机边界。
+
 - `work-anywhere.exe daemon start|status|stop|force-stop`
 - `work-anywhere.exe ui`
 - 控制方法 `system.status`, `system.ui_url`, `system.control.pause/resume`, `system.shutdown`

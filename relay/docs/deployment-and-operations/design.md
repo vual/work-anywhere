@@ -32,7 +32,8 @@ RELAY_DATA_KEY or RELAY_DATA_KEY_FILE
 
 ```text
 RELAY_LISTEN_ADDR=:8080
-ENROLLMENT_MODE=invite|open|disabled
+ENROLLMENT_MODE=invite|self_service|open|disabled
+RELAY_MAX_DAEMONS=10000
 LOG_LEVEL=info
 RELAY_SHUTDOWN_TIMEOUT=20s
 RELAY_MAX_CONNECTIONS=10000
@@ -43,7 +44,9 @@ FCM_CREDENTIALS_FILE
 
 `RELAY_PUBLIC_URL` 接受 HTTP 或 HTTPS 的 IP/域名 origin，但 HTTP 不提供传输层机密性和完整性，公网部署应使用 HTTPS/WSS。`RELAY_DATA_KEY` 解码后必须恰好 32 bytes。生产应使用 `RELAY_DATA_KEY_FILE` 和 read-only secret mount；该 key 必须稳定备份，否则已有 push token 无法解密。当前没有 KMS adapter。APNs 三个参数必须同时设置。
 
-`RELAY_MAX_CONNECTIONS` 限制 authenticated registry 中的设备连接数。`TRUSTED_PROXY_CIDRS` 当前只完成配置解析，尚未接入 forwarded-IP 判定；连接/IP 策略应由反向代理和应用现有直接 socket-IP limiter 共同承担。
+`RELAY_MAX_CONNECTIONS` 限制 authenticated registry 中的设备连接数；认证前连接限制由反向代理承担。`TRUSTED_PROXY_CIDRS` 接入受信任 X-Forwarded-For 链解析，未配置时只使用 socket IP。`RELAY_MAX_DAEMONS` 限制 active/revoked daemon 登记总量，签名恢复不占新增额度。Compose 使用环境中的注册模式，默认 invite；公共服务明确设置 self_service。
+
+设备注册、恢复和迁移升级步骤见 [自助注册设计](../daemon-enrollment/design.md)。先备份数据库、升级 Relay 并迁移，保留 invite，再升级 Desktop、验证扫码闭环后开启 self_service。重复 daemon 身份会使 migration 失败，须人工解决冲突后重试。
 
 ## Commands, migrations, and health
 
@@ -83,6 +86,8 @@ V1 不要求 Kubernetes、Redis、NATS、Kafka、对象存储或多区域数据�
 ## 验证方式
 
 运行 fmt/test/vet/race、Buf generation diff、Docker build、Compose migration、ready/metrics probe 和 Desktop/Mobile WSS smoke。路由回归必须覆盖 1 MiB 超限的 `payload_too_large`、peer offline、queue full、拒绝 ACK 立即完成和迟到 ACK 隔离。生产发布前另做 backup restore、credential rotation、load/soak 和 TLS expiry 演练。
+
+Relay Linux CI 使用 PostgreSQL 18 执行真实注册事务和迁移冲突测试，随后启动独立 Compose project 验证迁移、ready 与 self_service policy；Desktop 连接器同时验证共享签名向量。CI 定义见 [relay.yml](../../../.github/workflows/relay.yml)。手机扫码、电脑批准和真实加密调用仍需部署后的端到端验收，不能用 policy probe 替代。
 
 ## 文档更新触发
 
