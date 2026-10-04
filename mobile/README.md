@@ -84,6 +84,8 @@ Flutter 固定为 `3.47.2`，Go 为仓库 `1.26.5`，`x/mobile` 固定到 `v0.0.
 
 Flutter 文案已提供 `zh-CN` 与 `en-US` locale（并保留对应基础语言 fallback）；Android/iOS launcher icon 使用白底、黑色 WAW 连线和绿色中心点，应用内图标仍使用黑底、白色 WAW 连线和绿色中心点。启动图标的矢量源见 [`app/branding/launcher-icon.svg`](app/branding/launcher-icon.svg)。iOS 当前只有生成的 Pigeon 接口与权限声明，尚未接入 Go XCFramework/Keychain host，因此不属于可运行目标。
 
+Android 在启动、返回前台和配置变更时请求当前分辨率下设备支持的最高刷新率，包括可用的 90/120 Hz mode；实际刷新率仍由系统、省电、温控和 OEM 应用策略决定，不承诺持续 120 FPS。实现与真机验收边界见 [architecture](docs/architecture/design.md)。
+
 ## Build and verification
 
 ```powershell

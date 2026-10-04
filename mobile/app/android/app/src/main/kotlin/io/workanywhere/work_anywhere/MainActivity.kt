@@ -1,6 +1,8 @@
 package io.workanywhere.work_anywhere
 
 import android.content.Context
+import android.content.res.Configuration
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -29,6 +31,44 @@ class MainActivity : FlutterActivity() {
         // also clears the flag if an older Activity instance was restored with
         // FLAG_SECURE before the app was upgraded.
         window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        requestHighRefreshRate()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        requestHighRefreshRate()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        requestHighRefreshRate()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun requestHighRefreshRate() {
+        val currentDisplay = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            display
+        } else {
+            windowManager.defaultDisplay
+        } ?: return
+        val currentMode = currentDisplay.mode
+        val preferredMode = currentDisplay.supportedModes
+            .filter {
+                it.physicalWidth == currentMode.physicalWidth &&
+                    it.physicalHeight == currentMode.physicalHeight
+            }
+            .fold(currentMode) { bestMode, candidate ->
+                if (candidate.refreshRate > bestMode.refreshRate) candidate else bestMode
+            }
+        val attributes = window.attributes
+        if (attributes.preferredDisplayModeId == preferredMode.modeId &&
+            attributes.preferredRefreshRate == preferredMode.refreshRate
+        ) {
+            return
+        }
+        attributes.preferredDisplayModeId = preferredMode.modeId
+        attributes.preferredRefreshRate = preferredMode.refreshRate
+        window.attributes = attributes
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {

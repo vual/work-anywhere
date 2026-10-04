@@ -12,6 +12,7 @@
 
 - 使用 Flutter/Dart 构建 iOS 与 Android UI，采用 feature-first 目录和 MVVM：View 只渲染 immutable UI state，ViewModel 编排 use case，Repository 按 Daemon、Agent、Project/Bot、Conversation 聚合本地状态与远端 service。
 - Android UI 使用 edge-to-edge；系统状态栏和导航栏保持透明，由 Flutter `SystemUiOverlayStyle` 按浅色/深色主题显式设置图标亮度，Android 启动主题同时提供同样的初始 appearance，避免 Activity 被 OEM 恢复时状态栏图标在浅色背景上不可见。
+- Android host 在 Activity 创建、恢复前台和配置变更时枚举当前显示器的 supported modes，只在当前物理分辨率中选择最高刷新率，通过窗口 `preferredDisplayModeId` 与 `preferredRefreshRate` 请求高刷；同刷新率优先保留当前 mode，不切换分辨率，不增加 Dart 插件或 Pigeon 接口。只有 60 Hz 的显示器保留其可用 mode；显示器不可用时跳过请求。请求不写系统设置，也不绕过 OEM 应用限刷、省电或温控策略，因此不能保证实际渲染持续达到 120 FPS。
 - App shell 使用单工作台与系统返回栈，不建立底部导航状态；Daemon/Agent 是工作台上下文 selection，项目和会话是可恢复的下钻 route。
 - 路由、依赖注入和状态容器使用锁定版本的 Dart package；具体 package 在 scaffold PoC 后写入 `pubspec.lock`，不得让其类型泄漏到 protocol/repository public interface。
 - Flutter 到 host 的命令边界集中在 `app/pigeons/mobile_core.dart` 生成的 Pigeon typed channel，host 到 Flutter 的主动状态/事件通过专用 EventChannel 传递。业务 widget 不直接依赖 channel 字符串，也不接触 key bytes 或 protobuf frame；当前 conversation summary（含 Desktop 解析的项目 ID/名称）、timeline summary 和 model/permission catalog 已在 Desktop 结构化，完整句子由 Flutter 本地化，action 仍含受控的 provider-shaped payload。
@@ -131,10 +132,11 @@ Repository 中的权威划分：
 - widget/golden tests：无配对根页、无底栏工作台、顶栏右侧 Daemon 状态下拉、左侧 App icon 与居中活跃任务提示、纵向滚动时固定的顶栏和横向 Agent selector、项目/对话/搜索/详情的 loading/empty/offline/error/action states、动态字体、深浅主题和窄屏。
 - integration tests：模拟 Relay/Desktop 的 pair/auth/Noise/snapshot/event/gap/revoke；真实 Relay + Desktop 端到端闭环。
 - iOS/Android physical-device tests：Keychain/Keystore、重装、升级、锁屏、切后台、弱网、push token rotation、相机权限和通知权限。
+- Android 刷新率验证：执行 `mobile/scripts/test.ps1` 与 `mobile/scripts/build-android.ps1 -Mode debug`；在小米 11 Pro 等 120 Hz 真机开启系统高刷后，检查窗口 mode/refresh-rate 请求、滚动和动画帧时序，并覆盖冷启动、后台恢复、旋转和分辨率变更。另验证 60 Hz 设备不切换分辨率或报错，以及省电/OEM 限刷时 App 保持可用。开发者选项的“显示刷新率”只验证显示器 Hz，不作为 App 实际 FPS 的证明；帧性能用 profile/release 构建人工验证，真机未连接时不得标记为已通过。
 - release gate：依赖/SBOM/secret scan、release build 中无 debug entitlement、日志与本机文件扫描无 fixture 明文；HTTP/WS 与 HTTPS/WSS 均为受支持的 Relay transport，部署方负责选择安全传输。
 
 模块最少验证入口是 `mobile/scripts/test.ps1`。Android SDK 可用时运行 `generate.ps1` 与 `build-android.ps1`；macOS no-sign iOS build 尚未加入 CI，不能标记为已验证。
 
 ## 文档更新触发
 
-修改 UI 框架、导航 shell、Daemon/Agent selection、Project/Bot capability、分页搜索、Go core/binding、状态分层、protobuf 生成、密码原语/Noise、平台 bridge、密钥存储、正文持久化、socket owner、后台策略、通知处理、日志或支持平台时，必须更新本文档及协议同步、交互、交付计划和相关 Relay/Desktop 设计。
+修改 UI 框架、显示模式/刷新率策略、导航 shell、Daemon/Agent selection、Project/Bot capability、分页搜索、Go core/binding、状态分层、protobuf 生成、密码原语/Noise、平台 bridge、密钥存储、正文持久化、socket owner、后台策略、通知处理、日志或支持平台时，必须更新本文档及协议同步、交互、交付计划和相关 Relay/Desktop 设计。
