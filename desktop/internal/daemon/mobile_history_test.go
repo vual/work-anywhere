@@ -58,29 +58,106 @@ func fakeHistoryServer(t *testing.T, i *Instance, handler historyCaller) {
 	t.Cleanup(func() { _ = w.Close(); _ = r.Close(); <-done })
 }
 
-func TestConversationBusinessVersionRestoresSeparately(t *testing.T) {
+func TestConversationBusinessVersionIsProcessLocal(t *testing.T) {
 	i, _, cleanup := testInstance(t)
 	defer cleanup()
-	if err := i.manager.store.UpsertConversation(i.descriptor.ID, "t", "idle", 13, 20); err != nil {
-		t.Fatal(err)
-	}
 	for _, event := range []string{"provider.mcpServer/startupStatus/updated", "provider.item/agentMessage/delta", "provider.unknown/future"} {
 		i.broadcastEvent(event, map[string]any{"threadId": "t"})
 	}
-	if revision, sequence := i.ConversationVersion("t"); revision != 13 || sequence != 23 {
+	if revision, sequence := i.ConversationVersion("t"); revision != 0 || sequence != 3 {
 		t.Fatalf("versions %d/%d", revision, sequence)
 	}
 	i.broadcastEvent("provider.turn/started", map[string]any{"params": map[string]any{"thread": map[string]any{"id": "t"}}})
+	if revision, sequence := i.ConversationVersion("t"); revision != 1 || sequence != 4 {
+		t.Fatalf("versions after turn start %d/%d", revision, sequence)
+	}
 	i.mu.Lock()
 	i.conversations = make(map[string]*conversationProjection)
 	i.mu.Unlock()
-	if revision, sequence := i.ConversationVersion("t"); revision != 14 || sequence != 24 {
-		t.Fatalf("restored versions %d/%d", revision, sequence)
+	if revision, sequence := i.ConversationVersion("t"); revision != 0 || sequence != 0 {
+		t.Fatalf("process-local versions were restored: %d/%d", revision, sequence)
 	}
-	_ = i.manager.store.UpsertConversation(i.descriptor.ID, "t", "idle", 2, 3)
-	status, revision, sequence := i.manager.store.ConversationVersion(i.descriptor.ID, "t")
-	if revision != 14 || sequence != 24 || status != "running" {
-		t.Fatalf("stale persistence overwrote state: %s %d/%d", status, revision, sequence)
+}
+
+func TestConversationEventWindowAndProjectionCountAreBounded(t *testing.T) {
+	i, _, cleanup := testInstance(t)
+	defer cleanup()
+	for sequence := 0; sequence < 300; sequence++ {
+		i.broadcastEvent("provider.item/agentMessage/delta", map[string]any{"threadId": "active", "delta": "x"})
+	}
+	i.mu.Lock()
+	if got := len(i.conversations["active"].Events); got != 256 {
+		i.mu.Unlock()
+		t.Fatalf("event window = %d", got)
+	}
+	replayFloor := i.conversations["active"].ReplayFloor
+	i.mu.Unlock()
+	if replayFloor == 0 {
+		t.Fatal("truncated event window did not advance the replay floor")
+	}
+	subscription := i.ConversationSubscription(json.RawMessage(`{"threadId":"active","cursor":0}`)).(map[string]any)
+	if snapshot, _ := subscription["snapshot"].(bool); !snapshot {
+		t.Fatal("cursor older than the replay window did not require a snapshot")
+	}
+	for index := 0; index < 300; index++ {
+		i.ConversationVersion(fmt.Sprintf("thread-%03d", index))
+	}
+	i.mu.Lock()
+	count := len(i.conversations)
+	i.mu.Unlock()
+	if count > 256 {
+		t.Fatalf("projection count = %d", count)
+	}
+}
+
+func TestProjectionLimitCountsOnlyInactiveConversations(t *testing.T) {
+	i, _, cleanup := testInstance(t)
+	defer cleanup()
+	i.mu.Lock()
+	for index := 0; index < 50; index++ {
+		id := fmt.Sprintf("active-%03d", index)
+		i.activeTurns[id] = "turn"
+		i.projectionLocked(id)
+	}
+	i.mu.Unlock()
+	for index := 0; index < 300; index++ {
+		i.ConversationVersion(fmt.Sprintf("inactive-%03d", index))
+	}
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if got := len(i.conversations); got != 306 {
+		t.Fatalf("projection count = %d, want 50 pinned + 256 inactive", got)
+	}
+	for index := 0; index < 50; index++ {
+		if i.conversations[fmt.Sprintf("active-%03d", index)] == nil {
+			t.Fatalf("active projection %d was evicted", index)
+		}
+	}
+}
+
+func TestGlobalEventPayloadBudgetEvictsOldestReplayPrefix(t *testing.T) {
+	i, _, cleanup := testInstance(t)
+	defer cleanup()
+	i.manager.instances = map[string]*Instance{i.descriptor.ID: i}
+	payload := strings.Repeat("x", 2<<20)
+	for index := 0; index < 17; index++ {
+		i.broadcastEvent("provider.item/agentMessage/delta", map[string]any{
+			"threadId": "large",
+			"delta":    payload,
+		})
+	}
+	if got := i.manager.eventPayloadBytes.Load(); got > maxEventPayloadMemory {
+		t.Fatalf("event payload bytes = %d", got)
+	}
+	i.mu.Lock()
+	floor := i.conversations["large"].ReplayFloor
+	i.mu.Unlock()
+	if floor == 0 {
+		t.Fatal("global payload budget did not evict the oldest replay prefix")
+	}
+	result := i.ConversationSubscription(json.RawMessage(`{"threadId":"large","cursor":0}`)).(map[string]any)
+	if snapshot, _ := result["snapshot"].(bool); !snapshot {
+		t.Fatal("evicted global replay prefix did not force a snapshot")
 	}
 }
 

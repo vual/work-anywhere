@@ -50,7 +50,7 @@ internal/platform
 
 ## State and persistence
 
-平台适配层不拥有业务数据库。它只管理进程句柄、OS lock、IPC endpoint、系统密钥封装、托盘窗口和安装状态。平台返回的身份与 endpoint 由共享层用于实例和连接管理。
+平台适配层不拥有消息存储。它只管理进程句柄、OS lock、IPC endpoint、current-user DPAPI、托盘窗口、安装状态和 JSON 配置路径。平台返回的身份与 endpoint 由共享层用于实例和连接管理。
 
 ## Security and failure handling
 
@@ -70,7 +70,7 @@ internal/platform
 
 - 平台接口与实现：`internal/platform/`
 - 平台发布配置：`packaging/`
-- 共享业务：`internal/bridge`, `internal/daemon`, `internal/codex`, `internal/store`, `internal/cli`
+- 共享业务：`internal/bridge`, `internal/daemon`, `internal/codex`, `internal/config`, `internal/cli`
 - Windows 构建：`scripts/build.ps1`
 
 ## Verification

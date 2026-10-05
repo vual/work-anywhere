@@ -41,7 +41,7 @@ Flutter 适合共享 UI 与业务逻辑，同时保留 Swift/Kotlin 平台接入
 
 当前 Flutter 通过 Pigeon `MobileCoreApi` 发出 `pair`、`restoreStored`、多 pairing 的选择/启停/排序/Relay 更新/本机删除/短探测、credential catalog 持久化、通用 versioned control `call`、`status` 和 `close`；业务 method/DTO 位于 `mobile-control-v1` envelope 内。Android host 把 Go Core 的 `EventSink` 接到 `work_anywhere/mobile_events` EventChannel，主动发送 daemon event 和 transport state；iOS 事件宿主尚未实现。
 
-Host 把 command 转给 gomobile facade；Go core 的 event sink 只返回两类 JSON envelope：metadata-only `type=event` 与连接生命周期 `type=transport`，两者都携带当前 `daemonId + selection generation`。endpoint 不把迟到 response 当事件，未注册 sink 时仅在内存保留最近 1000 条 daemon event；Android 主线程转发后，Dart controller 仍按当前电脑和 generation 二次过滤，再合并 event burst 并用 snapshot sequence 丢弃迟到结果。网络任务永不在 platform main thread 同步等待。
+Host 把 command 转给 gomobile facade；Go core 的 event sink 返回 `type=event` 与连接生命周期 `type=transport`。`conversation.delta` 可携带合并后的实时正文，其他事件通常是失效或终态提示；两类 envelope 都附加当前 `daemonId + selection generation`。endpoint 不把迟到 response 当事件，未注册 sink 时只保留最近 256 条且总计不超过 2 MiB，溢出后先发 `conversation.invalidated`。Android 主线程转发后，Dart controller 按当前电脑和 generation 二次过滤。网络任务永不在 platform main thread 同步等待。
 
 Go core 向 host 反向请求的窄接口只有：`SecretStore.load/save/delete`、应用私有文件读取和脱敏诊断 sink；host-only API 包含 `registerPushToken`，provider token 不经过 Flutter。Key bytes、完整配对 URI、provider token、ciphertext 和 control raw body 不可进入 `CoreStateEvent`。Core/Flutter API 与 Relay wire、Desktop control 是三个独立版本域，任何一层升级都要单独协商和测试。
 
@@ -80,7 +80,7 @@ Repository 中的权威划分：
 - Desktop snapshot 是会话与 action 的远端权威。
 - Go `PairingRuntime` 是连接/握手、request map 和 wire sequence 的内存权威；Dart Repository 是规范化 view projection/cursor 的内存 owner。
 - Workspace ViewModel 恢复并持有当前 Daemon/Agent、项目展开页数、搜索 query 和滚动位置；View 将 Daemon 顶栏和 Agent selector 放在纵向滚动容器之外，仅让项目/对话内容区滚动和响应下拉刷新；切换 context 时只接受当前 selection generation 的结果。
-- `ConversationController` 拥有 metadata、正序 timeline、older cursor、revision/sequence、分页与 snapshot/action/旧页局部错误；按 item ID 去重。事件触发最新页合并，既不覆盖已加载旧页，也不允许较低 sequence 覆盖新状态；内容引用过期时通过稳定 locator 重新签发，不刷新整页。
+- `ConversationController` 拥有 metadata、正序 timeline、older cursor、revision/sequence/syncEpoch、分页与 snapshot/action/旧页局部错误；按 item ID 去重。连续的 `conversation.delta` 以 75 ms 节奏分块合并，单 item 512 KiB、当前会话 4 MiB；缺口、epoch 变化、终态或超限立即读取权威 snapshot。内容引用过期时通过稳定 locator 重新签发。
 
 会话正文只存在 Dart/Go 进程内存。Desktop 对大 block 返回临时定位引用，Mobile 按 128 KiB 分块拼接查看；引用过期时使用 turn/item/block locator 重新签发，引用和正文都不持久化。`CoreGateway` 的 100 条内存诊断环只记录 method、耗时、结果、稳定 error code 和 request ID，Debug 构建将相同脱敏元数据写入 Logcat。
 

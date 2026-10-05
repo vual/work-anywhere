@@ -1,6 +1,9 @@
 package paths
 
-import "path/filepath"
+import (
+	"os"
+	"path/filepath"
+)
 
 const ProductName = "WorkAnywhere"
 
@@ -18,4 +21,12 @@ func LogDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "logs"), nil
+}
+
+func ConfigPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".work-anywhere", "config.json"), nil
 }

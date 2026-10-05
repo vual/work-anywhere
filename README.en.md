@@ -37,7 +37,8 @@ Desktop V1 provides:
 - Local control for starting text/image Turns and selecting a model, reasoning effort, approval policy, and sandbox policy.
 - Mid-run approval handling, user-question responses, and Turn interruption.
 - Continued App Server ownership after a Desktop Bridge disconnects, with initialize state restored when Desktop reconnects.
-- SQLite conversation projections, attachment storage, structured logs, and explicitly enabled full-protocol traffic diagnostics.
+- Bounded in-memory conversation projections, DPAPI-protected JSON configuration, transient attachments, structured logs, and explicitly enabled full-protocol traffic diagnostics.
+- Semantic delta batching before encryption, with Mobile applying `syncEpoch + sequence` updates and falling back to authoritative snapshots after gaps, terminal events, or memory limits.
 - A system tray, local administration page, and command-line control interface.
 - Pre-request fallback to the official Codex executable when the daemon cannot be reached, prioritizing Desktop availability.
 
@@ -71,7 +72,7 @@ Local CLI / Admin page ────────┘                       Desktop
                                                              │
                                       ┌──────────────────────┼─────────────────────┐
                                       ▼                      ▼                     ▼
-                              Codex App Server A      Codex App Server B      Encrypted SQLite
+                              Codex App Server A      Codex App Server B      Bounded memory + JSON config
                                       │                      │
                                       └──── official Codex sessions ────┘
 
@@ -113,7 +114,7 @@ work-anywhere/
 │  │  ├─ codex/                 Codex runtime, instance, and argument handling
 │  │  ├─ jsonrpc/               JSON-RPC envelopes and IDs
 │  │  ├─ provider/              Extensible Provider interface
-│  │  ├─ store/                 Encrypted SQLite projection
+│  │  ├─ config/                DPAPI-protected JSON configuration
 │  │  └─ platform/              Windows/macOS/Linux platform boundary
 │  ├─ packaging/                Platform installation, signing, and release assets
 │  ├─ docs/                     Current-state design documentation
@@ -289,13 +290,14 @@ Runtime data is stored under:
 %LOCALAPPDATA%\WorkAnywhere
 ```
 
-- Instance, conversation, Turn, Timeline, pending-action, attachment, and settings projections are stored in SQLite WAL.
-- Message bodies, tool payloads, diffs, actions, and attachment content are encrypted with AES-256-GCM.
-- The AES master key is protected by current-user Windows DPAPI.
+- Instance, conversation, Turn, Timeline, pending-action, and attachment-index projections live only in bounded daemon memory and are rebuilt from official Codex sessions after restart.
+- Relay identity, pairings, and per-thread settings are stored in `%USERPROFILE%\.work-anywhere\config.json`; values are protected by current-user Windows DPAPI and replaced atomically.
+- Remote image attachments use each project's `.work-anywhere-remote-attachments` as transient spool storage; accepted files are removed, while failed or ambiguous submissions expire after 24 hours.
+- Per-conversation replay, global payloads, delta aggregation, remote send queues, and Mobile streaming text all have fixed memory limits; slow clients converge through invalidation and snapshots.
 - The Bridge/daemon Named Pipe is protected by a current-user SID ACL.
 - The administration page binds to a random loopback port and uses a one-time token, SameSite session, Origin checks, and CSRF protection.
-- Full process environments are not persisted, and complete JSONL traffic is not recorded by default.
-- Official Codex session files remain the authoritative source for complete conversations. The Work Anywhere database is a control-plane projection and must not overwrite official sessions if damaged.
+- Full process environments and ordinary message bodies are not persisted, and complete JSONL traffic is not recorded by default.
+- Official Codex session files remain the sole authoritative source for complete conversations. Work Anywhere does not maintain a message-history database.
 
 ## Stopping and uninstalling
 

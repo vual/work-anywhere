@@ -6,14 +6,13 @@ import (
 	"encoding/json"
 	"io"
 	"net"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/hurf/work-anywhere/desktop/internal/config"
 	"github.com/hurf/work-anywhere/desktop/internal/ipc"
 	"github.com/hurf/work-anywhere/desktop/internal/protocol"
-	"github.com/hurf/work-anywhere/desktop/internal/store"
 	"github.com/hurf/work-anywhere/desktop/internal/traffic"
 )
 
@@ -43,11 +42,11 @@ func (w *synchronizedWriteCloser) Bytes() []byte {
 func testInstance(t *testing.T) (*Instance, *bufferWriteCloser, func()) {
 	t.Helper()
 	dir := t.TempDir()
-	state, err := store.Open(filepath.Join(dir, "state.db"), filepath.Join(dir, "key"))
+	state, err := config.Open(dir + "/config.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := &Manager{store: state, traffic: traffic.New(filepath.Join(dir, "traffic")), subscribers: make(map[uint64]chan protocol.Event)}
+	manager := &Manager{settings: state, syncEpoch: "test-epoch", traffic: traffic.New(dir + "/traffic"), subscribers: make(map[uint64]chan protocol.Event)}
 	instance := NewInstance(manager, protocol.Hello{Instance: protocol.InstanceDescriptor{ID: "test-instance"}})
 	writer := &bufferWriteCloser{}
 	instance.stdin = writer
@@ -62,6 +61,7 @@ func TestCollaborationSettingsPersistWithoutDeveloperInstructions(t *testing.T) 
 	instance.observeOutgoingThreadSettings("turn/start", params)
 	instance.observeNotification("turn/started", json.RawMessage(`{"thread":{"id":"thread-1"},"turn":{"id":"turn-1"}}`))
 	instance.observeNotification("turn/completed", json.RawMessage(`{"threadId":"thread-1","turn":{"id":"turn-1"}}`))
+	instance.manager.configWrites.Wait()
 
 	instance.mu.Lock()
 	instance.threadSettings = make(map[string]threadCollaborationSettings)
@@ -79,6 +79,7 @@ func TestCollaborationSettingsPersistWithoutDeveloperInstructions(t *testing.T) 
 	}
 
 	instance.observeThreadSettingsNotification(json.RawMessage(`{"threadId":"thread-1","threadSettings":{"permissions":":read-only","approvalPolicy":"on-request","approvalsReviewer":"user","collaborationMode":{"mode":"default","settings":{"model":"gpt-next","reasoning_effort":"medium","developer_instructions":"new secret"}}}}`))
+	instance.manager.configWrites.Wait()
 	updated, ok := instance.collaborationSettings("thread-1")
 	if !ok || updated.Mode != "default" || updated.Model != "gpt-next" || updated.PermissionModeID != "readOnly" || updated.TurnID != "turn-1" || !updated.Succeeded {
 		t.Fatalf("settings notification did not preserve authoritative turn status: %#v", updated)

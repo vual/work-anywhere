@@ -263,6 +263,78 @@ func TestInstallSessionReplacesPreviousSessionForPairing(t *testing.T) {
 	}
 }
 
+func TestLowPriorityOverflowQueuesOneInvalidation(t *testing.T) {
+	session := &sessionState{
+		high:        make(chan outboundControl, 4),
+		low:         make(chan outboundControl, 1),
+		lowBytes:    sessionQueueBytes,
+		invalidated: make(map[string]bool),
+	}
+	service := &Service{sessions: map[string]*sessionState{"session": session}}
+	event := protocol.Event{Type: "event", Event: "conversation.delta", ConversationID: "thread-1", Payload: map[string]any{"delta": "x"}}
+	if err := service.sendControl(session, event); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.sendControl(session, event); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(session.high); got != 1 {
+		t.Fatalf("queued invalidations = %d, want 1", got)
+	}
+	queued := <-session.high
+	if queued.event == nil || queued.event.Event != "conversation.invalidated" || queued.event.Payload != nil {
+		t.Fatalf("unexpected overflow event: %#v", queued.event)
+	}
+}
+
+func TestHighPriorityOverflowDropsSession(t *testing.T) {
+	session := &sessionState{
+		high:        make(chan outboundControl, 1),
+		low:         make(chan outboundControl, 1),
+		highBytes:   sessionQueueBytes,
+		invalidated: make(map[string]bool),
+	}
+	service := &Service{sessions: map[string]*sessionState{"session": session}}
+	err := service.sendControl(session, protocol.ControlResponse{Type: "response", ID: "request"})
+	if err == nil {
+		t.Fatal("high priority overflow was accepted")
+	}
+	if len(service.sessions) != 0 {
+		t.Fatal("overflowed session was not dropped")
+	}
+}
+
+func TestSlowSessionDoesNotBlockAnotherSession(t *testing.T) {
+	newSession := func() *sessionState {
+		return &sessionState{
+			pairing:     Pairing{Scopes: []string{"conversation.read"}},
+			high:        make(chan outboundControl, 4),
+			low:         make(chan outboundControl, 4),
+			invalidated: make(map[string]bool),
+		}
+	}
+	slow := newSession()
+	fast := newSession()
+	slow.lowBytes = sessionQueueBytes
+	service := &Service{sessions: map[string]*sessionState{"slow": slow, "fast": fast}}
+	service.forwardEvent(protocol.Event{
+		Type:           "event",
+		Event:          "conversation.delta",
+		InstanceID:     "agent-1",
+		ConversationID: "thread-1",
+		Payload:        map[string]any{"delta": "text"},
+	})
+	if len(slow.high) != 1 || len(slow.low) != 0 {
+		t.Fatalf("slow session queues high=%d low=%d", len(slow.high), len(slow.low))
+	}
+	if len(fast.low) != 1 || len(fast.high) != 0 {
+		t.Fatalf("fast session queues high=%d low=%d", len(fast.high), len(fast.low))
+	}
+	if len(service.sessions) != 2 {
+		t.Fatal("low-priority pressure dropped a healthy session")
+	}
+}
+
 func containsBytes(haystack, needle []byte) bool {
 	if len(needle) == 0 || len(haystack) < len(needle) {
 		return false

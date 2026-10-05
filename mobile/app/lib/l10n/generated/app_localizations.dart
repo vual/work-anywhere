@@ -100,6 +100,60 @@ abstract class AppLocalizations {
     Locale('zh', 'CN'),
   ];
 
+  /// No description provided for @messageSyncing.
+  ///
+  /// In zh, this message translates to:
+  /// **'正在同步电脑状态…'**
+  String get messageSyncing;
+
+  /// No description provided for @messageUploading.
+  ///
+  /// In zh, this message translates to:
+  /// **'正在上传图片 {index}/{count} · {percent}%'**
+  String messageUploading(int index, int count, int percent);
+
+  /// No description provided for @messageSending.
+  ///
+  /// In zh, this message translates to:
+  /// **'正在发送…'**
+  String get messageSending;
+
+  /// No description provided for @messageConfirming.
+  ///
+  /// In zh, this message translates to:
+  /// **'等待电脑确认'**
+  String get messageConfirming;
+
+  /// No description provided for @messageFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'发送失败'**
+  String get messageFailed;
+
+  /// No description provided for @messageUnknown.
+  ///
+  /// In zh, this message translates to:
+  /// **'发送结果未知'**
+  String get messageUnknown;
+
+  /// No description provided for @messageEdit.
+  ///
+  /// In zh, this message translates to:
+  /// **'编辑'**
+  String get messageEdit;
+
+  /// No description provided for @messageCheck.
+  ///
+  /// In zh, this message translates to:
+  /// **'同步确认'**
+  String get messageCheck;
+
+  /// No description provided for @messageCreationUnknown.
+  ///
+  /// In zh, this message translates to:
+  /// **'新会话创建结果未知，请先在电脑端确认，再创建其他会话。'**
+  String get messageCreationUnknown;
+
   /// No description provided for @conversationChangedRetry.
   ///
   /// In zh, this message translates to:

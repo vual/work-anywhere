@@ -68,6 +68,7 @@ type Event struct {
 	Type           string `json:"type"`
 	Contract       string `json:"contract,omitempty"`
 	Sequence       int64  `json:"sequence"`
+	SyncEpoch      string `json:"syncEpoch,omitempty"`
 	Event          string `json:"event"`
 	InstanceID     string `json:"instanceId,omitempty"`
 	ConversationID string `json:"conversationId,omitempty"`

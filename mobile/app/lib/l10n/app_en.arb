@@ -1,4 +1,26 @@
 {
+  "messageSyncing": "Syncing with computer…",
+  "messageUploading": "Uploading image {index}/{count} · {percent}%",
+  "messageSending": "Sending…",
+  "messageConfirming": "Waiting for computer confirmation",
+  "messageFailed": "Send failed",
+  "messageUnknown": "Send result unknown",
+  "messageEdit": "Edit",
+  "messageCheck": "Check status",
+  "messageCreationUnknown": "Conversation creation could not be confirmed. Check on your computer before starting another conversation.",
+  "@messageUploading": {
+    "placeholders": {
+      "index": {
+        "type": "int"
+      },
+      "count": {
+        "type": "int"
+      },
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
   "conversationChangedRetry": "The conversation changed. Please retry.",
   "queueUnavailableWait": "Queued messages are unavailable for this conversation. Wait for the current task to finish.",
   "@@locale": "en",

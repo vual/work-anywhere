@@ -59,9 +59,13 @@ Mobile-facing `conversation.list` 的每条 `ConversationSummary` 同时包含 D
 
 Mobile contract 下的 `conversation.list` 额外返回 `needsAttention`，其值来自与该 thread 关联的未完成 action；无法归属 thread 的 action 不猜测列表目标。Mobile `action.list` 不透传原始 params：普通命令/权限请求归一化为 `kind=approval` 并保留 id、method、conversation/turn id 和 created time；官方 `item/tool/requestUserInput` 归一化为 `kind=userInput`，额外返回每题的 header、id、question、`isOther`、`isSecret` 以及 label/description options。`action.resolve` 仍执行 first-valid-wins；问题答案使用官方 `{answers:{questionId:{answers:[value]}}}` 结构，普通审批继续兼容 `{decision:"accept"|"decline"}`。
 
-`hookPrompt` 不进入 Mobile DTO；function/tool、协作、搜索、图片、sleep、review 和 compaction item 只生成单个结构化 summary block：`summaryKind` 保存 provider item 类型，`summaryValue` 保存最长 512 UTF-8 字节的脱敏单行值，`text` 是语言无关 fallback。完整展示文案由 Mobile 本地化，daemon 不拼接中英文句子。summary 不含 arguments/output/result/error/path/prompt，也不生成 `contentRef`；`commandExecution` 只返回 command，不返回 aggregated output。过滤后可见 item 不足请求数量时，daemon 沿 provider cursor 补读后续页面，最多追踪 8 页。
+`hookPrompt` 不进入 Mobile DTO；user message 时间线项把官方 `clientId` 归一化为可选 `clientMessageId`，供 Mobile 将立即显示的本地发送气泡与权威消息精确合并，旧 runtime 未提供该字段时保持省略。function/tool、协作、搜索、图片、sleep、review 和 compaction item 只生成单个结构化 summary block：`summaryKind` 保存 provider item 类型，`summaryValue` 保存最长 512 UTF-8 字节的脱敏单行值，`text` 是语言无关 fallback。完整展示文案由 Mobile 本地化，daemon 不拼接中英文句子。summary 不含 arguments/output/result/error/path/prompt，也不生成 `contentRef`；`commandExecution` 只返回 command，不返回 aggregated output。过滤后可见 item 不足请求数量时，daemon 沿 provider cursor 补读后续页面，最多追踪 8 页。
 
-Mobile control 响应序列化后上限为 512 KiB。时间线超预算时以同一 cursor 按 `20→10→5→2→1` 缩小可见 page；limit 为 1 仍超预算则进一步引用大 block。Daemon 通过 Relay unsolicited event 主动发送 metadata-only conversation event，不携带 provider 正文；Mobile EventSink 收到事件后合并刷新对应 snapshot。Mobile endpoint 只把 `type=event` 送入业务事件流，迟到/未知 response 直接丢弃；无 sink 时最多缓存 1000 条事件，并用 `type=transport` 报告 `online/disconnected/revoked/closed`。EventSink 不可用或断开时才启用 2 秒轮询恢复，恢复 online 后停止轮询并执行一次 cursor catch-up。待追赶事件超过有界窗口时返回 `snapshot=true`，由 Mobile 重新读取分页 snapshot。超限保护返回 `response_too_large`，不会把超大业务响应交给 Relay。Mobile control 结构化日志只记录 method、耗时、响应字节数和稳定错误码。
+Mobile control 响应序列化后上限为 512 KiB。时间线超预算时以同一 cursor 按 `20→10→5→2→1` 缩小可见 page；limit 为 1 仍超预算则进一步引用大 block。Daemon 事件带进程级 `syncEpoch`，每会话保留最近 256 条、全局 payload 预算 32 MiB；窗口或预算淘汰后旧 cursor 返回 `snapshot=true`。
+
+实时正文通过 `conversation.delta` 发送。Desktop 按 instance/conversation/turn/item/kind/index/stream 保持顺序并在段落、句末、行边界、200–250 ms 或大小阈值到达时合并 flush；审批、提问、队列、item 完成和 Turn 终态发送前先 flush。单批最大 32 KiB；异常的超大单个 provider delta 转为 `conversation.invalidated`，由 Mobile 读取权威快照。未知 provider 事件也只触发失效。
+
+每个 Noise session 有独立 writer，高、低优先级队列各限制 1 MiB。response、审批和终态优先于 delta；加密和 Relay 写入只在 writer 中串行执行。低优先级溢出时每会话只排入一次 `conversation.invalidated`，高优先级溢出时关闭 session，客户端通过重连和 snapshot 恢复。Mobile endpoint 无 EventSink 时最多缓存 256 条或 2 MiB，溢出先发失效事件再转交保留项。EventSink 断开时启用 2 秒轮询，恢复 online 后停止轮询并 catch-up。超限保护返回 `response_too_large`。Mobile control 结构化日志只记录 method、耗时、响应字节数和稳定错误码。
 
 CLI 对应提供 daemon、instance、conversation、turn、action、catalog、traffic、通用 `call`、`ui`、`self-test`、install/uninstall 和 version 命令。CLI 通过本机受保护管理 Pipe 调用，不自行启动第二个 App Server。
 
@@ -81,7 +85,9 @@ Timeline 优先调用 `thread/items/list`。仅官方 JSON-RPC `-32601` 方法�
 
 ## State and persistence
 
-控制连接和 subscriber 队列在内存中。客户端通过 conversation sequence/cursor 恢复事件；每个 thread 的 collaboration mode/model/effort、关联 Turn ID 与成功状态写入加密 settings，daemon 重启后仍可判定是否能安全响应计划。附件分块直接追加到项目目录下的 `.part` 临时文件，commit 校验大小后原子重命名，再仅把 attachment 元数据和文件路径写入 SQLite。上传失败由 `attachment.abort` 清理临时文件；已 commit 的文件不会因后续 Turn 失败自动删除。`turn.start` 根据 attachment ID 读取文件，仅将 `image/*` 转为官方 App Server 的 data URI，其他 MIME 类型返回 `unsupported_attachment_type`。控制暂停只阻止本机控制操作，不改变 Desktop 原始连接。
+控制连接、subscriber 队列、会话 projection、pending action 和附件索引都在内存中。客户端通过 conversation sequence/cursor 恢复；每个 thread 的 collaboration mode/model/effort 和 permission 设置写入 DPAPI 保护的 JSON 配置，最多保留最近 2,000 条，不保存正文或计划内容。
+
+附件分块直接追加到项目目录下的 `.part` 临时文件，commit 校验大小后原子重命名；索引不落盘。明确接受 `turn.start` 或 `conversation.queue.add` 后删除附件，失败或结果未知最多保留 24 小时。`turn.start` 根据 attachment ID 读取文件，仅将 `image/*` 转为 App Server data URI；全局只允许一个图片编码任务，其他 MIME 返回 `unsupported_attachment_type`。控制暂停只阻止本机控制操作，不改变 Desktop 原始连接。
 
 ## Security and failure handling
 

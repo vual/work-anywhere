@@ -48,7 +48,7 @@ App Server 发出的 server request 被规范化为 `PendingAction`，保留原 
 
 ## State and persistence
 
-请求 ID 映射和 initialize waiter 只存在内存。会话状态、Turn、timeline event 和 pending action 投影到 SQLite；payload 使用加密列。官方 App Server/官方 session 仍是完整会话的权威来源。
+请求 ID 映射、initialize waiter、会话状态、Turn、timeline event 和 pending action 都只存在有界内存中。每会话最多回放 256 条事件，全局 payload 预算为 32 MiB；旧 cursor 或淘汰后的缺口返回 snapshot。官方 App Server/官方 session 是完整会话的唯一权威来源。
 
 控制请求取消、超时、stdin 写入失败或 App Server 退出时会清理内存中的 request mapping；内部调用收到终止错误，迟到 response 会被丢弃。
 
@@ -71,7 +71,7 @@ App Server 发出的 server request 被规范化为 `PendingAction`，保留原 
 - `internal/daemon/instance.go`
 - `internal/jsonrpc/message.go`
 - `internal/protocol/types.go`
-- `internal/store/store.go`
+- `internal/config/store.go`
 
 ## Verification
 

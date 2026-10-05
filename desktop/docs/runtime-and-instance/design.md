@@ -44,7 +44,7 @@ Bridge 将真实路径、版本、SHA256、resources、发现来源、参数、c
 
 ## State and persistence
 
-当前 runtime 保存到 `instances`，不同 SHA256 的已见 runtime 追加到 `runtime_history`。完整进程环境不写入数据库或结构化日志。
+当前 runtime、候选 runtime 和已见 SHA256 只在 daemon 进程内使用，不写入配置。完整进程环境不持久化，也不进入结构化日志。
 
 ## Security and failure handling
 

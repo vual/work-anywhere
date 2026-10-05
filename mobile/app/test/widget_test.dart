@@ -200,7 +200,7 @@ void main() {
       find.byKey(const Key('workspace-daemon-selector')),
     );
     final runningTextRect = tester.getRect(find.text('1 个运行中'));
-    expect(daemonRect.right, closeTo(336, .01));
+    expect(daemonRect.right, closeTo(340, .01));
     expect(runningTextRect.right, lessThanOrEqualTo(daemonRect.left));
   });
 

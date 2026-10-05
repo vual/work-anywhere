@@ -10,6 +10,36 @@ class AppLocalizationsEn extends AppLocalizations {
   AppLocalizationsEn([String locale = 'en']) : super(locale);
 
   @override
+  String get messageSyncing => 'Syncing with computer…';
+
+  @override
+  String messageUploading(int index, int count, int percent) {
+    return 'Uploading image $index/$count · $percent%';
+  }
+
+  @override
+  String get messageSending => 'Sending…';
+
+  @override
+  String get messageConfirming => 'Waiting for computer confirmation';
+
+  @override
+  String get messageFailed => 'Send failed';
+
+  @override
+  String get messageUnknown => 'Send result unknown';
+
+  @override
+  String get messageEdit => 'Edit';
+
+  @override
+  String get messageCheck => 'Check status';
+
+  @override
+  String get messageCreationUnknown =>
+      'Conversation creation could not be confirmed. Check on your computer before starting another conversation.';
+
+  @override
   String get conversationChangedRetry =>
       'The conversation changed. Please retry.';
 

@@ -32,7 +32,7 @@ remote.configure 接受合法的 HTTP 或 HTTPS origin，IP 和域名均可，�
 
 ## Identity, pairing, and storage
 
-首次注册生成并先安全保存 Ed25519 identity 与 X25519 Noise static key。整个 remote state（配置、私钥、公钥、device ID 和 pairings）写入 Desktop encrypted settings；SQLite row 使用 AES-256-GCM，master key 由 Windows current-user DPAPI 保护。
+首次注册生成并先安全保存 Ed25519 identity 与 X25519 Noise static key。整个 remote state（配置、私钥、公钥、device ID 和 pairings）写入 `%USERPROFILE%\.work-anywhere\config.json`；每个设置值由 Windows current-user DPAPI 保护后以 Base64 保存。
 
 pairing secret 仅在内存，最长五分钟；pairing 保存 peer keys、capability hash 和 scopes。daemon 验证 QR HMAC 后签署 grant，收到 Relay result 时再次要求 expiry、signature 和 scopes 与本机批准值完全一致。revoked pairing 从本地 state 删除并关闭相关 session。
 
@@ -60,7 +60,9 @@ Desktop 解密并验证 desktop-control-json-v1 后，仅允许：
 
 ## Events, push, and reconnect
 
-remote Service 订阅 daemon event bus。action 相关事件要求 action.read，其他会话事件要求 conversation.read；事件只用于失效提示，因此同一 instance/thread 的普通流式更新会在 100 ms 窗口内合并，action 与 Turn terminal 事件使用独立合并类别，不能被普通更新覆盖。每个 active Noise session 单独加密发送合并后的事件。action request 和 Turn complete/fail/interrupt 生成 metadata-only notify hint。
+remote Service 订阅 daemon event bus。可识别的文字、计划、推理、命令和文件输出 delta 在加密前按语义批量形成 `conversation.delta`；key、Turn、item 或 kind 变化以及审批、提问、队列、item 完成和终态事件会先 flush。时间阈值为 200–250 ms，批次上限按内容类型为 2–8 KiB，硬上限 32 KiB；聚合器最多保留 128 个活跃会话流和 8 MiB。未知事件继续发 `conversation.invalidated`。
+
+App Server 事件处理只归一化并入队，不执行配置写入、Noise 加密或 Relay 网络发送。每个 Mobile Noise session 有独立高低优先级队列与 writer，各队列 1 MiB；response、审批和终态走高优先级，delta 走低优先级，Noise sequence 由单 writer 串行生成。低队列溢出降级为一次会话失效提示，高队列溢出关闭 session。事件订阅因慢消费者关闭时立即重新订阅并发送失效提示。action request 和 Turn complete/fail/interrupt 仍生成 metadata-only notify hint。
 
 socket 断开会销毁内存 Noise sessions，不中断 Desktop Turn。重连后 Mobile 必须重新握手，并使用 conversation read/sequence/revision 获取 snapshot 或增量；同一 pairing 的新 session 会替换 daemon 内存中的旧 session，Mobile 也会丢弃跨 session 的迟到 frame，避免旧密文被投递到新 WebSocket 后触发解密断线。若 Relay 对某个 response/event 返回 `peer_offline`，daemon 立即移除该消息所属 Noise session 并清理它的待确认投递，不再向离线 Mobile 持续发送流式事件。Relay 不保存丢失 event。daemon/PC 离线时 Mobile 写命令立即失败。
 
@@ -80,7 +82,7 @@ connector 是 daemon 的附加 frontend，不成为 App Server owner，不创建
 
 - connector/pairing/crypto/adapter：internal/remote/
 - manager integration/control methods：internal/daemon/daemon.go
-- encrypted settings：internal/store/, internal/platform/secrets/
+- encrypted settings：internal/config/, internal/platform/secrets/
 - schema generated copy：internal/remote/gen/
 
 Relay schema 主归属为 [Relay wire protocol](../../../relay/docs/wire-protocol/design.md)。

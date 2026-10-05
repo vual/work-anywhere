@@ -1,4 +1,26 @@
 {
+  "messageSyncing": "正在同步电脑状态…",
+  "messageUploading": "正在上传图片 {index}/{count} · {percent}%",
+  "messageSending": "正在发送…",
+  "messageConfirming": "等待电脑确认",
+  "messageFailed": "发送失败",
+  "messageUnknown": "发送结果未知",
+  "messageEdit": "编辑",
+  "messageCheck": "同步确认",
+  "messageCreationUnknown": "新会话创建结果未知，请先在电脑端确认，再创建其他会话。",
+  "@messageUploading": {
+    "placeholders": {
+      "index": {
+        "type": "int"
+      },
+      "count": {
+        "type": "int"
+      },
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
   "conversationChangedRetry": "会话状态已变化，请重试",
   "queueUnavailableWait": "此会话暂不支持消息排队，请等待当前任务结束",
   "@@locale": "zh",

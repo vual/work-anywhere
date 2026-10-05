@@ -57,7 +57,7 @@ Mobile 的接口可用性按会话和进程代次判断，不以 schema 中的�
 
 ## State and persistence
 
-安装备份属于用户级设置；发布产物和构建工具不写入业务数据库。runtime 版本/SHA256 由 daemon 记录，用于检测 Desktop 升级并安全切换。
+安装备份属于用户级设置；发布产物和构建工具不写消息数据库。runtime 版本/SHA256 只在 daemon 进程内用于检测 Desktop 升级并安全切换。
 
 ## Security and failure handling
 

@@ -851,11 +851,12 @@ type mobileTimelineBlock struct {
 }
 
 type mobileTimelineItem struct {
-	ID     string                `json:"id"`
-	TurnID string                `json:"turnId,omitempty"`
-	Kind   string                `json:"kind"`
-	Status string                `json:"status,omitempty"`
-	Blocks []mobileTimelineBlock `json:"blocks"`
+	ID              string                `json:"id"`
+	ClientMessageID string                `json:"clientMessageId,omitempty"`
+	TurnID          string                `json:"turnId,omitempty"`
+	Kind            string                `json:"kind"`
+	Status          string                `json:"status,omitempty"`
+	Blocks          []mobileTimelineBlock `json:"blocks"`
 }
 
 type mobileTimelinePage struct {
@@ -877,6 +878,7 @@ type mobileConversationSnapshot struct {
 	Settings         mobileConversationSettings `json:"settings"`
 	Revision         int64                      `json:"revision"`
 	Sequence         int64                      `json:"sequence"`
+	SyncEpoch        string                     `json:"syncEpoch,omitempty"`
 	Timeline         mobileTimelinePage         `json:"timeline"`
 	Queue            mobileQueuePage            `json:"queue"`
 	PlanConfirmation *mobilePlanConfirmation    `json:"planConfirmation,omitempty"`
@@ -1220,7 +1222,11 @@ func normalizeTimelinePage(raw json.RawMessage) (mobileTimelinePage, []map[strin
 			turnID, _ = rawItem["turnId"].(string)
 		}
 		status := compactStatus(rawItem["status"])
-		page.Items = append(page.Items, mobileTimelineItem{ID: id, TurnID: turnID, Kind: kind, Status: status, Blocks: timelineBlocks(rawItem)})
+		clientMessageID := ""
+		if kind == "userMessage" {
+			clientMessageID, _ = rawItem["clientId"].(string)
+		}
+		page.Items = append(page.Items, mobileTimelineItem{ID: id, ClientMessageID: clientMessageID, TurnID: turnID, Kind: kind, Status: status, Blocks: timelineBlocks(rawItem)})
 	}
 	return page, source.Data, nil
 }
@@ -1667,7 +1673,7 @@ func (m *Manager) conversationSnapshotOnce(instance *Instance, agentID string, p
 	}
 	revision, sequence := instance.ConversationVersion(request.ThreadID)
 	settings, _ := instance.collaborationSettings(request.ThreadID)
-	snapshot := mobileConversationSnapshot{Conversation: metadata, Settings: projectedMobileSettings(settings), Revision: revision, Sequence: sequence, Timeline: page, Queue: queue}
+	snapshot := mobileConversationSnapshot{Conversation: metadata, Settings: projectedMobileSettings(settings), Revision: revision, Sequence: sequence, SyncEpoch: m.syncEpoch, Timeline: page, Queue: queue}
 	snapshot.Capabilities.Queue = queueAvailable
 	snapshot.PlanConfirmation = planConfirmationFor(instance, request.ThreadID, metadata, page, revision)
 	return snapshot, nil
@@ -1837,6 +1843,7 @@ func (m *Manager) mobileQueueAdd(instance *Instance, params json.RawMessage) (mo
 	if err != nil {
 		return mobileQueuedSubmission{}, &mobileContractError{code: "invalid_provider_response", message: err.Error()}
 	}
+	m.releaseAttachments(attachmentIDs(params))
 	return result, nil
 }
 

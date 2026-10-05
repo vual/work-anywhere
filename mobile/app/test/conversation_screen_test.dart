@@ -255,6 +255,18 @@ void main() {
     await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
     await tester.pump();
     expect(sent, isNull);
+    expect(find.text('retain this draft'), findsOneWidget);
+    expect(find.text('正在同步电脑状态…'), findsOneWidget);
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      isEmpty,
+    );
+    await tester.enterText(find.byType(TextField), 'prepare the next message');
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      'prepare the next message',
+    );
     // A real event starts a background read while the send prerequisite waits.
     events.add({'type': 'event', 'conversationId': 'fresh', 'sequence': 20});
     await tester.pump(const Duration(milliseconds: 200));
@@ -451,8 +463,12 @@ void main() {
       }
       expect(starts, 0);
       expect(find.text('retry me'), findsOneWidget);
-      await tester.pump();
-      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        isEmpty,
+      );
+      expect(find.text('发送失败'), findsOneWidget);
+      await tester.tap(find.text('重试').last);
       for (var n = 0; n < 5; n++) {
         await tester.pump();
       }
@@ -2196,6 +2212,24 @@ void main() {
     expect(turnStarted, isFalse);
     expect(
       tester.widget<TextField>(find.byType(TextField)).controller?.text,
+      isEmpty,
+    );
+    expect(find.text('Keep this draft'), findsOneWidget);
+    expect(find.text('发送失败'), findsOneWidget);
+    expect(find.byType(Image), findsNWidgets(2));
+    await tester.enterText(find.byType(TextField), 'new draft');
+    await tester.tap(find.text('编辑'));
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller?.text,
+      'new draft',
+    );
+    expect(find.text('请先发送或清空当前输入内容，再编辑排队消息'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), '');
+    await tester.tap(find.text('编辑'));
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller?.text,
       'Keep this draft',
     );
     expect(
@@ -2205,6 +2239,7 @@ void main() {
       ),
       findsNWidgets(2),
     );
+    expect(find.text('发送失败'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
 

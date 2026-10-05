@@ -2,7 +2,7 @@
 
 ## Goal and scope
 
-Desktop 模块让官方 ChatGPT Codex Desktop 继续作为唯一桌面显示层，同时把官方 Codex App Server 的会话能力暴露给本机控制客户端。V1 面向 Windows x64，不包含 Relay、手机端或其他 Provider 的具体实现。
+Desktop 模块让官方 ChatGPT Codex Desktop 继续作为桌面显示层，同时把官方 Codex App Server 的会话能力暴露给本机控制客户端和出站 Relay connector。当前实现面向 Windows x64，Provider driver 只有 Codex。
 
 ## Current architecture and data flow
 
@@ -15,7 +15,8 @@ ChatGPT Desktop
 Bridge shim ── WAI1 Named Pipe ──► daemon ── stdio JSONL ──► official Codex App Server
                                       │
                                       ├─ local WebSocket control API
-                                      ├─ SQLite encrypted projection
+                                      ├─ bounded in-memory projections
+                                      ├─ outbound E2EE Relay connector
                                       └─ tray and local admin page
 ```
 
@@ -30,16 +31,17 @@ Bridge shim ── WAI1 Named Pipe ──► daemon ── stdio JSONL ──►
 - Bridge 与 daemon：当前用户 ACL 保护的版本化 WAI1 Named Pipe 帧。
 - daemon 与 Codex：官方 App Server stdio JSONL。
 - daemon 与控制客户端：本机 WebSocket 上的版本化 request/response/event JSON。
+- daemon 与 Relay：出站 WSS 内的 Noise E2EE control，Relay 不接触业务明文。
 - Provider 抽象：`Driver` 定义历史、输入、中断、审批和 catalog 能力；当前只有 Codex 实现。
 
 ## State and persistence
 
-daemon 内存中持有运行时进程、连接、ID 映射、初始化缓存、活跃 Turn 和待处理 action。SQLite 保存实例、运行时历史、会话投影、Turn、Timeline、action、附件和设置。官方 Codex session 仍由官方 Codex 管理，本数据库不是其权威副本。
+daemon 内存中持有运行时进程、连接、ID 映射、初始化缓存、活跃 Turn、待处理 action 和有界事件回放。官方 Codex session 是会话、Turn 和 Timeline 的唯一权威来源。Desktop 不保存消息数据库；Relay、身份、配对和 thread 设置写入 `%USERPROFILE%\.work-anywhere\config.json`，运行状态在 daemon 重启后从 App Server 重新读取。
 
 ## Security and failure handling
 
 - Named Pipe 只允许当前 SID；管理 HTTP/WebSocket 只监听随机 `127.0.0.1` 端口。
-- 敏感规范化内容加密后入库；完整流量默认不记录。
+- 小型设置经 current-user DPAPI 保护后写入用户 JSON 配置；消息和事件正文不持久化。完整流量默认不记录。
 - daemon 无法连接时，尚未向 daemon 发送请求的 Bridge 可直通真实 Codex，保证 Desktop 可用。
 - daemon 中途断开后 Bridge 退出，不在未完成请求上热切换。
 
@@ -49,7 +51,7 @@ daemon 内存中持有运行时进程、连接、ID 映射、初始化缓存、�
 - 每个稳定逻辑实例最多一个由 daemon 托管的 App Server。
 - runtime 可升级，但 runtime 路径和版本不参与逻辑实例 ID。
 - Desktop 模块不实现自建桌面聊天 UI。
-- V1 不实现 Relay、Mobile 和其他 Provider driver。
+- Desktop 不实现 Mobile UI、离线消息队列和其他 Provider driver。
 
 ## Code ownership
 

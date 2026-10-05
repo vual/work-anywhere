@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 )
 
 func (i *Instance) controlThreadLock(threadID string) *sync.Mutex {
@@ -19,21 +20,64 @@ func (i *Instance) controlThreadLock(threadID string) *sync.Mutex {
 	return i.controlWrites[threadID]
 }
 
-// Called with i.mu held. Existing databases retain their business revision baseline.
+// Called with i.mu held. Projections are intentionally scoped to this daemon process.
 func (i *Instance) projectionLocked(threadID string) *conversationProjection {
 	if p := i.conversations[threadID]; p != nil {
+		p.LastAccess = time.Now()
 		return p
 	}
-	status, revision, sequence := i.manager.store.ConversationVersion(i.descriptor.ID, threadID)
-	if last := i.manager.store.MaxSequence(i.descriptor.ID, threadID); last > sequence {
-		sequence = last
-	}
-	if status == "" {
-		status = "idle"
-	}
-	p := &conversationProjection{ID: threadID, Status: status, Revision: revision, Sequence: sequence}
+	i.pruneProjectionsLocked()
+	p := &conversationProjection{ID: threadID, Status: "idle", LastAccess: time.Now()}
 	i.conversations[threadID] = p
 	return p
+}
+
+func (i *Instance) projectionPinnedLocked(threadID string) bool {
+	if i.activeTurns[threadID] != "" || i.pendingTurnStarts[threadID] || i.pendingTurnSettings[threadID].Mode != "" {
+		return true
+	}
+	for _, action := range i.actions {
+		if action.ConversationID == threadID {
+			return true
+		}
+	}
+	return false
+}
+
+func (i *Instance) pruneProjectionsLocked() {
+	const maxInactive = 256
+	for {
+		inactive := 0
+		for id := range i.conversations {
+			if !i.projectionPinnedLocked(id) {
+				inactive++
+			}
+		}
+		if inactive < maxInactive {
+			return
+		}
+		oldestID := ""
+		var oldest time.Time
+		for id, projection := range i.conversations {
+			if i.projectionPinnedLocked(id) {
+				continue
+			}
+			if oldestID != "" && !projection.LastAccess.Before(oldest) {
+				continue
+			}
+			oldestID, oldest = id, projection.LastAccess
+		}
+		if oldestID == "" {
+			return
+		}
+		projection := i.conversations[oldestID]
+		for _, size := range projection.EventBytes {
+			if size > 0 {
+				i.manager.eventPayloadBytes.Add(-int64(size))
+			}
+		}
+		delete(i.conversations, oldestID)
+	}
 }
 
 func revisionEvent(event string) bool {

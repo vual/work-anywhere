@@ -73,15 +73,15 @@ func TestPeerOfflineInvalidatesSecureTransport(t *testing.T) {
 
 func TestBufferedEventsAreBoundedAndDrainedInOrder(t *testing.T) {
 	client := New()
-	for index := 0; index < 1002; index++ {
+	for index := 0; index < 258; index++ {
 		client.dispatchControlPayload(json.RawMessage(fmt.Sprintf(`{"type":"event","sequence":%d}`, index)))
 	}
-	received := make([]string, 0, 1001)
+	received := make([]string, 0, 258)
 	client.SetEventSink(func(value string) { received = append(received, value) })
-	if len(received) != 1001 {
-		t.Fatalf("received %d envelopes, want transport plus 1000 events", len(received))
+	if len(received) != 258 {
+		t.Fatalf("received %d envelopes, want transport, invalidation, and 256 events", len(received))
 	}
-	if received[1] != `{"type":"event","sequence":2}` || received[len(received)-1] != `{"type":"event","sequence":1001}` {
+	if received[1] != `{"type":"event","event":"conversation.invalidated"}` || received[2] != `{"type":"event","sequence":2}` || received[len(received)-1] != `{"type":"event","sequence":257}` {
 		t.Fatalf("buffer did not retain the newest events in order: first=%s last=%s", received[1], received[len(received)-1])
 	}
 	if len(client.Status().Events) != 0 {

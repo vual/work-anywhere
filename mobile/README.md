@@ -9,6 +9,7 @@ Mobile 是 Work Anywhere 的 iOS/Android 客户端。它不连接 Codex 云端�
 - 一台手机配对多台 Desktop daemon，一台 Desktop 也可授权多台手机。
 - 查看 Daemon/Agent 在线状态、Codex 项目、会话列表、完整时间线和实时增量；V1 优先完成 Codex，其他 Agent 先保留能力模型。
 - 处理 approval/question、发送文字与图片、选择模型/思考等级/权限配置并中断 Turn；运行中的新输入进入 App Server 权威队列，可编辑、立即引导或取消；在项目内新建 Codex 对话。
+- 发送后立即显示本地文字与图片气泡，并按 `clientMessageId` 与权威时间线合并；实时输出使用有界 `conversation.delta`，sequence/epoch 缺口自动读取快照。
 - 接收只含通用提示的 APNs/FCM 通知；点击后重新建立 E2EE 会话并从 Desktop 同步权威状态。
 - 在前台维持 WSS；退到后台后不依赖长连接或静默推送保证状态同步。
 - 私钥保存在 iOS Keychain 或 Android Keystore 保护的本机密钥包中；V1 不把会话正文写入磁盘。

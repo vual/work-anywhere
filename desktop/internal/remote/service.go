@@ -138,10 +138,25 @@ type sentControlDelivery struct {
 }
 
 type sessionState struct {
-	pairing Pairing
-	secure  *secureSession
-	writeMu sync.Mutex
+	pairing      Pairing
+	secure       *secureSession
+	writeMu      sync.Mutex
+	senderCancel context.CancelFunc
+	high         chan outboundControl
+	low          chan outboundControl
+	queueMu      sync.Mutex
+	highBytes    int
+	lowBytes     int
+	invalidated  map[string]bool
 }
+
+type outboundControl struct {
+	body  []byte
+	kind  string
+	event *protocol.Event
+}
+
+const sessionQueueBytes = 1 << 20
 
 func New(stateStore settingsStore, control func(protocol.ControlRequest) protocol.ControlResponse, subscribe func() (<-chan protocol.Event, func()), logger logSink) (*Service, error) {
 	service := &Service{store: stateStore, control: control, subscribe: subscribe, log: logger, attempts: make(map[string]*PairAttempt), sessions: make(map[string]*sessionState), wake: make(chan struct{}, 1), sentControl: make(map[string]sentControlDelivery)}
@@ -233,6 +248,7 @@ func (s *Service) Run(ctx context.Context) {
 		s.connected = false
 		s.conn = nil
 		s.connDeviceID = uuid.Nil
+		s.cancelSessionsLocked()
 		s.sessions = make(map[string]*sessionState)
 		s.sentControl = make(map[string]sentControlDelivery)
 		delay := time.Duration(0)
@@ -313,6 +329,7 @@ func (s *Service) ConfigureWithReset(relayURL string, enabled, resetIdentity boo
 		wipeAttempt(attempt)
 	}
 	s.attempts = make(map[string]*PairAttempt)
+	s.cancelSessionsLocked()
 	s.sessions = make(map[string]*sessionState)
 	s.sentControl = make(map[string]sentControlDelivery)
 	s.blocked = false
@@ -634,11 +651,9 @@ func (s *Service) connectOnce(ctx context.Context, state persistedState) error {
 	s.phase, s.lastErrorCode, s.nextRetryAt = "connected", "", time.Time{}
 	s.mu.Unlock()
 	s.log.Event("remote.connected", map[string]any{"relay": state.RelayURL, "deviceId": state.DeviceID})
-	events, unsubscribe := s.subscribe()
-	defer unsubscribe()
 	eventCtx, cancelEvents := context.WithCancel(ctx)
 	defer cancelEvents()
-	go s.forwardEvents(eventCtx, events, state.Generation)
+	go s.forwardEvents(eventCtx, state.Generation)
 	for {
 		frame, readErr := readServerFrame(ctx, connection)
 		if readErr != nil {
@@ -683,9 +698,7 @@ func (s *Service) handleFrame(frame *relayv1.ServerFrame) error {
 	case frame.GetSessionData() != nil:
 		return s.handleSessionData(frame.GetSessionData())
 	case frame.GetSessionClose() != nil:
-		s.mu.Lock()
-		delete(s.sessions, string(frame.GetSessionClose().SessionId))
-		s.mu.Unlock()
+		s.closeSession(frame.GetSessionClose().SessionId)
 	}
 	return nil
 }
@@ -711,6 +724,9 @@ func (s *Service) handleRouteAck(ack *relayv1.RouteAck) error {
 		}
 	}
 	if tracked && ack.ErrorCode == "peer_offline" {
+		if session := s.sessions[delivery.sessionID]; session != nil && session.senderCancel != nil {
+			session.senderCancel()
+		}
 		delete(s.sessions, delivery.sessionID)
 		// Once Relay says the Mobile peer is gone, every already queued event
 		// for this Noise session is stale too. Forget those correlations so a
@@ -794,6 +810,9 @@ func (s *Service) handlePairRevoked(revoked *relayv1.PairRevoked) error {
 	delete(s.state.Pairings, id.String())
 	for sessionID, session := range s.sessions {
 		if session.pairing.ID == id.String() {
+			if session.senderCancel != nil {
+				session.senderCancel()
+			}
 			delete(s.sessions, sessionID)
 		}
 	}
@@ -846,13 +865,28 @@ func (s *Service) handleSessionOpen(open *relayv1.SessionOpen) error {
 // allow its asynchronous events to be routed to the replacement connection.
 func (s *Service) installSession(sessionID string, session *sessionState) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	for existingID, existing := range s.sessions {
 		if existingID != sessionID && existing.pairing.ID == session.pairing.ID {
+			if existing.senderCancel != nil {
+				existing.senderCancel()
+			}
 			delete(s.sessions, existingID)
 		}
 	}
+	parent := s.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	senderCtx, cancel := context.WithCancel(parent)
+	session.senderCancel = cancel
+	session.high = make(chan outboundControl, 64)
+	session.low = make(chan outboundControl, 128)
+	session.invalidated = make(map[string]bool)
 	s.sessions[sessionID] = session
+	s.mu.Unlock()
+	if session.secure != nil {
+		go s.sessionWriteLoop(senderCtx, sessionID, session)
+	}
 }
 
 func (s *Service) handleSessionData(data *relayv1.SessionData) error {
@@ -865,6 +899,9 @@ func (s *Service) handleSessionData(data *relayv1.SessionData) error {
 	payload, err := session.secure.decrypt(data.Ciphertext)
 	if err != nil || payload.Sequence != data.SenderSequence {
 		s.mu.Lock()
+		if session.senderCancel != nil {
+			session.senderCancel()
+		}
 		delete(s.sessions, string(data.SessionId))
 		s.mu.Unlock()
 		if err != nil {
@@ -900,6 +937,113 @@ func (s *Service) sendControl(session *sessionState, value any) error {
 	if err != nil {
 		return err
 	}
+	kind := "response"
+	var event *protocol.Event
+	if typed, ok := value.(protocol.Event); ok {
+		kind = "event"
+		copyOfEvent := typed
+		event = &copyOfEvent
+	}
+	item := outboundControl{body: body, kind: kind, event: event}
+	low := event != nil && event.Event == "conversation.delta"
+	if s.enqueueControl(session, item, low) {
+		return nil
+	}
+	if low && event != nil {
+		session.queueMu.Lock()
+		alreadyInvalidated := session.invalidated[event.ConversationID]
+		if !alreadyInvalidated {
+			session.invalidated[event.ConversationID] = true
+		}
+		session.queueMu.Unlock()
+		if alreadyInvalidated {
+			return nil
+		}
+		invalidation := *event
+		invalidation.Event = "conversation.invalidated"
+		invalidation.Payload = nil
+		encoded, _ := json.Marshal(invalidation)
+		if s.enqueueControl(session, outboundControl{body: encoded, kind: "event", event: &invalidation}, false) {
+			return nil
+		}
+		session.queueMu.Lock()
+		delete(session.invalidated, event.ConversationID)
+		session.queueMu.Unlock()
+	}
+	s.dropSession(session)
+	return errors.New("remote control session queue is full")
+}
+
+func (s *Service) enqueueControl(session *sessionState, item outboundControl, low bool) bool {
+	session.queueMu.Lock()
+	defer session.queueMu.Unlock()
+	if low {
+		if session.lowBytes+len(item.body) > sessionQueueBytes {
+			return false
+		}
+		select {
+		case session.low <- item:
+			session.lowBytes += len(item.body)
+			return true
+		default:
+			return false
+		}
+	}
+	if session.highBytes+len(item.body) > sessionQueueBytes {
+		return false
+	}
+	select {
+	case session.high <- item:
+		session.highBytes += len(item.body)
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Service) sessionWriteLoop(ctx context.Context, sessionID string, session *sessionState) {
+	for {
+		var item outboundControl
+		var ok bool
+		select {
+		case <-ctx.Done():
+			return
+		case item, ok = <-session.high:
+			session.queueMu.Lock()
+			session.highBytes -= len(item.body)
+			session.queueMu.Unlock()
+		default:
+			select {
+			case <-ctx.Done():
+				return
+			case item, ok = <-session.high:
+				session.queueMu.Lock()
+				session.highBytes -= len(item.body)
+				session.queueMu.Unlock()
+			case item, ok = <-session.low:
+				session.queueMu.Lock()
+				session.lowBytes -= len(item.body)
+				session.queueMu.Unlock()
+			}
+		}
+		if !ok {
+			return
+		}
+		if err := s.writeControlNow(session, item.body, item.kind); err != nil {
+			s.closeSession([]byte(sessionID))
+			return
+		}
+		if item.event != nil && item.event.Event == "conversation.delta" {
+			session.queueMu.Lock()
+			if session.lowBytes == 0 {
+				clear(session.invalidated)
+			}
+			session.queueMu.Unlock()
+		}
+	}
+}
+
+func (s *Service) writeControlNow(session *sessionState, body []byte, kind string) error {
 	// Encrypting advances the Noise send sequence. Keep encryption and the
 	// corresponding Relay write together so concurrent responses/events cannot
 	// put a later sequence number on the wire first.
@@ -913,10 +1057,6 @@ func (s *Service) sendControl(session *sessionState, value any) error {
 	mobileID, _ := uuid.Parse(session.pairing.MobileDeviceID)
 	sessionID := session.secure.binding.SessionID
 	messageID := newMessageID()
-	kind := "response"
-	if _, ok := value.(protocol.Event); ok {
-		kind = "event"
-	}
 	s.mu.Lock()
 	if s.sentControl == nil {
 		s.sentControl = make(map[string]sentControlDelivery)
@@ -934,59 +1074,112 @@ func (s *Service) sendControl(session *sessionState, value any) error {
 
 func (s *Service) closeSession(sessionID []byte) {
 	s.mu.Lock()
+	if session := s.sessions[string(sessionID)]; session != nil && session.senderCancel != nil {
+		session.senderCancel()
+	}
 	delete(s.sessions, string(sessionID))
 	s.mu.Unlock()
 }
 
-func (s *Service) forwardEvents(ctx context.Context, events <-chan protocol.Event, generation uint64) {
-	pending := make(map[string]protocol.Event)
-	var timer *time.Timer
-	var timerC <-chan time.Time
-	flush := func() {
-		s.lifecycleMu.RLock()
-		defer s.lifecycleMu.RUnlock()
-		s.mu.RLock()
-		current := s.generation == generation && s.state.Enabled && s.connected && ctx.Err() == nil
-		s.mu.RUnlock()
-		if !current {
-			clear(pending)
+func (s *Service) dropSession(target *sessionState) {
+	s.mu.Lock()
+	for id, session := range s.sessions {
+		if session == target {
+			if session.senderCancel != nil {
+				session.senderCancel()
+			}
+			delete(s.sessions, id)
+			break
+		}
+	}
+	s.mu.Unlock()
+}
+
+func (s *Service) cancelSessionsLocked() {
+	for _, session := range s.sessions {
+		if session.senderCancel != nil {
+			session.senderCancel()
+		}
+	}
+}
+
+func (s *Service) forwardEvents(ctx context.Context, generation uint64) {
+	for ctx.Err() == nil {
+		events, unsubscribe := s.subscribe()
+		closed := s.forwardEventStream(ctx, events, generation)
+		unsubscribe()
+		if !closed || ctx.Err() != nil {
 			return
 		}
-		for _, event := range pending {
-			s.forwardEvent(event)
+		s.forwardIfCurrent(ctx, generation, protocol.Event{Type: "event", Contract: protocol.MobileControlContract, Event: "conversation.invalidated"})
+	}
+}
+
+func (s *Service) forwardEventStream(ctx context.Context, events <-chan protocol.Event, generation uint64) bool {
+	batches := newDeltaBatcher()
+	pendingInvalidations := make(map[string]protocol.Event)
+	var invalidationDue time.Time
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	forward := func(event protocol.Event) { s.forwardIfCurrent(ctx, generation, event) }
+	flushInvalidations := func() {
+		for _, event := range pendingInvalidations {
+			forward(event)
 		}
-		clear(pending)
+		clear(pendingInvalidations)
+		invalidationDue = time.Time{}
 	}
 	for {
 		select {
 		case <-ctx.Done():
-			if timer != nil {
-				timer.Stop()
-			}
-			return
+			return false
 		case event, ok := <-events:
 			if !ok {
-				if timer != nil {
-					timer.Stop()
-				}
-				return
+				return true
 			}
 			event.Contract = protocol.MobileControlContract
-			// Events are invalidation hints for Mobile. The next bounded snapshot
-			// carries the authoritative timeline, so never send provider payloads
-			// (which can contain large command output/diffs) over the relay event
-			// path.
-			event.Payload = nil
-			pending[remoteEventKey(event)] = event
-			if timer == nil {
-				timer = time.NewTimer(remoteEventCoalesceWindow)
-				timerC = timer.C
+			if delta, recognized := parseConversationDelta(event); recognized {
+				for _, batched := range batches.add(event, delta, time.Now()) {
+					forward(batched)
+				}
+				continue
 			}
-		case <-timerC:
-			flush()
-			timer = nil
-			timerC = nil
+			for _, batched := range batches.flush(event.InstanceID, event.ConversationID) {
+				forward(batched)
+			}
+			event.Payload = nil
+			if isCriticalRemoteEvent(event) {
+				forward(event)
+				continue
+			}
+			pendingInvalidations[remoteEventKey(event)] = event
+			if invalidationDue.IsZero() {
+				invalidationDue = time.Now().Add(remoteEventCoalesceWindow)
+			}
+		case now := <-ticker.C:
+			for _, batched := range batches.flushDue(now) {
+				forward(batched)
+			}
+			if !invalidationDue.IsZero() && !now.Before(invalidationDue) {
+				flushInvalidations()
+			}
 		}
+	}
+}
+
+func isCriticalRemoteEvent(event protocol.Event) bool {
+	lower := strings.ToLower(event.Event)
+	return strings.Contains(lower, "action") || strings.Contains(lower, "requestuserinput") || strings.Contains(lower, "approval") || strings.Contains(lower, "queue") || strings.Contains(lower, "item/completed") || strings.Contains(lower, "complete") || strings.Contains(lower, "failed") || strings.Contains(lower, "interrupt")
+}
+
+func (s *Service) forwardIfCurrent(ctx context.Context, generation uint64, event protocol.Event) {
+	s.lifecycleMu.RLock()
+	defer s.lifecycleMu.RUnlock()
+	s.mu.RLock()
+	current := s.generation == generation && s.state.Enabled && s.connected && ctx.Err() == nil
+	s.mu.RUnlock()
+	if current {
+		s.forwardEvent(event)
 	}
 }
 

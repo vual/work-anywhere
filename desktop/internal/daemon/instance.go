@@ -42,11 +42,15 @@ type pendingAction struct {
 }
 
 type conversationProjection struct {
-	ID       string
-	Status   string
-	Sequence int64
-	Revision int64
-	Events   []protocol.Event
+	ID          string
+	Status      string
+	Sequence    int64
+	Revision    int64
+	ReplayFloor int64
+	Events      []protocol.Event
+	EventBytes  []int
+	EventTimes  []time.Time
+	LastAccess  time.Time
 }
 
 type threadCollaborationSettings struct {
@@ -142,7 +146,26 @@ func (i *Instance) persistThreadSettings(threadID string, settings threadCollabo
 	if threadID == "" || settings.Mode == "" || settings.Model == "" {
 		return
 	}
-	_ = i.manager.store.PutSetting(i.threadSettingsKey(threadID), settings)
+	if err := i.manager.settings.PutSetting(i.threadSettingsKey(threadID), settings); err != nil && i.manager.log != nil {
+		i.manager.log.Event("thread_settings.persist_failed", map[string]any{"instanceId": i.descriptor.ID, "threadId": threadID, "error": err.Error()})
+	}
+}
+
+func (i *Instance) persistThreadSettingsAsync(threadID string, settings threadCollaborationSettings) {
+	if threadID == "" || settings.Mode == "" || settings.Model == "" || i.manager == nil || i.manager.stopping.Load() {
+		return
+	}
+	i.manager.configWriteMu.Lock()
+	if i.manager.stopping.Load() {
+		i.manager.configWriteMu.Unlock()
+		return
+	}
+	i.manager.configWrites.Add(1)
+	i.manager.configWriteMu.Unlock()
+	go func() {
+		defer i.manager.configWrites.Done()
+		i.persistThreadSettings(threadID, settings)
+	}()
 }
 
 func (i *Instance) collaborationSettings(threadID string) (threadCollaborationSettings, bool) {
@@ -153,7 +176,7 @@ func (i *Instance) collaborationSettings(threadID string) (threadCollaborationSe
 		return settings, true
 	}
 	var stored threadCollaborationSettings
-	found, err := i.manager.store.GetSetting(i.threadSettingsKey(threadID), &stored)
+	found, err := i.manager.settings.GetSetting(i.threadSettingsKey(threadID), &stored)
 	if err != nil || !found || stored.Mode == "" || stored.Model == "" {
 		return threadCollaborationSettings{}, false
 	}
@@ -288,15 +311,15 @@ func (i *Instance) observeThreadSettingsNotification(params json.RawMessage) {
 	if !ok {
 		return
 	}
-	current, hasCurrent := i.collaborationSettings(threadID)
+	i.mu.Lock()
+	current, hasCurrent := i.threadSettings[threadID]
 	if hasCurrent {
 		settings.TurnID = current.TurnID
 		settings.Succeeded = current.Succeeded
 	}
-	i.mu.Lock()
 	i.threadSettings[threadID] = settings
 	i.mu.Unlock()
-	i.persistThreadSettings(threadID, settings)
+	i.persistThreadSettingsAsync(threadID, settings)
 }
 
 func (i *Instance) RegisterRuntime(hello protocol.Hello) error {
@@ -622,7 +645,6 @@ func (i *Instance) resolveServerRequest(message jsonrpc.Message, raw []byte) err
 	delete(i.actions, key)
 	i.updateActivityStateLocked()
 	i.mu.Unlock()
-	_ = i.manager.store.ResolvePendingAction(i.descriptor.ID, key)
 	if err := i.writeServer(raw); err != nil {
 		return err
 	}
@@ -753,7 +775,6 @@ func (i *Instance) handleServerFrame(generation uint64, raw []byte) {
 		i.actions[string(message.ID)] = action
 		i.updateActivityStateLocked()
 		i.mu.Unlock()
-		_ = i.manager.store.SavePendingAction(i.descriptor.ID, string(message.ID), message.Method, action)
 		i.broadcast(raw)
 		i.broadcastEvent("action.created", action)
 		return
@@ -801,7 +822,6 @@ func (i *Instance) observeNotification(method string, params json.RawMessage) {
 		}
 		_ = json.Unmarshal(params, &resolved)
 		delete(i.actions, string(resolved.RequestID))
-		_ = i.manager.store.ResolvePendingAction(i.descriptor.ID, string(resolved.RequestID))
 		i.updateActivityStateLocked()
 	case strings.Contains(lower, "turn/started") || strings.HasSuffix(lower, "turn.started"):
 		var identifiers struct {
@@ -853,10 +873,8 @@ func (i *Instance) observeNotification(method string, params json.RawMessage) {
 			settingsToPersist = &copy
 			settingsThreadID = threadID
 		}
-		actionIDs := make([]string, 0)
 		for id, action := range i.actions {
 			if (threadID != "" && action.ConversationID == threadID) || (turnID != "" && action.TurnID == turnID) {
-				actionIDs = append(actionIDs, id)
 				delete(i.actions, id)
 			}
 		}
@@ -875,10 +893,7 @@ func (i *Instance) observeNotification(method string, params json.RawMessage) {
 		i.updateActivityStateLocked()
 		i.mu.Unlock()
 		if settingsToPersist != nil {
-			i.persistThreadSettings(settingsThreadID, *settingsToPersist)
-		}
-		for _, id := range actionIDs {
-			_ = i.manager.store.ResolvePendingAction(i.descriptor.ID, id)
+			i.persistThreadSettingsAsync(settingsThreadID, *settingsToPersist)
 		}
 		if activityDrained && (pending != nil || len(pendingInitialize) > 0) {
 			go i.Restart()
@@ -887,7 +902,7 @@ func (i *Instance) observeNotification(method string, params json.RawMessage) {
 	}
 	i.mu.Unlock()
 	if settingsToPersist != nil {
-		i.persistThreadSettings(settingsThreadID, *settingsToPersist)
+		i.persistThreadSettingsAsync(settingsThreadID, *settingsToPersist)
 	}
 }
 
@@ -942,10 +957,6 @@ func (i *Instance) waitServer(generation uint64, cmd *exec.Cmd) {
 	}
 	origins := i.requests
 	i.requests = make(map[string]requestOrigin)
-	actions := make([]string, 0, len(i.actions))
-	for id := range i.actions {
-		actions = append(actions, id)
-	}
 	waiters := append([]initializeWaiter(nil), i.initializeWaiters...)
 	restartable := len(i.activeTurns) == 0 && len(i.actions) == 0 && len(i.cachedInitializeRequest) > 0 && !i.autoRestartAttempted
 	if restartable {
@@ -971,9 +982,6 @@ func (i *Instance) waitServer(generation uint64, cmd *exec.Cmd) {
 		i.lastError = err.Error()
 	}
 	i.mu.Unlock()
-	for _, id := range actions {
-		_ = i.manager.store.ResolvePendingAction(i.descriptor.ID, id)
-	}
 	for id, origin := range origins {
 		i.notifyRequestFailure(id, origin, "App Server exited")
 	}
@@ -1081,26 +1089,33 @@ func (i *Instance) broadcastEvent(eventType string, payload any) {
 	}
 	instanceID := i.descriptor.ID
 	i.mu.Unlock()
-	event := protocol.Event{Type: "event", Sequence: sequence, Event: eventType, InstanceID: instanceID, ConversationID: conversationID, Payload: payload}
+	event := protocol.Event{Type: "event", Sequence: sequence, SyncEpoch: i.manager.syncEpoch, Event: eventType, InstanceID: instanceID, ConversationID: conversationID, Payload: payload}
 	if conversationID != "" {
+		storedAt := time.Now()
+		payloadBytes := 0
+		if encoded, err := json.Marshal(payload); err == nil && i.manager.reserveEventPayload(len(encoded)) {
+			payloadBytes = len(encoded)
+		} else {
+			event.Payload = nil
+		}
 		i.mu.Lock()
-		projection := i.conversations[conversationID]
+		projection := i.projectionLocked(conversationID)
 		projection.Events = append(projection.Events, event)
-		if len(projection.Events) > 1000 {
-			projection.Events = append([]protocol.Event(nil), projection.Events[len(projection.Events)-1000:]...)
+		projection.EventBytes = append(projection.EventBytes, payloadBytes)
+		projection.EventTimes = append(projection.EventTimes, storedAt)
+		if len(projection.Events) > 256 {
+			projection.ReplayFloor = projection.Events[0].Sequence
+			removed := projection.EventBytes[0]
+			projection.Events = append([]protocol.Event(nil), projection.Events[1:]...)
+			projection.EventBytes = append([]int(nil), projection.EventBytes[1:]...)
+			projection.EventTimes = append([]time.Time(nil), projection.EventTimes[1:]...)
+			if removed > 0 {
+				i.manager.eventPayloadBytes.Add(-int64(removed))
+			}
 		}
 		i.mu.Unlock()
 	}
 	i.manager.publish(event)
-	_ = i.manager.store.AppendEvent(instanceID, conversationID, sequence, eventType, payload)
-	if conversationID != "" {
-		i.mu.Lock()
-		projection := i.conversations[conversationID]
-		status, revision, currentSequence := projection.Status, projection.Revision, projection.Sequence
-		i.mu.Unlock()
-		_ = i.manager.store.UpsertConversation(instanceID, conversationID, status, revision, currentSequence)
-		_ = i.manager.store.UpsertTurn(instanceID, conversationID, identifierFromPayload(payload, "turnId"), status)
-	}
 }
 
 func (i *Instance) CheckExpectedRevision(params json.RawMessage) error {
@@ -1139,26 +1154,22 @@ func (i *Instance) conversationSubscription(params json.RawMessage, mobile bool)
 		Cursor   int64  `json:"cursor"`
 	}
 	_ = json.Unmarshal(params, &request)
+	syncEpoch := ""
+	if i.manager != nil {
+		syncEpoch = i.manager.syncEpoch
+	}
 	i.mu.Lock()
 	projection := i.conversations[request.ThreadID]
 	if projection == nil && request.ThreadID != "" {
-		stored, _ := i.manager.store.ReadEvents(i.descriptor.ID, request.ThreadID, 0, 1000)
 		projection = i.projectionLocked(request.ThreadID)
-		for _, item := range stored {
-			event := protocol.Event{Type: "event", Sequence: item.Sequence, Event: item.EventType, InstanceID: i.descriptor.ID, ConversationID: request.ThreadID, Payload: item.Payload}
-			projection.Events = append(projection.Events, event)
-			if item.Sequence > projection.Sequence {
-				projection.Sequence = item.Sequence
-			}
-		}
-		i.conversations[request.ThreadID] = projection
 	}
 	if projection == nil {
 		i.mu.Unlock()
-		return map[string]any{"threadId": request.ThreadID, "status": "idle", "revision": 0, "sequence": 0, "events": []protocol.Event{}, "snapshot": true}
+		return map[string]any{"threadId": request.ThreadID, "status": "idle", "revision": 0, "sequence": 0, "syncEpoch": syncEpoch, "events": []protocol.Event{}, "snapshot": true}
 	}
+	projection.LastAccess = time.Now()
 	events := make([]protocol.Event, 0)
-	cursorValid := request.Cursor == 0
+	cursorValid := request.Cursor == projection.ReplayFloor
 	for _, event := range projection.Events {
 		if event.Sequence == request.Cursor {
 			cursorValid = true
@@ -1188,7 +1199,7 @@ func (i *Instance) conversationSubscription(params json.RawMessage, mobile bool)
 			events = metadata
 		}
 	}
-	result := map[string]any{"threadId": projection.ID, "status": projection.Status, "revision": projection.Revision, "sequence": projection.Sequence, "events": events, "snapshot": !cursorValid}
+	result := map[string]any{"threadId": projection.ID, "status": projection.Status, "revision": projection.Revision, "sequence": projection.Sequence, "syncEpoch": syncEpoch, "events": events, "snapshot": !cursorValid}
 	i.mu.Unlock()
 	return result
 }
@@ -1386,7 +1397,6 @@ func (i *Instance) ResolveAction(id, result json.RawMessage) error {
 	delete(i.actions, key)
 	i.updateActivityStateLocked()
 	i.mu.Unlock()
-	_ = i.manager.store.ResolvePendingAction(i.descriptor.ID, key)
 	response := map[string]any{"jsonrpc": "2.0", "id": json.RawMessage(id), "result": json.RawMessage(result)}
 	raw, _ := json.Marshal(response)
 	i.manager.traffic.Record(i.descriptor.ID, "control_to_server", raw)

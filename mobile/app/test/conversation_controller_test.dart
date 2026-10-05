@@ -285,6 +285,239 @@ void main() {
   });
 
   test(
+    'batched delta updates a streaming item without reading a snapshot',
+    () async {
+      final events = StreamController<Map<String, dynamic>>();
+      addTearDown(events.close);
+      var reads = 0;
+      final controller = ConversationController(
+        gateway: _FakeGateway((method, params) async {
+          reads++;
+          return {
+            'result': {
+              'conversation': {'id': 't1'},
+              'syncEpoch': 'epoch-1',
+              'sequence': 1,
+              'timeline': {'items': const []},
+            },
+          };
+        }, events: events.stream),
+        agentId: 'a1',
+        threadId: 't1',
+      );
+      addTearDown(controller.dispose);
+      await controller.refreshConversation();
+      controller.startLiveSync();
+
+      events.add({
+        'type': 'event',
+        'event': 'conversation.delta',
+        'conversationId': 't1',
+        'sequence': 2,
+        'syncEpoch': 'epoch-1',
+        'payload': {
+          'version': 1,
+          'kind': 'assistantText',
+          'turnId': 'turn-1',
+          'itemId': 'item-1',
+          'fromSequence': 2,
+          'toSequence': 2,
+          'delta': 'Hello from a batch',
+        },
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      expect(reads, 1);
+      expect(controller.state.sequence, 2);
+      expect(controller.state.items, hasLength(1));
+      expect(
+        (controller.state.items.single['blocks'] as List).single['text'],
+        'Hello from a batch',
+      );
+    },
+  );
+
+  test('delta sequence gap falls back to an authoritative snapshot', () async {
+    final events = StreamController<Map<String, dynamic>>();
+    addTearDown(events.close);
+    var reads = 0;
+    final controller = ConversationController(
+      gateway: _FakeGateway((method, params) async {
+        reads++;
+        return {
+          'result': {
+            'conversation': {'id': 't1'},
+            'syncEpoch': 'epoch-1',
+            'sequence': reads == 1 ? 1 : 4,
+            'timeline': {
+              'items': reads == 1 ? const [] : [_item('official')],
+            },
+          },
+        };
+      }, events: events.stream),
+      agentId: 'a1',
+      threadId: 't1',
+    );
+    addTearDown(controller.dispose);
+    await controller.refreshConversation();
+    controller.startLiveSync();
+    events.add({
+      'type': 'event',
+      'event': 'conversation.delta',
+      'conversationId': 't1',
+      'sequence': 4,
+      'syncEpoch': 'epoch-1',
+      'payload': {
+        'kind': 'assistantText',
+        'turnId': 'turn-1',
+        'itemId': 'item-1',
+        'fromSequence': 3,
+        'toSequence': 4,
+        'delta': 'gap',
+      },
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+
+    expect(reads, 2);
+    expect(controller.state.items.single['id'], 'official');
+  });
+
+  test('oversized live item falls back to an authoritative snapshot', () async {
+    final events = StreamController<Map<String, dynamic>>();
+    addTearDown(events.close);
+    var reads = 0;
+    final controller = ConversationController(
+      gateway: _FakeGateway((method, params) async {
+        reads++;
+        return {
+          'result': {
+            'conversation': {'id': 't1'},
+            'syncEpoch': 'epoch-1',
+            'sequence': reads == 1 ? 1 : 2,
+            'timeline': {
+              'items': reads == 1 ? const [] : [_item('official')],
+            },
+          },
+        };
+      }, events: events.stream),
+      agentId: 'a1',
+      threadId: 't1',
+    );
+    addTearDown(controller.dispose);
+    await controller.refreshConversation();
+    controller.startLiveSync();
+    events.add({
+      'type': 'event',
+      'event': 'conversation.delta',
+      'conversationId': 't1',
+      'sequence': 2,
+      'syncEpoch': 'epoch-1',
+      'payload': {
+        'kind': 'assistantText',
+        'turnId': 'turn-1',
+        'itemId': 'item-1',
+        'fromSequence': 2,
+        'toSequence': 2,
+        'delta': List<String>.filled(512 * 1024 + 1, 'x').join(),
+      },
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+
+    expect(reads, 2);
+    expect(controller.state.items.single['id'], 'official');
+  });
+
+  test('live conversation byte budget falls back to a snapshot', () async {
+    final events = StreamController<Map<String, dynamic>>();
+    addTearDown(events.close);
+    var reads = 0;
+    final controller = ConversationController(
+      gateway: _FakeGateway((method, params) async {
+        reads++;
+        return {
+          'result': {
+            'conversation': {'id': 't1'},
+            'syncEpoch': 'epoch-1',
+            'sequence': reads == 1 ? 1 : 10,
+            'timeline': {
+              'items': reads == 1 ? const [] : [_item('official')],
+            },
+          },
+        };
+      }, events: events.stream),
+      agentId: 'a1',
+      threadId: 't1',
+    );
+    addTearDown(controller.dispose);
+    await controller.refreshConversation();
+    controller.startLiveSync();
+    final chunk = List<String>.filled(480 * 1024, 'x').join();
+    for (var index = 0; index < 9; index++) {
+      events.add({
+        'type': 'event',
+        'event': 'conversation.delta',
+        'conversationId': 't1',
+        'sequence': index + 2,
+        'syncEpoch': 'epoch-1',
+        'payload': {
+          'kind': 'assistantText',
+          'turnId': 'turn-1',
+          'itemId': 'item-$index',
+          'fromSequence': index + 2,
+          'toSequence': index + 2,
+          'delta': chunk,
+        },
+      });
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+
+    expect(reads, 2);
+    expect(controller.state.items.single['id'], 'official');
+  });
+
+  test(
+    'new sync epoch accepts a lower sequence and replaces old projection',
+    () async {
+      final events = StreamController<Map<String, dynamic>>();
+      addTearDown(events.close);
+      var reads = 0;
+      final controller = ConversationController(
+        gateway: _FakeGateway((method, params) async {
+          reads++;
+          return {
+            'result': {
+              'conversation': {'id': 't1'},
+              'syncEpoch': reads == 1 ? 'epoch-1' : 'epoch-2',
+              'sequence': reads == 1 ? 20 : 1,
+              'timeline': {
+                'items': [_item(reads == 1 ? 'old' : 'new')],
+              },
+            },
+          };
+        }, events: events.stream),
+        agentId: 'a1',
+        threadId: 't1',
+      );
+      addTearDown(controller.dispose);
+      await controller.refreshConversation();
+      controller.startLiveSync();
+      events.add({
+        'type': 'event',
+        'event': 'conversation.invalidated',
+        'conversationId': 't1',
+        'syncEpoch': 'epoch-2',
+        'sequence': 1,
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      expect(reads, 2);
+      expect(controller.state.syncEpoch, 'epoch-2');
+      expect(controller.state.sequence, 1);
+      expect(controller.state.items.map((item) => item['id']), ['new']);
+    },
+  );
+
+  test(
     'disconnected transport starts an immediate subscribe fallback',
     () async {
       final events = StreamController<Map<String, dynamic>>();

@@ -37,7 +37,8 @@ Desktop V1 提供：
 - 从本机控制面发起文字/图片 Turn、指定模型、思考等级、审批和 sandbox 策略。
 - 处理中途审批、用户问题和 Turn 中断。
 - Desktop Bridge 断开后 daemon 继续持有 App Server；Desktop 重新连接时恢复初始化状态。
-- SQLite 会话投影、附件存储、结构化日志和显式开启的完整协议流量诊断。
+- 有界内存会话投影、DPAPI 保护的 JSON 配置、临时附件、结构化日志和显式开启的完整协议流量诊断。
+- App Server delta 在加密前按语义批量合并，Mobile 按 `syncEpoch + sequence` 实时展示；缺口、终态或内存超限时回到权威快照。
 - 系统托盘、本机管理页和命令行控制工具。
 - daemon 无法在请求前建立连接时直通官方 Codex，优先保证 Desktop 可用。
 
@@ -71,7 +72,7 @@ Local CLI / Admin page ────────┘                       Desktop
                                                              │
                                       ┌──────────────────────┼─────────────────────┐
                                       ▼                      ▼                     ▼
-                              Codex App Server A      Codex App Server B      Encrypted SQLite
+                              Codex App Server A      Codex App Server B      Bounded memory + JSON config
                                       │                      │
                                       └──── official Codex sessions ────┘
 
@@ -113,7 +114,7 @@ work-anywhere/
 │  │  ├─ codex/                 Codex runtime、实例和参数处理
 │  │  ├─ jsonrpc/               JSON-RPC envelope 与 ID
 │  │  ├─ provider/              可扩展 Provider 接口
-│  │  ├─ store/                 SQLite 加密投影
+│  │  ├─ config/                DPAPI 保护的 JSON 配置
 │  │  └─ platform/              Windows/macOS/Linux 平台适配边界
 │  ├─ packaging/                各平台安装、签名和发行配置
 │  ├─ docs/                     当前状态设计文档
@@ -289,13 +290,14 @@ $wa = 'D:\CodeSpace\work-anywhere\desktop\dist\windows-amd64\work-anywhere.exe'
 %LOCALAPPDATA%\WorkAnywhere
 ```
 
-- 实例、会话、Turn、Timeline、pending action、附件和设置投影保存在 SQLite WAL 数据库。
-- 消息正文、工具 payload、diff、action 和附件内容使用 AES-256-GCM 加密。
-- AES 主密钥由当前 Windows 用户的 DPAPI 保护。
+- 实例、会话、Turn、Timeline、pending action 和附件索引只存在 daemon 的有界内存中；重启后从官方 Codex session 重新读取。
+- Relay 身份、配对和 thread 设置保存在 `%USERPROFILE%\.work-anywhere\config.json`，配置值由当前 Windows 用户的 DPAPI 保护并原子替换。
+- 远程图片附件使用项目目录的 `.work-anywhere-remote-attachments` 作为临时 spool；明确受理后删除，失败或结果未知时最多保留 24 小时。
+- 每会话事件回放、全局 payload、Delta 聚合、远端发送队列和 Mobile 流式正文均有固定内存上限；慢设备通过失效提示和快照收敛。
 - Bridge 与 daemon 的 Named Pipe 使用当前用户 SID ACL。
 - 管理页只监听随机 loopback 端口，并使用一次性 token、SameSite session、Origin 和 CSRF 校验。
-- 完整进程环境不写数据库；完整 JSONL 流量默认不记录。
-- 官方 Codex session 文件仍是完整会话的权威数据源，Work Anywhere 数据库只是控制面投影，损坏时不应覆盖官方 session。
+- 完整进程环境和普通消息正文不落盘；完整 JSONL 流量默认不记录。
+- 官方 Codex session 文件仍是完整会话的唯一权威数据源，Work Anywhere 不维护消息历史数据库。
 
 ## 停止与卸载
 

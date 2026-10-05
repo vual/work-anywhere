@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
@@ -17,6 +18,7 @@ class ConversationState {
     this.hasSnapshot = false,
     this.queueAvailable = true,
     this.sequence = 0,
+    this.syncEpoch,
     this.loading = false,
     this.loadingOlder = false,
     this.online = true,
@@ -35,6 +37,7 @@ class ConversationState {
   final bool hasSnapshot;
   final bool queueAvailable;
   final int sequence;
+  final String? syncEpoch;
   final bool loading;
   final bool loadingOlder;
   final bool online;
@@ -82,8 +85,11 @@ class ConversationController extends ChangeNotifier {
   bool _actionRefreshRunning = false;
   bool _actionRefreshPending = false;
   int _pendingEventSequence = 0;
+  final Map<String, _LiveDeltaBuffer> _liveDeltas = {};
+  int _liveDeltaBytes = 0;
   Timer? _liveTimer;
   Timer? _eventDebounce;
+  Timer? _deltaRenderTimer;
   StreamSubscription<Map<String, dynamic>>? _eventSubscription;
 
   ConversationState get state => _state;
@@ -160,6 +166,19 @@ class ConversationController extends ChangeNotifier {
     if (eventName.contains('action')) {
       _queueActionRefresh();
     }
+    final eventEpoch = event['syncEpoch'] as String?;
+    if (eventEpoch != null &&
+        eventEpoch.isNotEmpty &&
+        eventEpoch != _state.syncEpoch) {
+      _resetForEpoch(eventEpoch);
+      _queueConversationRefresh(immediate: true);
+      return;
+    }
+    if (eventName == 'conversation.delta') {
+      if (_applyDeltaEvent(event)) return;
+      _queueConversationRefresh(immediate: true);
+      return;
+    }
     final sequence = (event['sequence'] as num?)?.toInt();
     if (sequence == null || sequence > _state.sequence) {
       if (sequence != null && sequence > _pendingEventSequence) {
@@ -167,6 +186,131 @@ class ConversationController extends ChangeNotifier {
       }
       _queueConversationRefresh();
     }
+  }
+
+  void _resetForEpoch(String epoch) {
+    _liveDeltas.clear();
+    _liveDeltaBytes = 0;
+    _deltaRenderTimer?.cancel();
+    _deltaRenderTimer = null;
+    _loadedOlder = false;
+    _resetTimelineOnNextSnapshot = true;
+    _state = ConversationState(
+      queuedSubmissions: _state.queuedSubmissions,
+      actions: _state.actions,
+      revision: 0,
+      sequence: 0,
+      syncEpoch: epoch,
+      online: _state.online,
+    );
+    _pendingEventSequence = 0;
+    _notify();
+  }
+
+  bool _applyDeltaEvent(Map<String, dynamic> event) {
+    if (!_state.hasSnapshot) return false;
+    final rawPayload = event['payload'];
+    if (rawPayload is! Map) return false;
+    final payload = Map<String, dynamic>.from(rawPayload);
+    final itemId = payload['itemId'] as String? ?? '';
+    final kind = payload['kind'] as String? ?? '';
+    final delta = payload['delta'] as String? ?? '';
+    final from = (payload['fromSequence'] as num?)?.toInt();
+    final to = (payload['toSequence'] as num?)?.toInt();
+    if (itemId.isEmpty ||
+        kind.isEmpty ||
+        delta.isEmpty ||
+        from == null ||
+        to == null ||
+        from != _state.sequence + 1 ||
+        to < from) {
+      return false;
+    }
+    final bytes = utf8.encode(delta).length;
+    final current = _liveDeltas[itemId];
+    if ((current?.bytes ?? 0) + bytes > 512 * 1024 ||
+        _liveDeltaBytes + bytes > 4 * 1024 * 1024) {
+      _liveDeltas.clear();
+      _liveDeltaBytes = 0;
+      return false;
+    }
+    final buffer =
+        current ?? _LiveDeltaBuffer(kind: kind, baseItem: _itemById(itemId));
+    if (buffer.kind != kind) return false;
+    buffer.chunks.add(delta);
+    buffer.bytes += bytes;
+    _liveDeltaBytes += bytes;
+    _liveDeltas[itemId] = buffer;
+    _state = ConversationState(
+      metadata: _state.metadata,
+      items: _state.items,
+      queuedSubmissions: _state.queuedSubmissions,
+      actions: _state.actions,
+      planConfirmation: _state.planConfirmation,
+      olderCursor: _state.olderCursor,
+      revision: _state.revision,
+      hasSnapshot: _state.hasSnapshot,
+      queueAvailable: _state.queueAvailable,
+      sequence: to,
+      syncEpoch: _state.syncEpoch,
+      loading: _state.loading,
+      loadingOlder: _state.loadingOlder,
+      online: true,
+      bodyError: _state.bodyError,
+      actionError: _state.actionError,
+      olderError: _state.olderError,
+    );
+    _deltaRenderTimer ??= Timer(
+      const Duration(milliseconds: 75),
+      _renderLiveDeltas,
+    );
+    return true;
+  }
+
+  Map<String, dynamic>? _itemById(String id) {
+    for (final item in _state.items) {
+      if (item['id'] == id) return Map<String, dynamic>.from(item);
+    }
+    return null;
+  }
+
+  void _renderLiveDeltas() {
+    _deltaRenderTimer = null;
+    if (_disposed || _liveDeltas.isEmpty) return;
+    final replacements = <String, Map<String, dynamic>>{
+      for (final entry in _liveDeltas.entries)
+        entry.key: entry.value.render(entry.key),
+    };
+    final items = <Map<String, dynamic>>[];
+    final seen = <String>{};
+    for (final item in _state.items) {
+      final id = item['id'] as String? ?? '';
+      items.add(replacements[id] ?? item);
+      seen.add(id);
+    }
+    for (final entry in replacements.entries) {
+      if (!seen.contains(entry.key)) items.add(entry.value);
+    }
+    _state = ConversationState(
+      metadata: _state.metadata,
+      items: items,
+      queuedSubmissions: _state.queuedSubmissions,
+      actions: _state.actions,
+      planConfirmation: _state.planConfirmation,
+      olderCursor: _state.olderCursor,
+      revision: _state.revision,
+      hasSnapshot: _state.hasSnapshot,
+      queueAvailable: _state.queueAvailable,
+      sequence: _state.sequence,
+      syncEpoch: _state.syncEpoch,
+      loading: _state.loading,
+      loadingOlder: _state.loadingOlder,
+      online: _state.online,
+      bodyError: _state.bodyError,
+      actionError: _state.actionError,
+      olderError: _state.olderError,
+    );
+    _notify();
   }
 
   void _setOnline(bool online) {
@@ -182,6 +326,7 @@ class ConversationController extends ChangeNotifier {
       hasSnapshot: _state.hasSnapshot,
       queueAvailable: _state.queueAvailable,
       sequence: _state.sequence,
+      syncEpoch: _state.syncEpoch,
       loading: _state.loading,
       loadingOlder: _state.loadingOlder,
       online: online,
@@ -255,6 +400,12 @@ class ConversationController extends ChangeNotifier {
         'cursor': _state.sequence,
       });
       final result = envelope['result'] as Map<String, dynamic>? ?? const {};
+      final syncEpoch = result['syncEpoch'] as String?;
+      if (syncEpoch != null &&
+          syncEpoch.isNotEmpty &&
+          syncEpoch != _state.syncEpoch) {
+        _resetForEpoch(syncEpoch);
+      }
       final events = result['events'];
       final hasEvents = events is List && events.isNotEmpty;
       if (result['snapshot'] == true || hasEvents) {
@@ -290,6 +441,7 @@ class ConversationController extends ChangeNotifier {
       hasSnapshot: _state.hasSnapshot,
       queueAvailable: _state.queueAvailable,
       sequence: _state.sequence,
+      syncEpoch: _state.syncEpoch,
       loading: true,
       online: _state.online,
     );
@@ -307,6 +459,7 @@ class ConversationController extends ChangeNotifier {
       hasSnapshot: _state.hasSnapshot,
       queueAvailable: _state.queueAvailable,
       sequence: _state.sequence,
+      syncEpoch: _state.syncEpoch,
       online: _state.online,
       bodyError: _state.bodyError,
       actionError: _state.actionError,
@@ -340,7 +493,17 @@ class ConversationController extends ChangeNotifier {
           .map(QueuedSubmission.fromJson)
           .toList(growable: false);
       final sequence = (result['sequence'] as num?)?.toInt() ?? 0;
-      if (sequence < _state.sequence) return false;
+      final incomingEpoch = result['syncEpoch'] as String?;
+      final epochChanged =
+          incomingEpoch != null &&
+          incomingEpoch.isNotEmpty &&
+          incomingEpoch != _state.syncEpoch &&
+          _state.hasSnapshot;
+      if (sequence < _state.sequence && !epochChanged) return false;
+      if (epochChanged) {
+        _loadedOlder = false;
+        _resetTimelineOnNextSnapshot = true;
+      }
       final settings = result['settings'];
       if (settings is Map<String, dynamic>) {
         _settings = ConversationSettings.fromJson(settings);
@@ -364,10 +527,15 @@ class ConversationController extends ChangeNotifier {
             (result['capabilities'] as Map<String, dynamic>?)?['queue'] !=
             false,
         sequence: sequence,
+        syncEpoch: incomingEpoch ?? _state.syncEpoch,
         loading: _state.loading,
         online: true,
         actionError: _state.actionError,
       );
+      _liveDeltas.clear();
+      _liveDeltaBytes = 0;
+      _deltaRenderTimer?.cancel();
+      _deltaRenderTimer = null;
       _resetTimelineOnNextSnapshot = false;
       _notify();
       return true;
@@ -384,6 +552,7 @@ class ConversationController extends ChangeNotifier {
         hasSnapshot: _state.hasSnapshot,
         queueAvailable: _state.queueAvailable,
         sequence: _state.sequence,
+        syncEpoch: _state.syncEpoch,
         loading: _state.loading,
         online: error is CoreFault && error.code == 'peer_offline'
             ? false
@@ -435,6 +604,7 @@ class ConversationController extends ChangeNotifier {
         hasSnapshot: _state.hasSnapshot,
         queueAvailable: _state.queueAvailable,
         sequence: _state.sequence,
+        syncEpoch: _state.syncEpoch,
         loading: _state.loading,
         online: true,
         bodyError: _state.bodyError,
@@ -453,6 +623,7 @@ class ConversationController extends ChangeNotifier {
         hasSnapshot: _state.hasSnapshot,
         queueAvailable: _state.queueAvailable,
         sequence: _state.sequence,
+        syncEpoch: _state.syncEpoch,
         loading: _state.loading,
         online: error is CoreFault && error.code == 'peer_offline'
             ? false
@@ -479,6 +650,7 @@ class ConversationController extends ChangeNotifier {
       hasSnapshot: _state.hasSnapshot,
       queueAvailable: _state.queueAvailable,
       sequence: _state.sequence,
+      syncEpoch: _state.syncEpoch,
       loadingOlder: true,
       online: _state.online,
       bodyError: _state.bodyError,
@@ -507,6 +679,7 @@ class ConversationController extends ChangeNotifier {
         hasSnapshot: _state.hasSnapshot,
         queueAvailable: _state.queueAvailable,
         sequence: _state.sequence,
+        syncEpoch: _state.syncEpoch,
         online: true,
         bodyError: _state.bodyError,
         actionError: _state.actionError,
@@ -530,6 +703,7 @@ class ConversationController extends ChangeNotifier {
         hasSnapshot: _state.hasSnapshot,
         queueAvailable: _state.queueAvailable,
         sequence: _state.sequence,
+        syncEpoch: _state.syncEpoch,
         online: error is CoreFault && error.code == 'peer_offline'
             ? false
             : _state.online,
@@ -658,7 +832,59 @@ class ConversationController extends ChangeNotifier {
     _disposed = true;
     _liveTimer?.cancel();
     _eventDebounce?.cancel();
+    _deltaRenderTimer?.cancel();
     _eventSubscription?.cancel();
     super.dispose();
   }
+}
+
+class _LiveDeltaBuffer {
+  _LiveDeltaBuffer({required this.kind, this.baseItem});
+
+  final String kind;
+  final Map<String, dynamic>? baseItem;
+  final List<String> chunks = [];
+  int bytes = 0;
+
+  Map<String, dynamic> render(String itemId) {
+    final item = baseItem == null
+        ? <String, dynamic>{
+            'id': itemId,
+            'kind': _itemKind,
+            'status': 'streaming',
+            'blocks': <Map<String, dynamic>>[],
+          }
+        : Map<String, dynamic>.from(baseItem!);
+    item['status'] = 'streaming';
+    final blocks = <Map<String, dynamic>>[
+      for (final value in (item['blocks'] as List? ?? const []))
+        if (value is Map) Map<String, dynamic>.from(value),
+    ];
+    final blockKind = _blockKind;
+    var index = blocks.lastIndexWhere((block) => block['kind'] == blockKind);
+    if (index < 0) {
+      blocks.add({'kind': blockKind, 'text': ''});
+      index = blocks.length - 1;
+    }
+    final base = blocks[index]['text'] as String? ?? '';
+    blocks[index] = {...blocks[index], 'text': base + chunks.join()};
+    item['blocks'] = blocks;
+    return item;
+  }
+
+  String get _itemKind => switch (kind) {
+    'assistantText' => 'agentMessage',
+    'plan' => 'plan',
+    'reasoning' || 'reasoningSummary' => 'reasoning',
+    'commandOutput' => 'commandExecution',
+    'fileChangeOutput' => 'fileChange',
+    _ => kind,
+  };
+
+  String get _blockKind => switch (kind) {
+    'plan' => 'plan',
+    'reasoningSummary' => 'summary',
+    'commandOutput' || 'fileChangeOutput' => 'output',
+    _ => 'text',
+  };
 }

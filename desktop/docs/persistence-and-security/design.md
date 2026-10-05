@@ -2,71 +2,68 @@
 
 ## Goal and scope
 
-Relay 注册必须先将本地设备密钥写入 encrypted settings，再执行网络登记；device ID 写入失败时保留原密钥供签名恢复。身份重置或 origin 变更由本机明确确认，原子保存配置并隔离旧异步结果；规则见 [Relay connector](../remote-relay-connector/design.md)。邀请码、challenge 和签名不进入持久化或日志。
+官方 Codex session 是会话、Turn 和 Timeline 的唯一权威来源。Desktop 不保存消息历史、delta、审批正文、Timeline、附件索引或运行时投影；daemon 重启后重新从 App Server 读取权威状态。
 
-本功能为 daemon 保存可重连的会话投影和诊断信息，同时降低消息、工具输出、diff、审批内容和附件落盘后的泄露风险。它不替代官方 Codex session 存储。
+Desktop 只持久化重新连接所需的小型配置，并对运行内存、临时附件和诊断流量设置明确边界。
 
 ## Current architecture and data flow
 
-数据目录固定为 `%LOCALAPPDATA%\WorkAnywhere`，运行时文件、数据库、日志和可选流量记录分目录保存。SQLite 使用纯 Go driver、WAL、单写连接、`synchronous=NORMAL` 和 foreign key 支持。
+配置固定写入 `%USERPROFILE%\.work-anywhere\config.json`。文件包含版本号和受保护的设置值，目前只有 Relay 地址、启停状态、设备名称、Desktop 身份、配对/capability，以及每个 instance/thread 的 mode、model、reasoning effort 和 permission 设置。
 
-数据库表：
+每个设置先序列化为 JSON，再用 Windows current-user DPAPI 保护并以 Base64 写入。写入在进程内互斥，使用同目录临时文件、flush 和 `MoveFileEx(REPLACE_EXISTING | WRITE_THROUGH)` 原子替换。写入失败不提交内存副本；损坏或版本不支持的配置在启动时返回错误，不会被新文件覆盖。thread 配置携带 `updatedAt`，只保留最近 2,000 条。
 
-- `instances`：稳定实例和当前 runtime 投影。
-- `runtime_history`：按实例/SHA256 记录已见 runtime。
-- `conversations`：状态、revision 和 sequence。
-- `turns`：Turn 状态和加密 input/output 列。
-- `timeline_events`：按会话 sequence 保存加密 payload。
-- `pending_actions`：action 状态和加密内容。
-- `attachments`：`attachment_id`、实例/项目/会话/消息关联、MIME、原始文件名、文件路径、大小和创建时间等元数据；新记录不写入附件正文。
-- `settings`：加密设置值。
-
-每个需要进入 SQLite 的敏感值先 JSON 序列化，再使用 AES-256-GCM 和随机 nonce 加密。32 字节主密钥随机生成后由 Windows current-user DPAPI 保护，密钥文件本身不保存明文主密钥。远程附件是例外：正文作为普通文件存放在对应项目目录的 `.work-anywhere-remote-attachments/<conversationId>/<messageId>/` 下，SQLite 只保存元数据和安全解析后的路径。
-
-## Interfaces
-
-Store 提供实例/会话/Turn upsert、Timeline append/read、action save/resolve、attachment metadata save/read 和历史附件 materialize。上层只传结构化对象，不直接拼接 SQL 密文。Timeline read 默认限制结果数量，避免一次载入无限历史。
-
-结构化日志默认启用并轮转，只记录运行诊断和经过脱敏的字段。完整 JSONL 协议流量默认关闭，必须按实例显式启用，并受大小与保留策略约束。
+升级启动时删除旧数据目录中的 `work-anywhere.db`、`work-anywhere.db-wal`、`work-anywhere.db-shm` 和 `master.dpapi`。删除失败只记录告警并在下次启动重试；新版本不读取或迁移旧身份、配对、设置和消息投影。
 
 ## State and persistence
 
-路径、实例 ID、项目/会话/消息 ID、状态、sequence、大小和必要索引元数据是明文。消息正文、工具 payload、diff、action 内容和设置值使用加密列；附件正文不进入数据库，直接落在项目目录普通文件中。旧数据库中的 `content_encrypted` 附件在首次使用时导出为 `legacy-<attachmentId>` 消息目录，成功后清空正文列。若项目根目录、会话 cwd 和实例 cwd 都不可解析，返回 `project_not_resolved` 且不写文件。完整进程环境不持久化。
+运行状态只在内存中存在：
 
-会话恢复分别读取 `conversations.revision` 和 `conversations.sequence`，sequence 必要时补到已保存事件的最大值；不会把事件序号当作业务 revision。旧数据库中的 revision 保持为升级后的基线，不清零，无需重新配对。并发 upsert 使用单调最大值，旧 sequence 的写入不能覆盖较新 status；不新增数据库列或迁移用户历史。
+- 每会话事件回放最多 256 条；所有回放 payload 合计最多 32 MiB。达到全局预算时淘汰最旧回放前缀并推进 replay floor，旧 cursor 得到 `snapshot=true`。
+- 每个实例最多保留 256 个非活跃 conversation projection，按最近访问时间淘汰。活跃 Turn、待提交设置、待开始 Turn 和待审批 action 对应会话固定在内存中。
+- revision、sequence、pending action、请求映射和 content reference 均在 daemon 进程结束时失效。
+
+远程图片分块直接写入项目目录 `.work-anywhere-remote-attachments/<conversationId>/<clientMessageId>/`。附件 ID 到路径的索引只在内存中。App Server 明确接受 `turn.start` 或 `conversation.queue.add` 后删除文件和索引；失败或结果未知可保留以便同一进程重试，最多 24 小时。daemon 每 15 分钟清理内存已知的过期附件；重启后在下一次访问同一项目附件目录时清理遗留文件和 `.part`。
+
+图片转 data URI 使用 daemon 全局单并发信号量。编码完成即释放文件内容和编码缓冲，避免多个 48 MiB 图片同时造成高峰内存。
+
+## Interfaces
+
+`internal/config.Store` 只提供小型设置的 get/put/delete。业务正文不能传入该接口。附件接口为 `attachment.begin/chunk/commit/abort`；路径只由 Desktop 根据可信项目根目录生成，Mobile 不提供本机路径。
+
+结构化日志默认启用并轮转，只记录诊断字段。完整 traffic capture 是唯一允许持久化协议正文的显式诊断例外：默认关闭，daemon 重启后仍关闭，按既有大小限制轮转。`traffic.enable` 明确返回敏感内容警告；捕获文件可能包含 prompt、图片、工具输出、文件内容和凭据。
 
 ## Security and failure handling
 
-- DPAPI 绑定当前 Windows 用户；复制数据库和 key 文件到其他用户不能直接解密。
-- AES-GCM 验证失败、nonce 截断或 DPAPI 解密失败时返回错误，不使用损坏明文继续运行。
-- 数据库损坏或 migration 失败不能覆盖官方 Codex session 文件。
-- 附件路径只允许位于项目根目录下的固定目录；会话 ID、消息 ID 和文件名拒绝目录穿越与路径分隔符。分块使用 `.part` 文件，commit 先校验实际大小再原子重命名；daemon 关闭和重启时清理当前或过期临时文件。
-- 项目目录文件的安全边界是 Windows 用户对该项目目录的访问权限；它们不再享有 SQLite/DPAPI 的数据库加密保护。
-- 日志脱敏覆盖常见 token、authorization、cookie、环境和敏感参数名称，但日志脱敏不是任意数据防泄露的替代品。
-- 显式流量记录可能包含完整敏感内容，启用方必须把它视作高敏诊断数据。
+- DPAPI 绑定当前 Windows 用户；复制 `config.json` 到其他用户不能直接解密设置。
+- Base64、DPAPI 或 JSON 解码失败会返回错误，不使用部分配置继续运行。
+- Relay 配置写入失败时保留旧配置和已授权配对；旧异步任务仍按 generation 隔离，不能写回新状态。
+- 附件目录段拒绝路径分隔符、`.`、`..` 和控制字符；commit 校验声明大小后才原子改名。
+- 项目目录临时附件受该项目的 Windows 文件权限保护，不承诺静态加密。
+- 完整 traffic capture 由用户显式开启并视为高敏诊断数据。
 
 ## Invariants and non-goals
 
-- 官方 Codex session 是完整会话权威来源；SQLite 是控制面投影和补发缓存。
-- 每个会话 Timeline sequence 唯一且单调。
-- 敏感 payload 不以明文列保存；附件正文明确不进入 SQLite，文件系统权限是其主要访问边界。
-- V1 不实现跨设备数据库同步、云备份、用户自选密钥或数据迁移 UI。
+- Desktop 没有运行时 SQLite 依赖，也没有消息历史数据库。
+- 配置文件不保存正文、图片、delta、Timeline、审批内容或附件索引。
+- App Server 事件处理路径不执行配置写入。
+- 不提供旧数据库迁移、跨设备配置同步、云备份、离线消息队列或附件永久缓存。
 
 ## Code ownership
 
-- `internal/store/`
-- `internal/platform/secrets/`
-- `internal/logging/`
-- `internal/traffic/`
-- `internal/platform/paths/`
+- 配置和原子替换：`internal/config/`
+- DPAPI：`internal/platform/secrets/`
+- 有界运行投影和附件：`internal/daemon/`
+- 日志与显式流量捕获：`internal/logging/`, `internal/traffic/`
+- 路径：`internal/platform/paths/`
 
 ## Verification
 
-- AES-GCM/DPAPI round-trip 和错误密文测试。
-- SQLite WAL migration、event append/read、action、附件元数据/文件落盘、历史正文迁移和无项目根目录失败测试。
-- 日志脱敏单元测试。
-- 流量记录默认关闭、显式打开后才增长文件的测试。
+- 配置 DPAPI round-trip、并发写入、原子重载、损坏/未知版本保护和 2,000 条 thread 配置淘汰测试。
+- 旧数据库文件删除和失败重试行为测试。
+- 每会话回放窗口、全局 payload 预算、旧 cursor snapshot 与非活跃 projection LRU 测试。
+- 附件路径、大小、分块失败、24 小时清理、成功受理删除和图片编码单并发测试。
+- traffic capture 默认关闭，并验证显式启用响应包含敏感数据警告。
 
 ## Documentation update triggers
 
-修改 schema、数据目录、加密算法、平台密钥保护、明文元数据范围、日志字段/轮转、流量保留或附件存储时，必须更新本文档和平台支持、控制/JSON-RPC 文档。
+修改配置 schema/路径、DPAPI、原子写入、内存限额、附件生命周期、日志字段、traffic capture 或权威数据来源时，必须更新本文档及控制、平台和 Relay connector 文档。

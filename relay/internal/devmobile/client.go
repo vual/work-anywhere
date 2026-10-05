@@ -53,6 +53,8 @@ type Client struct {
 	pending        map[string]chan json.RawMessage
 	pendingRoutes  map[string]chan routeResult
 	events         []json.RawMessage
+	eventBytes     int
+	eventOverflow  bool
 	eventSink      func(string)
 	lastError      string
 	connected      bool
@@ -107,6 +109,11 @@ func New() *Client {
 	return &Client{pending: make(map[string]chan json.RawMessage), pendingRoutes: make(map[string]chan routeResult)}
 }
 
+const (
+	maxBufferedEvents     = 256
+	maxBufferedEventBytes = 2 << 20
+)
+
 // SetEventSink registers a callback for unsolicited control events received
 // from the daemon. The callback is invoked outside the client's mutex.
 func (c *Client) SetEventSink(sink func(string)) {
@@ -115,8 +122,11 @@ func (c *Client) SetEventSink(sink func(string)) {
 	c.mu.Lock()
 	c.eventSink = sink
 	pending := append([]json.RawMessage(nil), c.events...)
+	overflow := c.eventOverflow
 	if sink != nil {
 		c.events = nil
+		c.eventBytes = 0
+		c.eventOverflow = false
 	}
 	connected := c.connected
 	c.mu.Unlock()
@@ -128,6 +138,9 @@ func (c *Client) SetEventSink(sink func(string)) {
 		state = "online"
 	}
 	sink(transportEnvelope(state, ""))
+	if overflow {
+		sink(`{"type":"event","event":"conversation.invalidated"}`)
+	}
 	for _, event := range pending {
 		sink(string(event))
 	}
@@ -179,9 +192,13 @@ func (c *Client) dispatchControlPayload(body json.RawMessage) {
 	c.mu.Lock()
 	sink := c.eventSink
 	if sink == nil {
-		c.events = append(c.events, append(json.RawMessage(nil), body...))
-		if len(c.events) > 1000 {
-			c.events = c.events[len(c.events)-1000:]
+		copyOfBody := append(json.RawMessage(nil), body...)
+		c.events = append(c.events, copyOfBody)
+		c.eventBytes += len(copyOfBody)
+		for len(c.events) > maxBufferedEvents || c.eventBytes > maxBufferedEventBytes {
+			c.eventBytes -= len(c.events[0])
+			c.events = c.events[1:]
+			c.eventOverflow = true
 		}
 	}
 	c.mu.Unlock()

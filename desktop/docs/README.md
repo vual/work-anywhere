@@ -16,7 +16,7 @@
 | JSON-RPC 多路复用、会话与审批 | [`json-rpc-and-actions/design.md`](json-rpc-and-actions/design.md) | Bridge IPC、控制面、持久化 | `internal/daemon/instance.go`, `internal/jsonrpc` |
 | 本机控制 API、CLI 与 Provider | [`local-control/design.md`](local-control/design.md) | JSON-RPC、存储、管理入口 | `internal/daemon/admin.go`, `internal/cli`, `internal/provider` |
 | Relay 出站连接器 | [`remote-relay-connector/design.md`](remote-relay-connector/design.md) | 本机控制、平台 secrets、Relay wire/E2EE | `internal/remote`, `internal/daemon` |
-| SQLite、加密、日志与附件 | [`persistence-and-security/design.md`](persistence-and-security/design.md) | 平台支持、控制面、JSON-RPC | `internal/store`, `internal/platform/secrets`, `internal/logging` |
+| JSON 配置、内存状态、日志与附件 | [`persistence-and-security/design.md`](persistence-and-security/design.md) | 平台支持、控制面、JSON-RPC | `internal/config`, `internal/platform/secrets`, `internal/logging` |
 | 管理页、托盘与进程生命周期 | [`administration-and-lifecycle/design.md`](administration-and-lifecycle/design.md) | 平台支持、App Server 托管、控制面 | `internal/daemon/admin.go`, `internal/platform/tray`, `internal/platform/process` |
 | 构建、安装和官方版本兼容 | [`build-install-and-compatibility/design.md`](build-install-and-compatibility/design.md) | 平台支持、运行时发现、Bridge IPC | `scripts`, `packaging`, `internal/platform/installation`, `testdata` |
 | Windows 安装包 | [`windows-installer/design.md`](windows-installer/design.md) | 构建安装、平台支持、生命周期 | `scripts/build-installer.ps1`, `packaging/windows/installer.iss`, `internal/platform/installation` |

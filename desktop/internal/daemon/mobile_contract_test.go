@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -19,8 +18,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/hurf/work-anywhere/desktop/internal/protocol"
-	"github.com/hurf/work-anywhere/desktop/internal/store"
-	_ "modernc.org/sqlite"
 )
 
 type recordingMobileCaller struct {
@@ -99,9 +96,12 @@ func TestNormalizeConversationMetadataAndTimeline(t *testing.T) {
 	if metadata.ID != "t1" || metadata.AgentID != "agent-1" || metadata.Title != "Title" || !metadata.Running {
 		t.Fatalf("unexpected metadata: %#v", metadata)
 	}
-	page, _, err := normalizeTimelinePage(json.RawMessage(`{"data":[{"id":"i2","type":"agentMessage","text":"new"},{"id":"i1","turnId":"turn-1","type":"userMessage","content":[{"type":"text","text":"old"}]}],"nextCursor":"opaque"}`))
+	page, _, err := normalizeTimelinePage(json.RawMessage(`{"data":[{"id":"i2","type":"agentMessage","text":"new"},{"id":"i1","turnId":"turn-1","type":"userMessage","clientId":"client-1","content":[{"type":"text","text":"old"}]}],"nextCursor":"opaque"}`))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if page.Items[1].ClientMessageID != "client-1" {
+		t.Fatalf("client message id = %q", page.Items[1].ClientMessageID)
 	}
 	if len(page.Items) != 2 || page.Items[0].ID != "i2" || page.Items[1].TurnID != "turn-1" || page.NextCursor != "opaque" || page.Items[1].Blocks[0].Text != "old" {
 		t.Fatalf("unexpected timeline: %#v", page)
@@ -988,18 +988,14 @@ func TestMobileConversationStartParamsAddsResolvedProjectRoot(t *testing.T) {
 
 func TestMobileAttachmentBeginKeepsResolvedOwner(t *testing.T) {
 	root := t.TempDir()
-	state, err := store.Open(filepath.Join(root, "state.db"), filepath.Join(root, "master.key"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer state.Close()
 	instance := &Instance{descriptor: protocol.InstanceDescriptor{ID: "agent-1"}}
 	instance.cwd = root
 	manager := &Manager{
-		ctx:       context.Background(),
-		store:     state,
-		instances: map[string]*Instance{"agent-1": instance},
-		uploads:   make(map[string]*attachmentUpload),
+		ctx:         context.Background(),
+		instances:   map[string]*Instance{"agent-1": instance},
+		uploads:     make(map[string]*attachmentUpload),
+		attachments: make(map[string]*attachmentUpload),
+		imageEncode: make(chan struct{}, 1),
 	}
 	response := manager.control(protocol.ControlRequest{
 		Type:     "request",
@@ -1036,9 +1032,9 @@ func TestMobileAttachmentBeginKeepsResolvedOwner(t *testing.T) {
 	if commitResponse.Error != nil {
 		t.Fatalf("attachment commit failed: %+v", commitResponse.Error)
 	}
-	attachment, err := state.ReadAttachment(attachmentID)
-	if err != nil {
-		t.Fatal(err)
+	attachment := manager.attachments[attachmentID]
+	if attachment == nil {
+		t.Fatal("committed attachment was not indexed in memory")
 	}
 	if attachment.InstanceID != "agent-1" || attachment.ConversationID != "thread-1" || attachment.MessageID != "message-1" || attachment.MimeType != "image/jpeg" {
 		t.Fatalf("unexpected attachment metadata: %#v", attachment)
@@ -1051,33 +1047,20 @@ func TestMobileAttachmentBeginKeepsResolvedOwner(t *testing.T) {
 	if err != nil || string(content) != "image-data" {
 		t.Fatalf("stored attachment content mismatch: %q, %v", content, err)
 	}
-	database, err := sql.Open("sqlite", filepath.Join(root, "state.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer database.Close()
-	var encrypted []byte
-	if err = database.QueryRow(`SELECT content_encrypted FROM attachments WHERE id=?`, attachmentID).Scan(&encrypted); err != nil {
-		t.Fatal(err)
-	}
-	if encrypted != nil {
-		t.Fatal("attachment content was stored in the database")
+	if _, err := os.Stat(filepath.Join(root, "state.db")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("attachment metadata unexpectedly created a database")
 	}
 }
 
 func TestMobileAttachmentRejectsUnsafePathAndCleansPartialUpload(t *testing.T) {
 	root := t.TempDir()
-	state, err := store.Open(filepath.Join(root, "state.db"), filepath.Join(root, "master.key"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer state.Close()
 	instance := &Instance{descriptor: protocol.InstanceDescriptor{ID: "agent-1"}, cwd: root}
 	manager := &Manager{
-		ctx:       context.Background(),
-		store:     state,
-		instances: map[string]*Instance{"agent-1": instance},
-		uploads:   make(map[string]*attachmentUpload),
+		ctx:         context.Background(),
+		instances:   map[string]*Instance{"agent-1": instance},
+		uploads:     make(map[string]*attachmentUpload),
+		attachments: make(map[string]*attachmentUpload),
+		imageEncode: make(chan struct{}, 1),
 	}
 	unsafe := manager.control(protocol.ControlRequest{
 		Type:     "request",
@@ -1121,7 +1104,7 @@ func TestMobileAttachmentRejectsUnsafePathAndCleansPartialUpload(t *testing.T) {
 	if commit.Error == nil {
 		t.Fatal("expected size mismatch")
 	}
-	if _, err = os.Stat(filepath.Join(root, remoteAttachmentDirectory, "thread-1", "message-1")); err == nil {
+	if _, err := os.Stat(filepath.Join(root, remoteAttachmentDirectory, "thread-1", "message-1")); err == nil {
 		entries, readErr := os.ReadDir(filepath.Join(root, remoteAttachmentDirectory, "thread-1", "message-1"))
 		if readErr != nil {
 			t.Fatal(readErr)
@@ -1134,21 +1117,43 @@ func TestMobileAttachmentRejectsUnsafePathAndCleansPartialUpload(t *testing.T) {
 
 func TestNormalizeTurnStartRejectsNonImageAttachment(t *testing.T) {
 	root := t.TempDir()
-	state, err := store.Open(filepath.Join(root, "state.db"), filepath.Join(root, "master.key"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer state.Close()
 	path := filepath.Join(root, "document.pdf")
-	if err = os.WriteFile(path, []byte("pdf"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("pdf"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err = state.SaveAttachmentMetadata(store.Attachment{ID: "pdf-1", InstanceID: "agent-1", ConversationID: "thread-1", MessageID: "message-1", MimeType: "application/pdf", FileName: "document.pdf", Path: path, Size: 3}); err != nil {
-		t.Fatal(err)
-	}
-	manager := &Manager{store: state, instances: map[string]*Instance{"agent-1": {descriptor: protocol.InstanceDescriptor{ID: "agent-1"}}}}
-	_, err = manager.normalizeTurnStart("agent-1", json.RawMessage(`{"threadId":"thread-1","attachmentIds":["pdf-1"]}`))
+	manager := &Manager{instances: map[string]*Instance{"agent-1": {descriptor: protocol.InstanceDescriptor{ID: "agent-1"}}}, attachments: map[string]*attachmentUpload{"pdf-1": {ID: "pdf-1", InstanceID: "agent-1", ConversationID: "thread-1", MessageID: "message-1", MimeType: "application/pdf", FileName: "document.pdf", Path: path, ReceivedSize: 3}}, imageEncode: make(chan struct{}, 1)}
+	_, err := manager.normalizeTurnStart("agent-1", json.RawMessage(`{"threadId":"thread-1","attachmentIds":["pdf-1"]}`))
 	if err == nil || !strings.Contains(err.Error(), "unsupported_attachment_type") {
 		t.Fatalf("expected unsupported attachment error, got %v", err)
+	}
+}
+
+func TestExpiredAttachmentCleanupRemovesCommittedAndPartialFiles(t *testing.T) {
+	root := t.TempDir()
+	committed := filepath.Join(root, "committed.jpg")
+	partial := filepath.Join(root, ".partial.part")
+	if err := os.WriteFile(committed, []byte("image"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(partial, []byte("part"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-staleAttachmentPartAge - time.Minute)
+	manager := &Manager{
+		uploads: map[string]*attachmentUpload{
+			"partial": {ID: "partial", TemporaryPath: partial, CreatedAt: old},
+		},
+		attachments: map[string]*attachmentUpload{
+			"committed": {ID: "committed", Path: committed, CreatedAt: old},
+		},
+	}
+	manager.cleanupExpiredAttachments()
+	if len(manager.uploads) != 0 || len(manager.attachments) != 0 {
+		t.Fatal("expired attachment indexes were retained")
+	}
+	for _, path := range []string{committed, partial} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("expired attachment remains at %s: %v", path, err)
+		}
 	}
 }

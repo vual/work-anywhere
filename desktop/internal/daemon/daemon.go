@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hurf/work-anywhere/desktop/internal/config"
 	"github.com/hurf/work-anywhere/desktop/internal/ipc"
 	"github.com/hurf/work-anywhere/desktop/internal/logging"
 	"github.com/hurf/work-anywhere/desktop/internal/platform/identity"
@@ -23,41 +24,129 @@ import (
 	"github.com/hurf/work-anywhere/desktop/internal/platform/tray"
 	"github.com/hurf/work-anywhere/desktop/internal/protocol"
 	"github.com/hurf/work-anywhere/desktop/internal/remote"
-	"github.com/hurf/work-anywhere/desktop/internal/store"
 	"github.com/hurf/work-anywhere/desktop/internal/traffic"
 )
 
 type Manager struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	version        string
-	startedAt      time.Time
-	listener       net.Listener
-	job            *platformprocess.Group
-	admin          *adminServer
-	stopTray       func()
-	store          *store.Store
-	mu             sync.RWMutex
-	instances      map[string]*Instance
-	nextConn       atomic.Uint64
-	stopping       atomic.Bool
-	controlPaused  atomic.Bool
-	eventMu        sync.Mutex
-	subscribers    map[uint64]chan protocol.Event
-	nextSubscriber uint64
-	uploadMu       sync.Mutex
-	uploads        map[string]*attachmentUpload
-	contentRefMu   sync.Mutex
-	contentRefs    map[string]mobileContentRef
-	traffic        *traffic.Recorder
-	remote         *remote.Service
-	log            *logging.Logger
+	ctx               context.Context
+	cancel            context.CancelFunc
+	version           string
+	startedAt         time.Time
+	listener          net.Listener
+	job               *platformprocess.Group
+	admin             *adminServer
+	stopTray          func()
+	settings          *config.Store
+	configWriteMu     sync.Mutex
+	configWrites      sync.WaitGroup
+	syncEpoch         string
+	mu                sync.RWMutex
+	instances         map[string]*Instance
+	nextConn          atomic.Uint64
+	stopping          atomic.Bool
+	controlPaused     atomic.Bool
+	eventMu           sync.Mutex
+	subscribers       map[uint64]chan protocol.Event
+	nextSubscriber    uint64
+	eventPayloadBytes atomic.Int64
+	uploadMu          sync.Mutex
+	uploads           map[string]*attachmentUpload
+	attachments       map[string]*attachmentUpload
+	imageEncode       chan struct{}
+	contentRefMu      sync.Mutex
+	contentRefs       map[string]mobileContentRef
+	traffic           *traffic.Recorder
+	remote            *remote.Service
+	log               *logging.Logger
+}
+
+const maxEventPayloadMemory = int64(32 << 20)
+
+func (m *Manager) reserveEventPayload(size int) bool {
+	if size <= 0 || int64(size) > maxEventPayloadMemory {
+		return false
+	}
+	for {
+		current := m.eventPayloadBytes.Load()
+		if current+int64(size) > maxEventPayloadMemory {
+			if !m.evictOldestEventPayload() {
+				return false
+			}
+			continue
+		}
+		if m.eventPayloadBytes.CompareAndSwap(current, current+int64(size)) {
+			return true
+		}
+	}
+}
+
+func (m *Manager) evictOldestEventPayload() bool {
+	m.mu.RLock()
+	instances := make([]*Instance, 0, len(m.instances))
+	for _, instance := range m.instances {
+		instances = append(instances, instance)
+	}
+	m.mu.RUnlock()
+	var target *Instance
+	targetConversation := ""
+	targetSequence := int64(0)
+	var oldest time.Time
+	for _, instance := range instances {
+		instance.mu.Lock()
+		for conversationID, projection := range instance.conversations {
+			for index, size := range projection.EventBytes {
+				if size <= 0 || index >= len(projection.EventTimes) || index >= len(projection.Events) {
+					continue
+				}
+				storedAt := projection.EventTimes[index]
+				if target == nil || storedAt.Before(oldest) {
+					target = instance
+					targetConversation = conversationID
+					targetSequence = projection.Events[index].Sequence
+					oldest = storedAt
+				}
+				break
+			}
+		}
+		instance.mu.Unlock()
+	}
+	if target == nil {
+		return false
+	}
+	target.mu.Lock()
+	projection := target.conversations[targetConversation]
+	removedBytes := 0
+	removedThrough := -1
+	if projection != nil {
+		for index, event := range projection.Events {
+			if event.Sequence == targetSequence {
+				removedThrough = index
+				break
+			}
+		}
+		if removedThrough >= 0 {
+			for _, size := range projection.EventBytes[:removedThrough+1] {
+				removedBytes += size
+			}
+			projection.ReplayFloor = projection.Events[removedThrough].Sequence
+			projection.Events = append([]protocol.Event(nil), projection.Events[removedThrough+1:]...)
+			projection.EventBytes = append([]int(nil), projection.EventBytes[removedThrough+1:]...)
+			projection.EventTimes = append([]time.Time(nil), projection.EventTimes[removedThrough+1:]...)
+		}
+	}
+	target.mu.Unlock()
+	if removedBytes > 0 {
+		m.eventPayloadBytes.Add(-int64(removedBytes))
+		return true
+	}
+	return false
 }
 
 type attachmentUpload struct {
 	ID, InstanceID, ProjectID, ConversationID, MessageID string
 	MimeType, FileName, Path, TemporaryPath              string
 	ExpectedSize, ReceivedSize                           int64
+	CreatedAt                                            time.Time
 }
 
 const maxAttachmentBytes = 48 << 20
@@ -99,25 +188,34 @@ func Run(ctx context.Context, version string) error {
 		listener.Close()
 		return fmt.Errorf("create child process job: %w", err)
 	}
-	stateStore, err := store.Open(filepath.Join(dataDir, "state", "work-anywhere.db"), filepath.Join(dataDir, "state", "master.dpapi"))
-	if err != nil {
-		listener.Close()
-		job.Close()
-		return fmt.Errorf("open state store: %w", err)
-	}
 	logger, err := logging.New(filepath.Join(dataDir, "logs", "daemon.ndjson"))
 	if err != nil {
 		listener.Close()
 		job.Close()
-		stateStore.Close()
 		return err
 	}
-	m := &Manager{ctx: ctx, cancel: cancel, version: version, startedAt: time.Now(), listener: listener, job: job, store: stateStore, instances: make(map[string]*Instance), subscribers: make(map[uint64]chan protocol.Event), uploads: make(map[string]*attachmentUpload), contentRefs: make(map[string]mobileContentRef), traffic: traffic.New(filepath.Join(dataDir, "logs", "traffic")), log: logger}
-	remoteService, err := remote.New(stateStore, m.control, m.subscribe, logger)
+	for _, cleanupErr := range removeLegacyDatabase(dataDir) {
+		logger.Event("legacy_database.cleanup_failed", map[string]any{"error": cleanupErr.Error()})
+	}
+	configPath, err := paths.ConfigPath()
 	if err != nil {
 		listener.Close()
 		job.Close()
-		stateStore.Close()
+		return fmt.Errorf("resolve config path: %w", err)
+	}
+	settings, err := config.Open(configPath)
+	if err != nil {
+		listener.Close()
+		job.Close()
+		return fmt.Errorf("open config: %w", err)
+	}
+	m := &Manager{ctx: ctx, cancel: cancel, version: version, startedAt: time.Now(), listener: listener, job: job, settings: settings, syncEpoch: randomToken(18), instances: make(map[string]*Instance), subscribers: make(map[uint64]chan protocol.Event), uploads: make(map[string]*attachmentUpload), attachments: make(map[string]*attachmentUpload), imageEncode: make(chan struct{}, 1), contentRefs: make(map[string]mobileContentRef), traffic: traffic.New(filepath.Join(dataDir, "logs", "traffic")), log: logger}
+	go m.cleanupAttachmentLoop(ctx)
+	remoteService, err := remote.New(settings, m.control, m.subscribe, logger)
+	if err != nil {
+		listener.Close()
+		job.Close()
+		settings.Close()
 		return fmt.Errorf("start remote connector: %w", err)
 	}
 	m.remote = remoteService
@@ -127,7 +225,7 @@ func Run(ctx context.Context, version string) error {
 	if err != nil {
 		listener.Close()
 		job.Close()
-		stateStore.Close()
+		settings.Close()
 		return fmt.Errorf("start management page: %w", err)
 	}
 	m.admin = admin
@@ -136,7 +234,7 @@ func Run(ctx context.Context, version string) error {
 		admin.Close()
 		listener.Close()
 		job.Close()
-		stateStore.Close()
+		settings.Close()
 		return fmt.Errorf("start tray icon: %w", err)
 	}
 	m.stopTray = stopTray
@@ -166,8 +264,11 @@ func (m *Manager) close() {
 		m.stopTray()
 	}
 	m.abortAttachmentUploads()
-	if m.store != nil {
-		_ = m.store.Close()
+	m.configWriteMu.Lock()
+	m.configWriteMu.Unlock()
+	m.configWrites.Wait()
+	if m.settings != nil {
+		_ = m.settings.Close()
 	}
 	m.mu.RLock()
 	instances := make([]*Instance, 0, len(m.instances))
@@ -180,6 +281,24 @@ func (m *Manager) close() {
 	}
 	_ = m.job.Close()
 	m.log.Event("daemon.stopped", map[string]any{"pid": os.Getpid()})
+}
+
+func removeLegacyDatabase(dataDir string) []error {
+	stateDir := filepath.Join(dataDir, "state")
+	paths := []string{
+		filepath.Join(stateDir, "work-anywhere.db"),
+		filepath.Join(stateDir, "work-anywhere.db-wal"),
+		filepath.Join(stateDir, "work-anywhere.db-shm"),
+		filepath.Join(stateDir, "master.dpapi"),
+	}
+	var failures []error
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			failures = append(failures, fmt.Errorf("remove %s: %w", path, err))
+		}
+	}
+	_ = os.Remove(stateDir)
+	return failures
 }
 
 func (m *Manager) handleConnection(raw net.Conn) {
@@ -259,12 +378,6 @@ func (m *Manager) registerInstance(hello protocol.Hello) (*Instance, error) {
 		return nil, err
 	}
 	m.log.Event("instance.registered", map[string]any{"instanceId": hello.Instance.ID, "version": hello.Runtime.Version, "runtimePath": hello.Runtime.RealExecutable})
-	_ = m.store.UpsertInstance(store.InstanceRecord{
-		ID: hello.Instance.ID, Name: hello.Instance.Name, CodexHome: hello.Instance.CodexHome,
-		UserDataDir: hello.Instance.UserDataDir, State: instance.Snapshot().State,
-		RuntimePath: hello.Runtime.RealExecutable, RuntimeVersion: hello.Runtime.Version, RuntimeSHA256: hello.Runtime.SHA256,
-		ResourcesDir: hello.Runtime.ResourcesDir, DiscoveredBy: hello.Runtime.DiscoveredBy,
-	})
 	return instance, nil
 }
 
@@ -559,6 +672,7 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 			"conversation.list": "thread/list", "conversation.read": "thread/read",
 			"turn.start": "turn/start", "turn.interrupt": "turn/interrupt", "catalog.models": "model/list",
 		}[request.Method]
+		var acceptedAttachmentIDs []string
 		if request.Method == "turn.start" {
 			var turnTarget struct {
 				ThreadID string `json:"threadId"`
@@ -577,6 +691,7 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 				break
 			}
 			originalParams := params
+			acceptedAttachmentIDs = attachmentIDs(originalParams)
 			params, err = m.normalizeTurnStart(instance.descriptor.ID, params)
 			if err != nil {
 				instance.clearPendingTurnSettings("turn/start", originalParams)
@@ -616,6 +731,9 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 			}
 		} else {
 			response.Result = result
+			if request.Method == "turn.start" {
+				m.releaseAttachments(acceptedAttachmentIDs)
+			}
 		}
 	case "action.list":
 		var instance *Instance
@@ -782,7 +900,8 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 			response.Error = &protocol.ControlError{Code: "attachment_store_error", Message: err.Error()}
 			break
 		}
-		cleanupStaleAttachmentParts(filepath.Join(root, remoteAttachmentDirectory))
+		m.cleanupExpiredAttachments()
+		cleanupStaleAttachmentFiles(filepath.Join(root, remoteAttachmentDirectory))
 		ext := filepath.Ext(fileName)
 		finalPath := filepath.Join(directory, strings.TrimSuffix(fileName, ext)+"-"+id+ext)
 		temporaryPath := filepath.Join(directory, "."+id+".part")
@@ -797,7 +916,7 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 			break
 		}
 		m.uploadMu.Lock()
-		m.uploads[id] = &attachmentUpload{ID: id, InstanceID: params.InstanceID, ProjectID: params.ProjectID, ConversationID: params.ConversationID, MessageID: params.MessageID, MimeType: params.MimeType, FileName: fileName, Path: finalPath, TemporaryPath: temporaryPath, ExpectedSize: params.Size}
+		m.uploads[id] = &attachmentUpload{ID: id, InstanceID: params.InstanceID, ProjectID: params.ProjectID, ConversationID: params.ConversationID, MessageID: params.MessageID, MimeType: params.MimeType, FileName: fileName, Path: finalPath, TemporaryPath: temporaryPath, ExpectedSize: params.Size, CreatedAt: time.Now()}
 		m.uploadMu.Unlock()
 		response.Result = map[string]any{"attachmentId": id}
 	case "attachment.chunk":
@@ -867,12 +986,10 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 			response.Error = &protocol.ControlError{Code: "attachment_store_error", Message: err.Error()}
 			break
 		}
-		if err := m.store.SaveAttachmentMetadata(store.Attachment{ID: upload.ID, InstanceID: upload.InstanceID, ProjectID: upload.ProjectID, ConversationID: upload.ConversationID, MessageID: upload.MessageID, MimeType: upload.MimeType, FileName: upload.FileName, Path: upload.Path, Size: upload.ReceivedSize}); err != nil {
-			_ = os.Remove(upload.Path)
-			response.Error = &protocol.ControlError{Code: "store_error", Message: err.Error()}
-		} else {
-			response.Result = map[string]any{"attachmentId": upload.ID, "size": upload.ReceivedSize}
-		}
+		m.uploadMu.Lock()
+		m.attachments[upload.ID] = upload
+		m.uploadMu.Unlock()
+		response.Result = map[string]any{"attachmentId": upload.ID, "size": upload.ReceivedSize}
 	case "attachment.abort":
 		var params struct {
 			AttachmentID string `json:"attachmentId"`
@@ -899,7 +1016,7 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 		}
 		enabled := request.Method == "traffic.enable"
 		m.traffic.Set(params.InstanceID, enabled)
-		response.Result = map[string]any{"enabled": enabled, "directory": "logs/traffic/" + params.InstanceID}
+		response.Result = map[string]any{"enabled": enabled, "directory": "logs/traffic/" + params.InstanceID, "sensitiveCapture": enabled, "warning": "full traffic capture may contain prompts, images, tool output, file content, and credentials"}
 	case "remote.status", "remote.pair.list":
 		response.Result = m.remote.Status()
 	case "remote.configure":
@@ -1062,42 +1179,24 @@ func (m *Manager) normalizeTurnStart(instanceID string, raw json.RawMessage) (js
 			inputs = append(inputs, map[string]any{"type": "text", "text": text})
 		}
 		if ids, ok := params["attachmentIds"].([]any); ok {
+			m.imageEncode <- struct{}{}
+			defer func() { <-m.imageEncode }()
 			for _, rawID := range ids {
 				id, ok := rawID.(string)
 				if !ok {
 					continue
 				}
-				attachment, err := m.store.ReadAttachment(id)
-				if err != nil {
-					return nil, fmt.Errorf("attachment %s: %w", id, err)
+				m.uploadMu.Lock()
+				attachment := m.attachments[id]
+				m.uploadMu.Unlock()
+				if attachment == nil {
+					return nil, fmt.Errorf("attachment %s: not found", id)
 				}
 				if attachment.InstanceID != instanceID {
 					return nil, errors.New("attachment belongs to another instance")
 				}
 				if !strings.HasPrefix(attachment.MimeType, "image/") {
 					return nil, fmt.Errorf("unsupported_attachment_type: attachment %s is not an image", id)
-				}
-				if attachment.Path == "" {
-					conversationID := attachment.ConversationID
-					if conversationID == "" {
-						conversationID = threadID
-					}
-					root, rootErr := m.attachmentProjectRoot(instance, attachment.ProjectID, conversationID)
-					if rootErr != nil {
-						return nil, fmt.Errorf("attachment %s: project_not_resolved: %w", id, rootErr)
-					}
-					legacyMessageID := "legacy-" + id
-					if err = validateAttachmentSegment(conversationID); err != nil {
-						return nil, fmt.Errorf("attachment %s: invalid conversation id", id)
-					}
-					legacyDirectory := filepath.Join(root, remoteAttachmentDirectory, conversationID, legacyMessageID)
-					fileName := attachmentFileName(attachment.FileName)
-					ext := filepath.Ext(fileName)
-					finalPath := filepath.Join(legacyDirectory, strings.TrimSuffix(fileName, ext)+"-"+id+ext)
-					attachment, err = m.store.MaterializeLegacyAttachment(id, finalPath, attachment.ProjectID, legacyMessageID)
-					if err != nil {
-						return nil, fmt.Errorf("attachment %s: migrate legacy content: %w", id, err)
-					}
 				}
 				content, readErr := os.ReadFile(attachment.Path)
 				if readErr != nil {
@@ -1118,6 +1217,33 @@ func (m *Manager) normalizeTurnStart(instanceID string, raw json.RawMessage) (js
 		delete(params, key)
 	}
 	return json.Marshal(params)
+}
+
+func attachmentIDs(raw json.RawMessage) []string {
+	var params struct {
+		AttachmentIDs []string `json:"attachmentIds"`
+	}
+	_ = json.Unmarshal(raw, &params)
+	return params.AttachmentIDs
+}
+
+func (m *Manager) releaseAttachments(ids []string) {
+	if len(ids) == 0 {
+		return
+	}
+	paths := make([]string, 0, len(ids))
+	m.uploadMu.Lock()
+	for _, id := range ids {
+		if attachment := m.attachments[id]; attachment != nil {
+			paths = append(paths, attachment.Path)
+			delete(m.attachments, id)
+		}
+	}
+	m.uploadMu.Unlock()
+	for _, path := range paths {
+		_ = os.Remove(path)
+		_ = os.Remove(filepath.Dir(path))
+	}
 }
 
 func (m *Manager) instanceByID(instanceID string) (*Instance, error) {
@@ -1143,13 +1269,13 @@ func (m *Manager) abortAttachmentUploads() {
 	}
 }
 
-func cleanupStaleAttachmentParts(root string) {
+func cleanupStaleAttachmentFiles(root string) {
 	cutoff := time.Now().Add(-staleAttachmentPartAge)
 	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".part") {
+		if entry.IsDir() {
 			return nil
 		}
 		info, infoErr := entry.Info()
@@ -1158,6 +1284,42 @@ func cleanupStaleAttachmentParts(root string) {
 		}
 		return nil
 	})
+}
+
+func (m *Manager) cleanupExpiredAttachments() {
+	cutoff := time.Now().Add(-staleAttachmentPartAge)
+	paths := make([]string, 0)
+	m.uploadMu.Lock()
+	for id, upload := range m.uploads {
+		if upload.CreatedAt.Before(cutoff) {
+			paths = append(paths, upload.TemporaryPath)
+			delete(m.uploads, id)
+		}
+	}
+	for id, attachment := range m.attachments {
+		if attachment.CreatedAt.Before(cutoff) {
+			paths = append(paths, attachment.Path)
+			delete(m.attachments, id)
+		}
+	}
+	m.uploadMu.Unlock()
+	for _, path := range paths {
+		_ = os.Remove(path)
+		_ = os.Remove(filepath.Dir(path))
+	}
+}
+
+func (m *Manager) cleanupAttachmentLoop(ctx context.Context) {
+	ticker := time.NewTicker(15 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.cleanupExpiredAttachments()
+		}
+	}
 }
 
 func (m *Manager) attachmentProjectRoot(instance *Instance, projectID, conversationID string) (string, error) {

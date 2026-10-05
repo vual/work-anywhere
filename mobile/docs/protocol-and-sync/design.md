@@ -101,7 +101,7 @@ online
 3. 点击项目后调用 `conversation.list(projectId, limit=15)`；“显示更多”只使用 response next cursor，不用 offset 猜页。
 4. 搜索时分别调用 `project.list(query, limit, cursor)` 与 `conversation.list(query, limit, cursor)`，搜索服务端全集而不是当前 10/20 条内存列表。
 5. 打开会话时调用 `conversation.read(limit=20)` 获取 metadata、revision/sequence 和最近 timeline 页；页面按 ID 去重并倒转为正序展示。滚动到顶部用 opaque `nextCursor` 调用 `conversation.timeline.list`，不使用 offset。
-6. EventSink 中的 event 只作为失效提示：约 150 ms 内合并 burst，同一时刻只允许一个 conversation refresh，期间到达新事件则再刷新一次；sequence 低于当前 snapshot 的迟到 response 不得覆盖 UI。gap、过期 cursor 或 `snapshot=true` 触发重新 `conversation.read/subscribe`。
+6. EventSink 对连续 `conversation.delta` 直接更新当前 item；其他事件约 150 ms 合并后刷新。只有 `syncEpoch` 相同且 `fromSequence == 当前 sequence + 1` 的 delta 可应用；gap、epoch 变化、终态、过期 cursor、内存超限或 `snapshot=true` 触发 `conversation.read`。
 7. `revision` 随 snapshot/event 更新；`turn.start` 必须提交最后已确认的 `expectedRevision`。
 8. `conversation.read` 可返回可选 `planConfirmation={planItemId,turnId,revision}`。仅把该权威字段作为计划确认入口，不能从 Markdown 或历史 Plan item 推断；提交 `plan.respond` 后继续通过 snapshot/event 确认最终状态，不因超时自动重复写入。
 
@@ -113,7 +113,7 @@ App 前台对未选中 Daemon 以有界短连接依次执行 status probe，更�
 
 `mobile-control-v1` envelope 会回显 contract，未知 contract 返回 `unsupported_contract`。Mobile-facing target 参数统一使用 `agentId`，Desktop 只在 provider 边界内转换为 `instanceId`；附件上传会先绑定该实例，再把 `instanceId` 从 provider 参数中移除。`agent.list`、`project.list`、`conversation.list`、conversation timeline 与 model/permission catalog 已输出稳定 DTO；project list 不暴露 root，conversation list 不暴露 preview，Mobile 不解析 provider 原始权限结构。Mobile `action.list` 不返回原始 params：通用 approval 只返回归属和 method，`item/tool/requestUserInput` 额外归一化 questions/options。
 
-`conversation.read` 组合 metadata-only `thread/read`、`thread/items/list(sortDirection=desc)` 和 `thread/queue/list`，默认 timeline 20、最大 50。snapshot 包含 metadata、revision、sequence、timeline、权威 queue 和 `settings={mode,modelId,reasoningEffort,permissionModeId}`。queue item 固定为 `id`、`clientMessageId`、`text` 与 `attachmentCount`，不得把 Desktop 图片/mention 路径带到 Mobile。`TimelineItem` 固定为 id、可选 turnId、kind、status 与 blocks，不透传 provider JSON。Plan item 使用单个 `kind=plan` block，daemon 保留原始 Markdown；真正超过 5 个源文件行时普通 Timeline response 只返回前 5 行，并为完整正文返回 `contentRef` 与 `totalBytes`，不生成 title/summary。Plan 和其他大 block 通过 `conversation.content.read` 按 128 KiB 分块读取；引用过期后，Flutter 使用私有的 turnId/itemId/blockIndex 调用 `conversation.content.resolve`，daemon 在该 turn 内分页查找 item 并重新签发引用，找不到时返回 `content_not_found`，不要求刷新或丢弃已加载旧页。
+`conversation.read` 组合 metadata-only `thread/read`、`thread/items/list(sortDirection=desc)` 和 `thread/queue/list`，默认 timeline 20、最大 50。snapshot 包含 metadata、revision、sequence、可选 `syncEpoch`、timeline、权威 queue 和 `settings={mode,modelId,reasoningEffort,permissionModeId}`。queue item 固定为 `id`、`clientMessageId`、`text` 与 `attachmentCount`，不得把 Desktop 图片/mention 路径带到 Mobile。`TimelineItem` 固定为 id、可选 turnId、kind、status 与 blocks，不透传 provider JSON。Plan item 使用单个 `kind=plan` block，daemon 保留原始 Markdown；真正超过 5 个源文件行时普通 Timeline response 只返回前 5 行，并为完整正文返回 `contentRef` 与 `totalBytes`，不生成 title/summary。Plan 和其他大 block 通过 `conversation.content.read` 按 128 KiB 分块读取；引用过期后，Flutter 使用私有的 turnId/itemId/blockIndex 调用 `conversation.content.resolve`，daemon 在该 turn 内分页查找 item 并重新签发引用，找不到时返回 `content_not_found`，不要求刷新或丢弃已加载旧页。
 
 `catalog.models` 返回模型 ID/名称/说明、default/selectable、默认思考等级与该模型支持的等级；`catalog.permissionProfiles(modelId)` 固定返回 `default`、`autoReview`、`readOnly`、`fullAccess` 及 Desktop 根据 profile catalog、企业配置和该模型 auto-review 要求计算的可用性。更换模型时 Mobile 重新读取权限 catalog，仅保留仍可用的权限，并仅保留新模型仍支持的思考等级，否则分别回落到可用权限和模型默认等级。`conversation.settings.update` 携带最后确认的 revision 和完整 settings；空闲或运行中的 thread 均可在无阻塞 action 时更新后续 Turn 设置，当前正在执行的 Turn 不改变；明确失败后刷新 snapshot，结果不明不自动重试。尚未创建的草稿只在进程内保存选择，首次 `turn.start` 才提交完整 settings。计划的 revise/implement 继承 permission/model/effort，implement 将 mode 切回 `default`。
 
@@ -121,7 +121,11 @@ App 前台对未选中 Daemon 以有界短连接依次执行 status probe，更�
 
 `hookPrompt` 不进入 DTO；function/tool、协作、搜索、图片、sleep、review 和 compaction item 只返回单个 `kind=summary` block。该 block 的 `summaryKind` 是原始类型，`summaryValue` 是脱敏、单行且不超过 512 UTF-8 字节的值，`text` 是语言无关 fallback；完整句子和 status 由 Flutter ARB 本地化。summary 不包含 arguments/output/result/error/path/prompt，不生成 `contentRef`；commandExecution 只返回 command block。过滤后可见 item 不足请求数量时 daemon 沿 provider cursor 补读后续页面，最多 8 页。其他单 block 超过 64 KiB 时内联 UTF-8 前 16 KiB，并用 15 分钟滑动过期的 `contentRef` 分块读取。项目下对话列表优先按 `projectId` 查询；Desktop 若发现历史线程项目关联未迁移，会按项目根目录 `cwd` 回退查询。Desktop control response 不超过 512 KiB；页面超预算时以相同 cursor 将 limit 逐次减半。
 
-`conversation.subscribe` 保留为恢复用的 cursor/snapshot 接口；Android 正常路径由 Relay unsolicited event 主动推送 metadata-only event，Go Core 通过 EventSink/EventChannel 转交 Flutter。Desktop 先在 100 ms 内按 instance/thread 合并普通流式失效提示，并分别保留 action 与 terminal 类别；endpoint 只转发 `type=event`，无 sink 时按到达顺序保留最近 1000 条，迟到/未知 response 不进入事件流。连接生命周期另发 `type=transport` 的 `online/disconnected/revoked/closed`。Go Core 为两类 envelope 附加当前 `daemonId` 和 selection generation，Flutter 在消费时与实时 Workspace 选择再次比对，拒绝已经进入 Android 主线程队列的旧电脑事件。Workspace 对 action event 做约 150 ms 合并并重新读取当前 Agent 的会话列表，使 `needsAttention` 和顶栏待处理数量无需手动刷新即可更新；会话详情独立刷新 action 与 snapshot。Flutter 在 disconnected、stream error/done 时立即把会话页连接点改为离线、禁用发送并启动 catch-up，每 2 秒轮询；online 或成功恢复读时恢复安全连接状态，停止轮询并再 catch-up 一次，revoked/closed 停止恢复。Flutter 对收到的 event burst 再做约 150 ms 合并刷新，旧 snapshot 不覆盖新 sequence，刷新最新页时保留用户已加载的旧页。当前尚未完成 iOS Go Core/事件宿主接入的平台直接使用恢复路径。事件和轮询都不携带 provider 正文；当客户端游标过旧或待追赶事件超过 Desktop 的有界窗口时，服务端返回 `snapshot=true`。
+`conversation.subscribe` 保留为恢复用的 cursor/snapshot 接口；snapshot、subscription 和 event 都可带 `syncEpoch`。daemon 每次启动生成新 epoch。Mobile 只在 epoch 相同且 `fromSequence == 当前 sequence + 1` 时应用 `conversation.delta`；epoch 变化会清空旧权威 sequence、cursor 和流式 projection，但保留本地待发送气泡。item/Turn 终态始终读取一次权威 snapshot，并按 item ID 替换临时流式 item。新 Mobile 连接旧 Desktop 时继续把 metadata-only event 当失效提示；旧 Mobile 收到 `conversation.delta` 时刷新 snapshot。
+
+Desktop 对文字、计划、推理、命令和文件输出按语义合并 delta。普通文字在段落、句末且至少 256 字节、250 ms 或 2 KiB flush；plan/reasoning 在段落、250 ms 或 4 KiB flush；命令/文件输出在行边界且至少 2 KiB、200 ms 或 8 KiB flush。key、Turn、item、kind、index/stream 变化及关键事件前立即 flush，单批硬上限 32 KiB。异常超大单个 provider delta 或未知事件降级为 `conversation.invalidated`。
+
+Android 正常路径由 Relay unsolicited event 推送；endpoint 只转发 `type=event`，无 sink 时保留 256 条或 2 MiB，溢出丢弃旧 delta并标记重新读取 snapshot。连接生命周期另发 `type=transport`。Flutter 对 delta 以 75 ms 节奏分块渲染，单 item 最多 512 KiB、当前会话最多 4 MiB；超过后停止拼接并读取 snapshot/contentRef。断线后每 2 秒 catch-up，online 后停止轮询并再同步一次。
 
 - `DaemonSummary`：由本地 pairing + live probe 组合的 id、配对时读取的 daemon 运行电脑 `computerName` 或后续本地管理名称、connection state、checked time；名称不可用时使用本地化通用文案，不把固定产品文案冒充主机名；
 - `AgentSummary`：agent id、provider (`codex` 等)、display name、state、supported、navigation kind、capabilities、active turn/pending action count、last error；
@@ -140,12 +144,12 @@ Mobile 产品页面只消费稳定 timeline、catalog/settings 和 action DTO；
 ### Turn start
 
 1. 本地检查 `online`、`turn.start` scope 和无 blocking action；idle 时开始新 Turn，running 时新增权威 queue item。
-2. 一次发送先生成唯一 `clientMessageId`；Mobile 每条消息最多接受 10 张图片，按用户选择顺序逐张执行 begin/chunk/commit，所有图片共用该 ID。begin 同时传递当前会话 metadata 中的 `projectId`、conversation ID、MIME、原始文件名和大小。显示逐文件进度，分块大小为 256 KiB。
-3. 上传失败调用 `attachment.abort` 清理 Desktop 的 `.part` 文件，不提交 Turn；用户重试时重新生成消息 ID并上传整份文件。
-4. response 成功只显示“已提交”；收到 matching turn event/snapshot 后才进入“运行中”。
-5. 全部图片 commit 后，`turn.start.attachmentIds` 按选择顺序一次提交 0–10 个 ID。任一图片上传失败时不调用 `turn.start`，abort 当前未完成上传并保留 Mobile 内存草稿；若 `turn.start` response 前断线，禁止自动重发。重连同步后按 `clientMessageId`/snapshot 判定；无法判定则显示“提交结果未知，请先在电脑端确认”。
+2. 一次发送先生成唯一 `clientMessageId`，捕获文字与图片快照并立即建立仅驻留进程内存的本地消息气泡；Composer 随即清空并允许准备下一条，当前提交结束前禁止再次发送。Mobile 每条消息最多接受 10 张图片，按用户选择顺序逐张执行 begin/chunk/commit，所有图片共用该 ID。begin 同时传递当前会话 metadata 中的 `projectId`、conversation ID、MIME、原始文件名和大小。气泡显示逐文件进度，分块大小为 256 KiB。
+3. 上传失败调用 `attachment.abort` 清理 Desktop 的 `.part` 文件，不提交 Turn；失败气泡保留重试和编辑入口。已经 commit 的附件 ID 可在同一会话重试时复用，未完成图片重新上传，重试生成新的 `clientMessageId`。
+4. response 成功后气泡显示等待电脑确认；权威 timeline 的 user message 通过 `clientMessageId` 替换本地气泡。兼容未返回该字段的旧 Desktop 时，只允许用成功响应中的 Turn ID 和该 Turn 下唯一 user message 对账，不能按正文或 running 状态猜测。
+5. 全部图片 commit 后，`turn.start.attachmentIds` 按选择顺序一次提交 0–10 个 ID。任一图片上传失败时不调用 `turn.start`，abort 当前未完成上传并保留失败气泡；若 `turn.start` response 前断线，禁止自动重发。重连同步后按 `clientMessageId`/snapshot 判定；无法判定则显示“提交结果未知”，只允许同步确认。会话创建结果未知时禁止从该草稿继续创建或发送，避免重复 thread。
 
-V1 只支持图片附件，一条消息最多 10 张；单文件和图片总大小均不得超过 Desktop 48 MiB 上限，并预留 base64/1 MiB route frame 的分块余量。Desktop 会把附件保存到项目目录而不是数据库；`turn.start` 只提交 attachment ID，不向 Mobile 或 Relay 暴露本地绝对路径。压缩/缩放必须在用户确认的预览基础上进行，不能改变原图后仍显示原始大小。
+V1 只支持图片附件，一条消息最多 10 张；单文件和图片总大小均不得超过 Desktop 48 MiB 上限，并预留 base64/1 MiB route frame 的分块余量。Desktop 将附件写入项目目录临时 spool，索引只在内存中；明确受理后删除，失败或结果未知最多保留 24 小时。图片转 base64 全局单并发。`turn.start` 只提交 attachment ID，不向 Mobile 或 Relay 暴露本地绝对路径。
 
 ### Action resolve
 

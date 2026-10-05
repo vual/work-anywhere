@@ -65,7 +65,9 @@ This backs up the current user-level `CODEX_CLI_PATH`, points it at the Go bridg
 .\dist\windows-amd64\work-anywhere.exe uninstall
 ```
 
-Data is kept under `%LOCALAPPDATA%\WorkAnywhere`. Normalized sensitive content is encrypted with AES-256-GCM; its master key is protected by current-user Windows DPAPI. Full wire traffic is not recorded by default.
+Runtime files and logs stay under `%LOCALAPPDATA%\WorkAnywhere`. Relay identity, pairings, and thread settings use `%USERPROFILE%\.work-anywhere\config.json` with current-user DPAPI protection. Conversation content and runtime projections are not persisted. Full wire traffic is not recorded by default.
+
+Remote streaming uses bounded semantic `conversation.delta` batches and per-session high/low priority queues. A daemon restart changes `syncEpoch`; clients recover gaps and terminal state from authoritative conversation snapshots.
 
 ## Useful commands
 

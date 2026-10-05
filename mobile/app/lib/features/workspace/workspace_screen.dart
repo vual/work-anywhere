@@ -12,6 +12,9 @@ import '../../core/models.dart';
 import '../pairing/pairing_screen.dart';
 import 'workspace_controller.dart';
 
+const _workspaceLogoSize = 44.0;
+const _workspaceSelectorRightPadding = 20.0;
+
 class WorkspaceGate extends ConsumerWidget {
   const WorkspaceGate({super.key});
 
@@ -232,7 +235,7 @@ class _TopBar extends ConsumerWidget {
       padding: const EdgeInsets.fromLTRB(
         WawCompact.horizontalPadding,
         10,
-        WawCompact.horizontalPadding,
+        _workspaceSelectorRightPadding,
         4,
       ),
       child: LayoutBuilder(
@@ -249,8 +252,8 @@ class _TopBar extends ConsumerWidget {
               children: [
                 SvgPicture.asset(
                   'assets/waw-app-icon.svg',
-                  width: 44,
-                  height: 44,
+                  width: _workspaceLogoSize,
+                  height: _workspaceLogoSize,
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -408,23 +411,17 @@ class _TopBar extends ConsumerWidget {
                               _StatusDot(daemon.phase),
                               const SizedBox(width: 10),
                               Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      daemon.name ?? context.l10n.computer,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ],
+                                child: Text(
+                                  daemon.name ?? context.l10n.computer,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w700,
+                                  ),
                                 ),
                               ),
-                              const SizedBox(width: 10),
+                              const SizedBox(width: 4),
                               const Icon(
                                 Icons.keyboard_arrow_down_rounded,
                                 size: 18,

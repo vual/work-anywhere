@@ -29,13 +29,13 @@ supervisor 接收 Bridge 的 WAI1 frames 和 daemon 控制请求，向 App Serve
 
 ## State and persistence
 
-内存状态包括当前 runtime、候选 runtime、进程句柄、初始化缓存、Desktop 连接、活跃 Turn、待处理 action 和请求路由。实例状态与 runtime 历史投影到 SQLite，但运行中的 stdio 句柄不持久化。
+内存状态包括当前 runtime、候选 runtime、进程句柄、初始化缓存、Desktop 连接、活跃 Turn、待处理 action、请求路由和有界会话 projection。实例状态和 runtime 历史不持久化；daemon 重启后根据当前连接与 App Server 重新建立状态。
 
 ## Security and failure handling
 
 - App Server 加入 Windows Job Object，配置 `KILL_ON_JOB_CLOSE`；daemon 退出或崩溃时由操作系统清理子进程。
 - 实例 lease 与 fallback lease 互斥，避免同一逻辑实例的重复 writer。
-- 启动失败进入 `error`，保留已有数据库和官方 session 文件，不覆盖原会话。
+- 启动失败进入 `error`，保留官方 session 文件和现有 JSON 配置，不覆盖原会话。
 - Pipe 在请求执行中断开只移除 frontend，不立即终止 App Server。
 
 ## Invariants and non-goals

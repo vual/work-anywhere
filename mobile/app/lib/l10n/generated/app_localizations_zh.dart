@@ -10,6 +10,35 @@ class AppLocalizationsZh extends AppLocalizations {
   AppLocalizationsZh([String locale = 'zh']) : super(locale);
 
   @override
+  String get messageSyncing => '正在同步电脑状态…';
+
+  @override
+  String messageUploading(int index, int count, int percent) {
+    return '正在上传图片 $index/$count · $percent%';
+  }
+
+  @override
+  String get messageSending => '正在发送…';
+
+  @override
+  String get messageConfirming => '等待电脑确认';
+
+  @override
+  String get messageFailed => '发送失败';
+
+  @override
+  String get messageUnknown => '发送结果未知';
+
+  @override
+  String get messageEdit => '编辑';
+
+  @override
+  String get messageCheck => '同步确认';
+
+  @override
+  String get messageCreationUnknown => '新会话创建结果未知，请先在电脑端确认，再创建其他会话。';
+
+  @override
   String get conversationChangedRetry => '会话状态已变化，请重试';
 
   @override

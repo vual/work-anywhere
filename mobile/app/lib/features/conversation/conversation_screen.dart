@@ -17,6 +17,8 @@ import '../../core/models.dart';
 import '../workspace/workspace_controller.dart';
 import 'conversation_controller.dart';
 import 'markdown_renderer.dart';
+import 'local_submissions.dart';
+import 'timeline_message_body.dart';
 import 'user_input_dialog.dart';
 
 const _maxImageCount = 10;
@@ -52,7 +54,19 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   final _scroll = ScrollController();
   ConversationController? _controller;
   final List<XFile> _images = [];
-  final Map<String, List<XFile>> _queuedImages = {};
+  late final LocalSubmissions _submissions;
+  String? _boundDaemonId;
+  String? _boundAgentId;
+  int? _boundGeneration;
+  String get _draftKey => 'draft:${widget.projectId}';
+  SubmissionScope get _submissionScope => (
+    _boundDaemonId,
+    _boundAgentId ?? _agentId ?? '',
+    _activeConversationId ?? _draftKey,
+  );
+  Map<String, List<XFile>> get _queuedImages =>
+      _submissions.queueImages(_submissionScope);
+  bool get _sendBusy => _submitting || _submissions.busy(_submissionScope);
   final Set<String> _queueUpdating = {};
   bool _submitting = false;
   bool _selectingImages = false;
@@ -89,11 +103,15 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   }
 
   bool get _canSend =>
-      !_submitting &&
+      !_sendBusy &&
       !_selectingImages &&
       !_settingsUpdating &&
       _connectionOnline &&
       (_controller?.state.actions.isEmpty ?? true) &&
+      _selectionCurrent &&
+      !_submissions
+          .records(_submissionScope)
+          .any((record) => record.creationUnknown) &&
       (_composer.text.trim().isNotEmpty || _images.isNotEmpty);
 
   String? get _agentId =>
@@ -103,6 +121,8 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   @override
   void initState() {
     super.initState();
+    _submissions = ref.read(localSubmissionsProvider);
+    _submissions.addListener(_localSubmissionsChanged);
     _composer.addListener(_composerChanged);
     _planRevision.addListener(_composerChanged);
     _scroll.addListener(_onScroll);
@@ -116,6 +136,10 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       if (!mounted) return;
       final agentId = workspace.selectedAgentId;
       if (agentId == null) return;
+      _boundDaemonId = workspace.selectedDaemonId;
+      _boundAgentId = agentId;
+      _boundGeneration = workspace.eventGeneration;
+      _activeConversationId ??= _submissions.draftThreads[_submissionScope];
       await _loadCatalogs(agentId);
       final conversationId = _activeConversationId;
       if (conversationId == null || !mounted) return;
@@ -143,6 +167,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
 
   @override
   void dispose() {
+    _submissions.removeListener(_localSubmissionsChanged);
     _composer
       ..removeListener(_composerChanged)
       ..dispose();
@@ -170,6 +195,11 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
 
   void _changed() {
     if (!mounted) return;
+    _submissions.reconcile(
+      _submissionScope,
+      _controller?.state.items ?? const [],
+      _controller?.state.queuedSubmissions ?? const [],
+    );
     final queuedClientIds = _controller?.state.queuedSubmissions
         .map((item) => item.clientMessageId)
         .toSet();
@@ -383,6 +413,18 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     });
   }
 
+  void _localSubmissionsChanged() {
+    if (mounted) setState(() {});
+  }
+
+  bool get _selectionCurrent {
+    final workspace = ref.read(workspaceProvider).value;
+    return mounted &&
+        workspace?.selectedDaemonId == _boundDaemonId &&
+        workspace?.selectedAgentId == _boundAgentId &&
+        workspace?.eventGeneration == _boundGeneration;
+  }
+
   void _composerChanged() {
     if (mounted) setState(() {});
   }
@@ -400,6 +442,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     final selectedWorkspace = ref.read(workspaceProvider).value;
     final selectedDaemon = selectedWorkspace?.selectedDaemonId;
     final selectedGeneration = selectedWorkspace?.eventGeneration;
+    final draftScope = _submissionScope;
     final response = await ref.read(coreGatewayProvider).call(
       'conversation.create',
       {'agentId': agentId, 'projectId': projectId},
@@ -412,6 +455,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         'The new conversation did not include an id',
       );
     }
+    _submissions.bindThread(draftScope, conversationId);
     if (!mounted ||
         ref.read(workspaceProvider).value?.selectedDaemonId != selectedDaemon ||
         ref.read(workspaceProvider).value?.eventGeneration !=
@@ -433,21 +477,6 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     if (mounted) setState(() => _controller = controller);
     controller.startLiveSync();
     return conversationId;
-  }
-
-  Future<bool> _reconcileAmbiguousTurn() async {
-    final controller = _controller;
-    if (controller == null) return false;
-    for (final delay in [
-      Duration.zero,
-      const Duration(milliseconds: 300),
-      const Duration(milliseconds: 700),
-    ]) {
-      if (delay > Duration.zero) await Future<void>.delayed(delay);
-      await controller.refreshConversation();
-      if (controller.state.metadata?['running'] == true) return true;
-    }
-    return false;
   }
 
   void _scrollToBottomAfterInitialLoad() {
@@ -604,50 +633,64 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     });
   }
 
-  Future<List<String>> _uploadImages(String clientMessageId) async {
+  Future<List<String>> _uploadImages(LocalSubmission record) async {
     final conversationId = _activeConversationId;
-    if (_images.isEmpty || _agentId == null || conversationId == null) {
+    if (record.images.isEmpty || _agentId == null || conversationId == null) {
       return const [];
     }
     final projectId =
         _controller?.state.metadata?['projectId'] as String? ??
         widget.projectId;
+    final gateway = ref.read(coreGatewayProvider);
     final attachmentIds = <String>[];
-    for (final image in _images) {
+    record.totalBytes = 0;
+    for (final image in record.images) {
+      record.totalBytes += await image.length();
+    }
+    record.uploadedBytes = 0;
+    for (var index = 0; index < record.images.length; index++) {
+      _assertSubmissionCurrent();
+      final image = record.images[index];
+      record.imageIndex = index + 1;
+      if (record.attachmentIds.containsKey(index)) {
+        attachmentIds.add(record.attachmentIds[index]!);
+        record.uploadedBytes += await image.length();
+        continue;
+      }
       final bytes = await image.readAsBytes();
+      _assertSubmissionCurrent();
       String? attachmentId;
       try {
-        final begin = await ref.read(coreGatewayProvider).call(
-          'attachment.begin',
-          {
-            'agentId': _agentId,
-            'conversationId': conversationId,
-            'clientMessageId': clientMessageId,
-            if (projectId != null && projectId.isNotEmpty)
-              'projectId': projectId,
-            'mimeType': _imageMimeType(image),
-            'fileName': image.name,
-            'size': bytes.length,
-          },
-        );
+        final begin = await gateway.call('attachment.begin', {
+          'agentId': _agentId,
+          'conversationId': conversationId,
+          'clientMessageId': record.clientMessageId,
+          if (projectId != null && projectId.isNotEmpty) 'projectId': projectId,
+          'mimeType': _imageMimeType(image),
+          'fileName': image.name,
+          'size': bytes.length,
+        });
         attachmentId =
             (begin['result'] as Map<String, dynamic>)['attachmentId'] as String;
         const chunkSize = 256 * 1024;
         for (var offset = 0; offset < bytes.length; offset += chunkSize) {
+          _assertSubmissionCurrent();
           final end = (offset + chunkSize).clamp(0, bytes.length);
-          await ref.read(coreGatewayProvider).call('attachment.chunk', {
+          await gateway.call('attachment.chunk', {
             'attachmentId': attachmentId,
             'data': base64Encode(bytes.sublist(offset, end)),
           });
+          record.uploadedBytes += end - offset;
+          _submissions.changed();
         }
-        await ref.read(coreGatewayProvider).call('attachment.commit', {
-          'attachmentId': attachmentId,
-        });
+        _assertSubmissionCurrent();
+        await gateway.call('attachment.commit', {'attachmentId': attachmentId});
+        record.attachmentIds[index] = attachmentId;
         attachmentIds.add(attachmentId);
       } catch (_) {
         if (attachmentId != null) {
           try {
-            await ref.read(coreGatewayProvider).call('attachment.abort', {
+            await gateway.call('attachment.abort', {
               'attachmentId': attachmentId,
             });
           } catch (_) {
@@ -690,7 +733,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   }
 
   Future<void> _pickImages() async {
-    if (_submitting || _selectingImages) return;
+    if (_selectingImages) return;
     final remaining = _maxImageCount - _images.length;
     if (remaining <= 0) {
       _showComposerMessage(context.l10n.imageSelectionLimit(_maxImageCount));
@@ -725,13 +768,12 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   }
 
   void _removeImage(XFile image) {
-    if (_submitting) return;
     setState(() => _images.removeWhere((item) => item.path == image.path));
   }
 
   bool get _canChangeSettings {
     final state = _controller?.state;
-    return !_submitting &&
+    return !_sendBusy &&
         !_settingsUpdating &&
         !_catalogLoading &&
         !_catalogFailed &&
@@ -781,7 +823,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   }
 
   Future<void> _showAddMenu() async {
-    if (_submitting || _selectingImages || !_connectionOnline) {
+    if (_selectingImages || !_connectionOnline) {
       return;
     }
     if (_catalogFailed || _settings == null) {
@@ -1089,114 +1131,187 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   }
 
   Future<void> _send() async {
-    final text = _composer.text.trim();
-    if (_submitting || (text.isEmpty && _images.isEmpty)) {
-      return;
+    if (!_canSend) return;
+    final record = LocalSubmission(
+      scope: _submissionScope,
+      text: _composer.text.trim(),
+      images: _images,
+    );
+    _submissions.add(record);
+    _composer.clear();
+    setState(_images.clear);
+    _didAutoScrollToBottom = true;
+    _followTimelineToBottom();
+    await _submit(record);
+  }
+
+  void _assertSubmissionCurrent() {
+    if (!_selectionCurrent ||
+        (_controller != null && !_controller!.isCurrent)) {
+      throw CoreFault('selection_changed', 'The selected conversation changed');
     }
+  }
+
+  Future<void> _submit(LocalSubmission record) async {
+    if (_sendBusy || !_selectionCurrent || !_connectionOnline) return;
+    final imageTooLargeMessage = context.l10n.imageSelectionTooLarge;
+    final queueUnavailableMessage = context.l10n.queueUnavailableWait;
+    record.busy = true;
+    record.phase = SubmissionPhase.syncing;
+    record.error = null;
+    record.errorCode = null;
     setState(() => _submitting = true);
+    _submissions.changed();
     var writeSent = false;
-    String? clientMessageId;
-    var queueWrite = false;
-    final selectedImages = List<XFile>.of(_images);
+    var createSent = false;
+    var accepted = false;
     try {
-      if (!await _imagesWithinSizeLimit(_images)) {
-        if (mounted) _showComposerMessage(context.l10n.imageSelectionTooLarge);
-        return;
+      if (!await _imagesWithinSizeLimit(record.images)) {
+        throw CoreFault('payload_too_large', imageTooLargeMessage);
       }
-      final workspace = await ref.read(workspaceProvider.future);
-      final agentId = workspace.selectedAgentId;
-      if (agentId == null) {
-        throw CoreFault('invalid_params', 'An agent is required');
-      }
+      _assertSubmissionCurrent();
+      createSent = _isDraft;
       final conversationId = await _ensureConversation();
-      if (!mounted) return;
+      record.scope = (_boundDaemonId, _boundAgentId!, conversationId);
+      createSent = false;
+      _assertSubmissionCurrent();
       final controller = _controller!;
       await controller.requireFreshSnapshot();
-      if (!mounted || !controller.isCurrent) return;
+      _assertSubmissionCurrent();
       if (controller.state.metadata?['running'] == true &&
           !controller.state.queueAvailable) {
-        _showComposerMessage(context.l10n.queueUnavailableWait);
-        return;
+        throw CoreFault('queue_unavailable', queueUnavailableMessage);
       }
-      clientMessageId = '${DateTime.now().microsecondsSinceEpoch}';
-      final attachmentIds = await _uploadImages(clientMessageId);
-      if (!mounted || !controller.isCurrent) return;
-      queueWrite = _controller?.state.metadata?['running'] == true;
+      record.phase = record.images.isEmpty
+          ? SubmissionPhase.sending
+          : SubmissionPhase.uploading;
+      _submissions.changed();
+      final attachmentIds = await _uploadImages(record);
+      _assertSubmissionCurrent();
+      record.queueWrite = controller.state.metadata?['running'] == true;
+      record.phase = SubmissionPhase.sending;
+      _submissions.changed();
       writeSent = true;
       final envelope = await ref.read(coreGatewayProvider).call(
-        queueWrite ? 'conversation.queue.add' : 'turn.start',
+        record.queueWrite ? 'conversation.queue.add' : 'turn.start',
         {
-          'agentId': agentId,
+          'agentId': _boundAgentId,
           'threadId': conversationId,
-          'text': text,
+          'text': record.text,
           if (attachmentIds.isNotEmpty) 'attachmentIds': attachmentIds,
-          'clientMessageId': clientMessageId,
-          if (!queueWrite && _settings != null && !_catalogFailed)
+          'clientMessageId': record.clientMessageId,
+          if (!record.queueWrite && _settings != null && !_catalogFailed)
             'settings': _settings!.toJson(),
-          if (!queueWrite && _controller != null)
-            'expectedRevision': _controller!.state.revision,
+          if (!record.queueWrite) 'expectedRevision': controller.state.revision,
         },
         timeoutMilliseconds: 60000,
       );
-      if (queueWrite && selectedImages.isNotEmpty) {
-        final result = envelope['result'] as Map<String, dynamic>? ?? const {};
-        final returnedClientId =
-            result['clientMessageId'] as String? ?? clientMessageId;
-        _queuedImages[returnedClientId] = selectedImages;
+      accepted = true;
+      final result = envelope['result'] as Map<String, dynamic>? ?? const {};
+      final turn = result['turn'] as Map<String, dynamic>?;
+      record.turnId = result['turnId'] as String? ?? turn?['id'] as String?;
+      record.queueId = record.queueWrite ? result['id'] as String? : null;
+      record.phase = SubmissionPhase.confirming;
+      if (record.queueWrite && record.images.isNotEmpty) {
+        _submissions.queueImages(record.scope)[record.clientMessageId] =
+            record.images;
       }
-      if (!mounted || !controller.isCurrent) return;
-      _composer.clear();
-      setState(_images.clear);
-      await _refresh();
-    } catch (error) {
-      if (!mounted || (_controller != null && !_controller!.isCurrent)) return;
-      if (error is CoreFault && error.code == 'revision_conflict') {
-        await _controller?.refreshConversation();
-        if (mounted) {
-          _showComposerMessage(context.l10n.conversationChangedRetry);
-        }
-        return;
-      }
-      final ambiguous =
-          writeSent &&
-          error is CoreFault &&
-          (error.code == 'ambiguous_write' || error.code == 'peer_offline');
-      final reconciled =
-          ambiguous &&
-          (queueWrite
-              ? await _reconcileAmbiguousQueue(clientMessageId!)
-              : await _reconcileAmbiguousTurn());
-      if (reconciled) {
-        if (queueWrite && selectedImages.isNotEmpty) {
-          _queuedImages[clientMessageId!] = selectedImages;
-        }
-        _composer.clear();
-        if (mounted) setState(_images.clear);
-        return;
-      }
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              _isDraft
-                  ? _createConversationError(context, error)
-                  : context.l10n.sendFailed(error.toString()),
-            ),
-          ),
+      _submissions.changed();
+      if (_selectionCurrent) {
+        // Reconcile even if an event delivered the user item before the response.
+        _submissions.reconcile(
+          record.scope,
+          controller.state.items,
+          controller.state.queuedSubmissions,
+        );
+        await controller.refreshConversation();
+        _submissions.reconcile(
+          record.scope,
+          controller.state.items,
+          controller.state.queuedSubmissions,
         );
       }
+    } catch (error) {
+      if (!record.reconciled) {
+        final uncertain =
+            (writeSent || createSent) &&
+            !accepted &&
+            !_definiteRejection(error);
+        record.phase = accepted
+            ? SubmissionPhase.confirming
+            : uncertain
+            ? SubmissionPhase.unknown
+            : SubmissionPhase.failed;
+        record.creationUnknown = uncertain && createSent;
+        record.error = error.toString();
+        record.errorCode = error is CoreFault ? error.code : null;
+        _submissions.changed();
+        if (uncertain && _selectionCurrent) await _confirmSubmission(record);
+      }
     } finally {
+      record.busy = false;
+      // Leaving a page may interrupt upload, but never leaves an endless spinner.
+      _submissions.changed();
       if (mounted) setState(() => _submitting = false);
     }
   }
 
-  Future<bool> _reconcileAmbiguousQueue(String clientMessageId) async {
-    final controller = _controller;
-    if (controller == null) return false;
-    await controller.refreshConversation();
-    return controller.state.queuedSubmissions.any(
-      (item) => item.clientMessageId == clientMessageId,
-    );
+  bool _definiteRejection(Object error) =>
+      error is CoreFault &&
+      {
+        'revision_conflict',
+        'invalid_params',
+        'invalid_selection',
+        'selection_unavailable',
+        'conversation_busy',
+        'queue_unavailable',
+        'queue_full',
+        'forbidden',
+        'scope_missing',
+        'payload_too_large',
+        'project_not_resolved',
+        'unsupported_attachment_type',
+      }.contains(error.code);
+
+  Future<void> _confirmSubmission(LocalSubmission record) async {
+    if (!_selectionCurrent || _controller == null || record.busy) return;
+    record.busy = true;
+    _submissions.changed();
+    try {
+      await _controller!.refreshConversation();
+      _submissions.reconcile(
+        record.scope,
+        _controller!.state.items,
+        _controller!.state.queuedSubmissions,
+      );
+    } catch (error) {
+      record.error = error.toString();
+      record.errorCode = error is CoreFault ? error.code : null;
+      _submissions.changed();
+    } finally {
+      record.busy = false;
+      _submissions.changed();
+    }
+  }
+
+  Future<void> _retrySubmission(LocalSubmission record) async {
+    if (record.phase != SubmissionPhase.failed || _sendBusy) return;
+    record.clientMessageId = LocalSubmission.newMessageId();
+    record.turnId = null;
+    record.queueId = null;
+    await _submit(record);
+  }
+
+  void _editSubmission(LocalSubmission record) {
+    if (record.phase != SubmissionPhase.failed || _sendBusy) return;
+    if (_composer.text.isNotEmpty || _images.isNotEmpty) {
+      _showComposerMessage(context.l10n.currentDraftMustBeEmpty);
+      return;
+    }
+    _composer.text = record.text;
+    setState(() => _images.addAll(record.images));
+    _submissions.remove(record);
+    _composerPanelKey.currentState?.requestInputFocus();
   }
 
   Future<void> _editQueuedSubmission(QueuedSubmission item) async {
@@ -1258,18 +1373,6 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     } finally {
       if (mounted) setState(() => _queueUpdating.remove(item.id));
     }
-  }
-
-  String _createConversationError(BuildContext context, Object error) {
-    if (error is CoreFault) {
-      switch (error.code) {
-        case 'forbidden':
-          return context.l10n.createConversationPermissionDenied;
-        case 'provider_error':
-          return context.l10n.createConversationDesktopFailed;
-      }
-    }
-    return context.l10n.createConversationFailed;
   }
 
   Future<void> _interrupt() async {
@@ -1402,6 +1505,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     final state = _isDraft
         ? const ConversationState()
         : (_controller?.state ?? const ConversationState(loading: true));
+    final localRecords = _submissions.records(_submissionScope);
     final conversation = state.metadata;
     final title =
         conversation?['title'] as String? ??
@@ -1562,6 +1666,12 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
               Expanded(
                 child: _Timeline(
                   items: state.items,
+                  localRecords: localRecords,
+                  localActionsEnabled:
+                      online && !_sendBusy && state.actions.isEmpty,
+                  onRetry: _retrySubmission,
+                  onEdit: _editSubmission,
+                  onConfirm: _confirmSubmission,
                   controller: _controller,
                   emptyState: _isDraft
                       ? _DraftConversationEmpty(
@@ -1591,7 +1701,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                   _QueuedSubmissionList(
                     items: state.queuedSubmissions,
                     online: online,
-                    blocked: state.actions.isNotEmpty || _submitting,
+                    blocked: state.actions.isNotEmpty || _sendBusy,
                     updatingIds: _queueUpdating,
                     onEdit: _editQueuedSubmission,
                     onGuideNow: _guideQueuedSubmission,
@@ -1602,15 +1712,12 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                   composer: _composer,
                   images: _images,
                   enabled:
-                      !_submitting &&
-                      online &&
-                      state.actions.isEmpty &&
-                      !_settingsUpdating,
+                      online && state.actions.isEmpty && !_settingsUpdating,
                   selectingImages: _selectingImages,
                   running: running,
                   online: online,
                   canSend: _canSend,
-                  submitting: _submitting,
+                  submitting: _sendBusy,
                   settings: _settings,
                   permissionIcon: _permissionIcon(
                     _settings?.permissionModeId ?? 'default',
@@ -2347,6 +2454,11 @@ class _AttachmentStrip extends StatelessWidget {
 class _Timeline extends StatelessWidget {
   const _Timeline({
     required this.items,
+    required this.localRecords,
+    required this.localActionsEnabled,
+    required this.onRetry,
+    required this.onEdit,
+    required this.onConfirm,
     required this.controller,
     this.emptyState,
     required this.scrollController,
@@ -2357,6 +2469,11 @@ class _Timeline extends StatelessWidget {
   });
 
   final List<Map<String, dynamic>> items;
+  final List<LocalSubmission> localRecords;
+  final bool localActionsEnabled;
+  final ValueChanged<LocalSubmission> onRetry;
+  final ValueChanged<LocalSubmission> onEdit;
+  final ValueChanged<LocalSubmission> onConfirm;
   final ConversationController? controller;
   final Widget? emptyState;
   final ScrollController scrollController;
@@ -2367,7 +2484,7 @@ class _Timeline extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (items.isEmpty) {
+    if (items.isEmpty && localRecords.isEmpty) {
       return emptyState ??
           Center(
             child: Text(
@@ -2384,7 +2501,7 @@ class _Timeline extends StatelessWidget {
         WawCompact.horizontalPadding,
         6,
       ).copyWith(top: topPadding),
-      itemCount: items.length + 1,
+      itemCount: items.length + localRecords.length + 1,
       itemBuilder: (context, index) {
         if (index == 0) {
           if (loadingOlder) {
@@ -2402,8 +2519,127 @@ class _Timeline extends StatelessWidget {
           }
           return const SizedBox.shrink();
         }
-        return _TimelineItem(item: items[index - 1], controller: controller);
+        if (index > items.length) {
+          final record = localRecords[index - items.length - 1];
+          return _LocalSubmissionBubble(
+            record: record,
+            enabled: localActionsEnabled,
+            onRetry: () => onRetry(record),
+            onEdit: () => onEdit(record),
+            onConfirm: () => onConfirm(record),
+          );
+        }
+        return _TimelineItem(
+          key: ValueKey(items[index - 1]['id']),
+          item: items[index - 1],
+          controller: controller,
+        );
       },
+    );
+  }
+}
+
+class _LocalSubmissionBubble extends StatelessWidget {
+  const _LocalSubmissionBubble({
+    required this.record,
+    required this.enabled,
+    required this.onRetry,
+    required this.onEdit,
+    required this.onConfirm,
+  });
+  final LocalSubmission record;
+  final bool enabled;
+  final VoidCallback onRetry;
+  final VoidCallback onEdit;
+  final VoidCallback onConfirm;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    final status = switch (record.phase) {
+      SubmissionPhase.syncing => l10n.messageSyncing,
+      SubmissionPhase.uploading => l10n.messageUploading(
+        record.imageIndex,
+        record.images.length,
+        record.totalBytes == 0
+            ? 0
+            : (100 * record.uploadedBytes / record.totalBytes).round(),
+      ),
+      SubmissionPhase.sending => l10n.messageSending,
+      SubmissionPhase.confirming => l10n.messageConfirming,
+      SubmissionPhase.failed => l10n.messageFailed,
+      SubmissionPhase.unknown => l10n.messageUnknown,
+    };
+    return Align(
+      key: ValueKey('local-message-${record.clientMessageId}'),
+      alignment: Alignment.centerRight,
+      child: FractionallySizedBox(
+        widthFactor: .82,
+        alignment: Alignment.centerRight,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+          decoration: BoxDecoration(
+            color: Theme.of(context).userBubble,
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (record.text.isNotEmpty)
+                SafeMarkdownMessage(data: record.text),
+              for (final image in record.images)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.file(
+                      File(image.path),
+                      fit: BoxFit.contain,
+                      cacheWidth: 1024,
+                      errorBuilder: (_, _, _) =>
+                          const Icon(Icons.broken_image_outlined),
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 6),
+              Semantics(
+                liveRegion: true,
+                child: Text(
+                  status,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+              if (record.errorCode == 'revision_conflict')
+                Text(l10n.conversationChangedRetry),
+              if (record.errorCode == 'queue_unavailable')
+                Text(l10n.queueUnavailableWait),
+              if (record.phase == SubmissionPhase.failed)
+                Wrap(
+                  children: [
+                    TextButton(
+                      onPressed: enabled ? onRetry : null,
+                      child: Text(l10n.retry),
+                    ),
+                    TextButton(
+                      onPressed: enabled ? onEdit : null,
+                      child: Text(l10n.messageEdit),
+                    ),
+                  ],
+                ),
+              if (record.phase == SubmissionPhase.unknown ||
+                  record.phase == SubmissionPhase.confirming)
+                TextButton(
+                  onPressed: enabled && !record.creationUnknown
+                      ? onConfirm
+                      : null,
+                  child: Text(l10n.messageCheck),
+                ),
+              if (record.creationUnknown) Text(l10n.messageCreationUnknown),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -2432,7 +2668,11 @@ class _DraftConversationEmpty extends StatelessWidget {
 }
 
 class _TimelineItem extends StatelessWidget {
-  const _TimelineItem({required this.item, required this.controller});
+  const _TimelineItem({
+    required this.item,
+    required this.controller,
+    super.key,
+  });
   final Map<String, dynamic> item;
   final ConversationController? controller;
 
@@ -2477,7 +2717,7 @@ class _TimelineItem extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         for (final block in locatedBlocks) ...[
-          SafeMarkdownMessage(data: block['text'] as String? ?? ''),
+          TimelineMessageBody(block: block, controller: controller),
           if (block['truncated'] == true)
             TextButton.icon(
               onPressed: controller == null
@@ -2530,7 +2770,7 @@ class _TimelineItem extends StatelessWidget {
                 ? SelectableText(snapshot.error.toString())
                 : snapshot.hasData
                 ? SingleChildScrollView(
-                    child: SafeMarkdownMessage(data: snapshot.data!),
+                    child: InlineImageMessage(data: snapshot.data!),
                   )
                 : const Center(child: CircularProgressIndicator()),
           ),

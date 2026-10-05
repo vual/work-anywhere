@@ -29,7 +29,7 @@ Bridge 首次需要 daemon 时会隐藏启动 `work-anywhere.exe daemon run`；�
 
 ## State and persistence
 
-daemon PID、启动时间、管理端口、一次性 token、session、托盘状态和控制暂停状态主要保存在运行期。实例/runtime 诊断投影持久化到数据库。V1 不创建登录自启动项或 Windows Service。
+daemon PID、启动时间、管理端口、一次性 token、session、托盘状态、控制暂停状态和实例/runtime 诊断投影都只保存在运行期。Relay 与 thread 配置保存在用户目录的 DPAPI 保护 JSON 中。V1 不创建登录自启动项或 Windows Service。
 
 ## Security and failure handling
 
