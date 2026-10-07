@@ -640,6 +640,12 @@ abstract class AppLocalizations {
   /// **'需要你确认'**
   String get confirmationRequired;
 
+  /// No description provided for @pendingActionsRemaining.
+  ///
+  /// In zh, this message translates to:
+  /// **'还有 {count} 个待处理'**
+  String pendingActionsRemaining(int count);
+
   /// No description provided for @agentContinueRequest.
   ///
   /// In zh, this message translates to:

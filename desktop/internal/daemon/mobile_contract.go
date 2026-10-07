@@ -774,6 +774,9 @@ func applyConversationAttention(page *mobilePage[mobileConversationSummary], act
 func normalizeMobileActions(actions []pendingAction) []mobileAction {
 	result := make([]mobileAction, 0, len(actions))
 	for _, action := range actions {
+		if !requiresUserAction(&action) || action.Resolved {
+			continue
+		}
 		item := mobileAction{
 			ID:             append(json.RawMessage(nil), action.ID...),
 			Kind:           "approval",

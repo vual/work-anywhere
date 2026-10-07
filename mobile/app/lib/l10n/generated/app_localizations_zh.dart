@@ -315,6 +315,11 @@ class AppLocalizationsZh extends AppLocalizations {
   String get confirmationRequired => '需要你确认';
 
   @override
+  String pendingActionsRemaining(int count) {
+    return '还有 $count 个待处理';
+  }
+
+  @override
   String get agentContinueRequest => 'Agent 请求继续执行';
 
   @override

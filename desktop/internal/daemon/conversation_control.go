@@ -106,7 +106,7 @@ func (i *Instance) canStartTurnLocked(threadID string) bool {
 		return false
 	}
 	for _, a := range i.actions {
-		if a.ConversationID == "" || a.ConversationID == threadID {
+		if actionBlocksThread(a, threadID) {
 			return false
 		}
 	}

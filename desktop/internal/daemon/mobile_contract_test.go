@@ -161,6 +161,16 @@ func TestMalformedMobileRequestUserInputDoesNotBecomeApproval(t *testing.T) {
 	}
 }
 
+func TestNormalizeMobileActionsOmitsInfrastructureRequests(t *testing.T) {
+	actions := normalizeMobileActions([]pendingAction{
+		{ID: json.RawMessage(`"attestation"`), Method: "attestation/generate"},
+		{ID: json.RawMessage(`"approval"`), Method: "item/commandExecution/requestApproval"},
+	})
+	if len(actions) != 1 || string(actions[0].ID) != `"approval"` {
+		t.Fatalf("unexpected Mobile action projection: %#v", actions)
+	}
+}
+
 func TestNormalizeMobileQueueRedactsProviderInputs(t *testing.T) {
 	page, err := normalizeMobileQueuePage(json.RawMessage(`{"data":[{"id":"queue-1","clientUserMessageId":"client-1","input":[{"type":"text","text":"first"},{"type":"text","text":"second"},{"type":"localImage","path":"C:\\secret\\photo.jpg"},{"type":"mention","name":"private","path":"C:\\secret"}]}],"nextCursor":"next"}`))
 	if err != nil {

@@ -74,6 +74,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   bool _followScrollScheduled = false;
   bool _showJumpToBottom = false;
   bool _planSubmitting = false;
+  String? _resolvingActionKey;
   bool _catalogLoading = false;
   bool _settingsUpdating = false;
   bool _catalogFailed = false;
@@ -243,15 +244,14 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   void _scheduleUserInputDialog() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _userInputDialogOpen) return;
-      final action = (_controller?.state.actions ?? const [])
-          .where(
-            (item) =>
-                item['kind'] == 'userInput' &&
-                (item['questions'] as List? ?? const []).isNotEmpty &&
-                !_presentedUserInputActions.contains('${item['id']}'),
-          )
-          .firstOrNull;
-      if (action != null) unawaited(_presentUserInputAction(action));
+      final action = (_controller?.state.actions ?? const []).firstOrNull;
+      if (action == null ||
+          action['kind'] != 'userInput' ||
+          (action['questions'] as List? ?? const []).isEmpty ||
+          _presentedUserInputActions.contains('${action['id']}')) {
+        return;
+      }
+      unawaited(_presentUserInputAction(action));
     });
   }
 
@@ -1455,6 +1455,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       };
 
   Future<void> _resolve(Map<String, dynamic> action, bool approved) async {
+    final actionKey = '${action['id']}';
+    if (_resolvingActionKey != null) return;
+    setState(() => _resolvingActionKey = actionKey);
     final result = approved ? {'decision': 'accept'} : {'decision': 'decline'};
     try {
       await ref.read(coreGatewayProvider).call('action.resolve', {
@@ -1469,6 +1472,10 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('$error')));
       }
+    } finally {
+      if (mounted && _resolvingActionKey == actionKey) {
+        setState(() => _resolvingActionKey = null);
+      }
     }
   }
 
@@ -1476,6 +1483,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     Map<String, dynamic> action,
     Map<String, List<String>> answers,
   ) async {
+    final actionKey = '${action['id']}';
+    if (_resolvingActionKey != null) return;
+    setState(() => _resolvingActionKey = actionKey);
     try {
       await ref.read(coreGatewayProvider).call('action.resolve', {
         'agentId': _agentId,
@@ -1496,6 +1506,10 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
             content: Text(context.l10n.questionResponseFailed('$error')),
           ),
         );
+      }
+    } finally {
+      if (mounted && _resolvingActionKey == actionKey) {
+        setState(() => _resolvingActionKey = null);
       }
     }
   }
@@ -1537,6 +1551,8 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     final planConfirmation = _showPlanConfirmation(state)
         ? state.planConfirmation
         : null;
+    final activeAction = state.actions.firstOrNull;
+    final actionSubmitting = _resolvingActionKey != null;
     final timelineTopPadding =
         MediaQuery.paddingOf(context).top + _conversationToolbarHeight + 10;
     return Scaffold(
@@ -1620,51 +1636,41 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
           ),
         ],
       ),
-      body: Stack(
+      body: Column(
         children: [
-          Column(
-            children: [
-              if (state.loading) const LinearProgressIndicator(minHeight: 2),
-              if (state.bodyError != null)
-                _ErrorBanner(
-                  title: context.l10n.syncFailed,
-                  error: state.bodyError!,
-                  onRetry: _controller!.refreshConversation,
-                  onCopyDiagnostics: _copyDiagnostics,
+          if (state.loading) const LinearProgressIndicator(minHeight: 2),
+          if (state.bodyError != null)
+            _ErrorBanner(
+              title: context.l10n.syncFailed,
+              error: state.bodyError!,
+              onRetry: _controller!.refreshConversation,
+              onCopyDiagnostics: _copyDiagnostics,
+            ),
+          if (state.actionError != null)
+            _ErrorBanner(
+              title: context.l10n.actionSyncFailed,
+              error: state.actionError!,
+              onRetry: _controller!.refreshActions,
+              onCopyDiagnostics: _copyDiagnostics,
+            ),
+          if (_catalogFailed)
+            Material(
+              color: Theme.of(context).colorScheme.surfaceContainerHigh,
+              child: ListTile(
+                dense: true,
+                title: Text(context.l10n.settingsUnavailable),
+                trailing: TextButton(
+                  onPressed: _agentId == null
+                      ? null
+                      : () => _loadCatalogs(_agentId!),
+                  child: Text(context.l10n.retrySettings),
                 ),
-              if (state.actionError != null)
-                _ErrorBanner(
-                  title: context.l10n.actionSyncFailed,
-                  error: state.actionError!,
-                  onRetry: _controller!.refreshActions,
-                  onCopyDiagnostics: _copyDiagnostics,
-                ),
-              if (_catalogFailed)
-                Material(
-                  color: Theme.of(context).colorScheme.surfaceContainerHigh,
-                  child: ListTile(
-                    dense: true,
-                    title: Text(context.l10n.settingsUnavailable),
-                    trailing: TextButton(
-                      onPressed: _agentId == null
-                          ? null
-                          : () => _loadCatalogs(_agentId!),
-                      child: Text(context.l10n.retrySettings),
-                    ),
-                  ),
-                ),
-              if (state.actions.isNotEmpty)
-                for (final action in state.actions)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
-                    child: _ActionConfirmation(
-                      action: action,
-                      onResolve: (approved) => _resolve(action, approved),
-                      onAnswer: () => _presentUserInputAction(action),
-                    ),
-                  ),
-              Expanded(
-                child: _Timeline(
+              ),
+            ),
+          Expanded(
+            child: Stack(
+              children: [
+                _Timeline(
                   items: state.items,
                   localRecords: localRecords,
                   localActionsEnabled:
@@ -1685,78 +1691,85 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                   onRetryOlder: _loadOlder,
                   topPadding: timelineTopPadding,
                 ),
-              ),
-              if (planConfirmation != null)
-                _PlanConfirmationPanel(
-                  controller: _planRevision,
-                  submitting: _planSubmitting,
-                  online: online,
-                  onImplement: () =>
-                      _respondToPlan(planConfirmation, 'implement'),
-                  onRevise: () => _respondToPlan(planConfirmation, 'revise'),
-                  onSkip: () => _skipPlan(planConfirmation),
-                )
-              else ...[
-                if (state.queueAvailable && state.queuedSubmissions.isNotEmpty)
-                  _QueuedSubmissionList(
-                    items: state.queuedSubmissions,
-                    online: online,
-                    blocked: state.actions.isNotEmpty || _sendBusy,
-                    updatingIds: _queueUpdating,
-                    onEdit: _editQueuedSubmission,
-                    onGuideNow: _guideQueuedSubmission,
-                    onCancel: _cancelQueuedSubmission,
+                if (_showJumpToBottom)
+                  Positioned(
+                    right: 0,
+                    left: 0,
+                    bottom: 16,
+                    child: Center(
+                      child: WawCircleButton(
+                        size: 48,
+                        icon: Icons.arrow_downward_rounded,
+                        tooltip: context.l10n.scrollToBottom,
+                        onPressed: () {
+                          if (!_scroll.hasClients) return;
+                          _scroll.animateTo(
+                            _scroll.position.maxScrollExtent,
+                            duration: const Duration(milliseconds: 280),
+                            curve: Curves.easeOutCubic,
+                          );
+                        },
+                      ),
+                    ),
                   ),
-                _ComposerPanel(
-                  key: _composerPanelKey,
-                  composer: _composer,
-                  images: _images,
-                  enabled:
-                      online && state.actions.isEmpty && !_settingsUpdating,
-                  selectingImages: _selectingImages,
-                  running: running,
-                  online: online,
-                  canSend: _canSend,
-                  submitting: _sendBusy,
-                  settings: _settings,
-                  permissionIcon: _permissionIcon(
-                    _settings?.permissionModeId ?? 'default',
-                  ),
-                  model: _selectedModel,
-                  settingsVisible: !_catalogFailed && _settings != null,
-                  settingsEnabled: _canChangeSettings,
-                  settingsUpdating: _settingsUpdating,
-                  onAdd: _showAddMenu,
-                  onPermissions: _showPermissionMenu,
-                  onModelAndEffort: _showReasoningMenu,
-                  onRemoveImage: _removeImage,
-                  onSend: _send,
-                  onInterrupt: _interrupt,
-                ),
               ],
-            ],
-          ),
-          if (_showJumpToBottom)
-            Positioned(
-              right: 0,
-              left: 0,
-              bottom: planConfirmation != null ? 190 : 88,
-              child: Center(
-                child: WawCircleButton(
-                  size: 48,
-                  icon: Icons.arrow_downward_rounded,
-                  tooltip: context.l10n.scrollToBottom,
-                  onPressed: () {
-                    if (!_scroll.hasClients) return;
-                    _scroll.animateTo(
-                      _scroll.position.maxScrollExtent,
-                      duration: const Duration(milliseconds: 280),
-                      curve: Curves.easeOutCubic,
-                    );
-                  },
-                ),
-              ),
             ),
+          ),
+          if (activeAction != null)
+            _ActionConfirmation(
+              action: activeAction,
+              remainingCount: state.actions.length - 1,
+              submitting: actionSubmitting,
+              onResolve: (approved) => _resolve(activeAction, approved),
+              onAnswer: () => _presentUserInputAction(activeAction),
+              onRejectQuestion: () => _resolveUserInput(activeAction, const {}),
+            )
+          else if (planConfirmation != null)
+            _PlanConfirmationPanel(
+              controller: _planRevision,
+              submitting: _planSubmitting,
+              online: online,
+              onImplement: () => _respondToPlan(planConfirmation, 'implement'),
+              onRevise: () => _respondToPlan(planConfirmation, 'revise'),
+              onSkip: () => _skipPlan(planConfirmation),
+            )
+          else ...[
+            if (state.queueAvailable && state.queuedSubmissions.isNotEmpty)
+              _QueuedSubmissionList(
+                items: state.queuedSubmissions,
+                online: online,
+                blocked: state.actions.isNotEmpty || _sendBusy,
+                updatingIds: _queueUpdating,
+                onEdit: _editQueuedSubmission,
+                onGuideNow: _guideQueuedSubmission,
+                onCancel: _cancelQueuedSubmission,
+              ),
+            _ComposerPanel(
+              key: _composerPanelKey,
+              composer: _composer,
+              images: _images,
+              enabled: online && state.actions.isEmpty && !_settingsUpdating,
+              selectingImages: _selectingImages,
+              running: running,
+              online: online,
+              canSend: _canSend,
+              submitting: _sendBusy,
+              settings: _settings,
+              permissionIcon: _permissionIcon(
+                _settings?.permissionModeId ?? 'default',
+              ),
+              model: _selectedModel,
+              settingsVisible: !_catalogFailed && _settings != null,
+              settingsEnabled: _canChangeSettings,
+              settingsUpdating: _settingsUpdating,
+              onAdd: _showAddMenu,
+              onPermissions: _showPermissionMenu,
+              onModelAndEffort: _showReasoningMenu,
+              onRemoveImage: _removeImage,
+              onSend: _send,
+              onInterrupt: _interrupt,
+            ),
+          ],
         ],
       ),
     );
@@ -1766,67 +1779,127 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
 class _ActionConfirmation extends StatelessWidget {
   const _ActionConfirmation({
     required this.action,
+    required this.remainingCount,
+    required this.submitting,
     required this.onResolve,
     required this.onAnswer,
+    required this.onRejectQuestion,
   });
 
   final Map<String, dynamic> action;
+  final int remainingCount;
+  final bool submitting;
   final ValueChanged<bool> onResolve;
   final VoidCallback onAnswer;
+  final VoidCallback onRejectQuestion;
 
   @override
-  Widget build(BuildContext context) => WawFloatingSurface(
-    padding: const EdgeInsets.all(16),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text(
-          action['kind'] == 'userInput'
-              ? context.l10n.answerQuestionsTitle
-              : context.l10n.confirmationRequired,
-          style: const TextStyle(fontWeight: FontWeight.w700),
+  Widget build(BuildContext context) {
+    final questions = (action['questions'] as List? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .toList();
+    final isUserInput = action['kind'] == 'userInput';
+    final questionText = questions.firstOrNull?['question'] as String?;
+    return SafeArea(
+      top: false,
+      minimum: const EdgeInsets.fromLTRB(16, 6, 16, 10),
+      child: ConstrainedBox(
+        key: const ValueKey('action-confirmation-panel'),
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * .55,
         ),
-        const SizedBox(height: 6),
-        Text(
-          action['kind'] == 'userInput'
-              ? ((action['questions'] as List? ?? const [])
-                            .whereType<Map<String, dynamic>>()
-                            .firstOrNull?['question']
-                        as String? ??
-                    context.l10n.agentContinueRequest)
-              : action['method'] as String? ??
-                    context.l10n.agentContinueRequest,
-        ),
-        const SizedBox(height: 8),
-        if (action['kind'] == 'userInput')
-          Align(
-            alignment: Alignment.centerRight,
-            child: FilledButton(
-              onPressed: (action['questions'] as List? ?? const []).isNotEmpty
-                  ? onAnswer
-                  : null,
-              child: Text(context.l10n.openQuestions),
-            ),
-          )
-        else
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
+        child: WawFloatingSurface(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              TextButton(
-                onPressed: () => onResolve(false),
-                child: Text(context.l10n.deny),
+              Text(
+                isUserInput
+                    ? context.l10n.answerQuestionsTitle
+                    : context.l10n.confirmationRequired,
+                style: const TextStyle(fontWeight: FontWeight.w700),
               ),
-              const SizedBox(width: 8),
-              FilledButton.icon(
-                onPressed: () => onResolve(true),
-                icon: const Icon(Icons.check_rounded),
-                label: Text(context.l10n.allow),
+              const SizedBox(height: 6),
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        isUserInput
+                            ? questionText ?? context.l10n.agentContinueRequest
+                            : action['method'] as String? ??
+                                  context.l10n.agentContinueRequest,
+                      ),
+                      if (remainingCount > 0) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          context.l10n.pendingActionsRemaining(remainingCount),
+                          style: WawCompact.metadata.copyWith(
+                            color: Theme.of(context).mutedInk,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               ),
+              const SizedBox(height: 8),
+              if (isUserInput && questions.isNotEmpty)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton(
+                    onPressed: submitting ? null : onAnswer,
+                    child: submitting
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Text(context.l10n.openQuestions),
+                  ),
+                )
+              else if (isUserInput)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton(
+                    onPressed: submitting ? null : onRejectQuestion,
+                    child: submitting
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Text(context.l10n.deny),
+                  ),
+                )
+              else
+                Wrap(
+                  alignment: WrapAlignment.end,
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    TextButton(
+                      onPressed: submitting ? null : () => onResolve(false),
+                      child: Text(context.l10n.deny),
+                    ),
+                    FilledButton.icon(
+                      onPressed: submitting ? null : () => onResolve(true),
+                      icon: submitting
+                          ? const SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.check_rounded),
+                      label: Text(context.l10n.allow),
+                    ),
+                  ],
+                ),
             ],
           ),
-      ],
-    ),
-  );
+        ),
+      ),
+    );
+  }
 }
 
 class _PlanConfirmationPanel extends StatelessWidget {

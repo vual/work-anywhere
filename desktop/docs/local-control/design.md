@@ -37,7 +37,7 @@ daemon 将控制方法路由到实例 supervisor；Codex driver/能力描述用�
 - 流量：`traffic.enable`, `traffic.disable`
 - Remote：`remote.status`, `remote.configure`, `remote.register`, `remote.enroll`, `remote.reconnect`, `remote.pair.start/list/resolve/cancel/revoke`
 
-`turn.start` 当前接受 `instanceId`、`threadId`、文字、attachment IDs、model、reasoning effort、approval policy、sandbox policy、client message ID 和 expected revision。附件中的图片被转换为官方 App Server 支持的输入项；调用必须指向已有 thread。忙碌门禁按目标 thread 判断：同一 thread 已有活跃 Turn、等待该 thread 的 action，或 action 无法归属 thread 时拒绝；同一 Agent 的其他 thread 正在运行或等待自身 action 时不阻塞本 thread。实例仍汇总保存全部活跃 Turn，用于状态、升级和强制退出。
+`turn.start` 当前接受 `instanceId`、`threadId`、文字、attachment IDs、model、reasoning effort、approval policy、sandbox policy、client message ID 和 expected revision。附件中的图片被转换为官方 App Server 支持的输入项；调用必须指向已有 thread。忙碌门禁按目标 thread 判断：同一 thread 已有活跃 Turn、等待该 thread 的用户 action，或用户 action 无法归属 thread 时拒绝；同一 Agent 的其他 thread 正在运行或等待自身 action 时不阻塞本 thread。`attestation/generate` 等明确分类的客户端基础设施请求不参与会话门禁。实例仍汇总保存全部活跃 Turn，用于状态、升级和强制退出。
 
 Desktop 从 `turn/start`、`thread/settings/update` 和 `thread/settings/updated` 投影各 thread 最近确认的 collaboration mode、model、reasoning effort 与稳定 permission mode，并使用现有加密 settings 存储按 instance/thread 持久化。Mobile 的 `conversation.read.settings` 固定返回 `mode`、`modelId`、`reasoningEffort` 与 `permissionModeId`。投影不保存 developer instructions 或计划正文；Turn 的 started/completed/failed/interrupted 通知用于把配置绑定到权威 Turn 并记录其是否成功完成。`ConversationSnapshot.planConfirmation` 仅在最新 Turn 成功完成、以 plan mode 启动、包含完成的 Plan item、当前 thread 空闲且无阻塞 action，并且 model/effort 足以安全启动下一 Turn 时返回 `{planItemId, turnId, revision}`。
 
@@ -57,7 +57,7 @@ Mobile-facing `conversation.list` 的每条 `ConversationSummary` 同时包含 D
 
 `mobile-control-v1` 接受 `agentId` 作为 `instanceId` 的产品化别名，并把 `query` 转为 App Server `searchTerm`。`agent.list` 返回 Codex Agent summary；Mobile-facing `project.list` 不返回 provider 根路径，`conversation.list` 不返回 preview，只返回稳定导航字段，并在归一化时按 thread ID 去重。Mobile contract 下的 `project.list` 会读取 provider 项目和 thread 列表，按每个项目最近一条对话的 `updatedAt` 倒序聚合，只返回至少有一条对话的项目；并列时间按项目 ID 倒序，分页 cursor 锚定这两个字段。聚合时优先使用 thread 的 `projectId`；字段缺失、为空或指向未知项目时，以 thread `cwd`（必要时使用 environment cwd/workspace roots）匹配 provider 项目的主目录。Codex 当前的 Project DTO 没有单独的主目录标记，Desktop 将 `roots` 中第一项非空路径视为主目录，后续 roots 仅作为附加工作目录，不参与项目归属匹配。返回给 Mobile 的 `ProjectSummary.updatedAt` 是该项目最近对话的时间，而不是 provider 项目元数据时间。项目过滤的正常路径使用 App Server `thread/list(projectId)`；若结果为空，Desktop 会根据同一 Project ID 解析根目录并以 `thread/list(cwd)` 回退，以兼容项目迁移前仍只保存旧项目关联或 session cwd 的历史线程。`conversation.read` 使用 `thread/read(includeTurns=false)` 读取 metadata，再用 `thread/items/list(sortDirection=desc)` 返回最近 20 项（最大 50）的稳定 `ConversationSnapshot`，同时用 `thread/queue/list` 返回当前 queue；归一化器解包官方 `ThreadItemEntry` 的 `{item,turnId}` 结构，并兼容旧的扁平 fixture。`conversation.timeline.list` 原样续传 App Server opaque cursor 读取更早页。Plan item 的原始 `text` 被归一化为单个 `kind=plan` block；真正超过 5 个源文件行时，普通 Timeline response 只返回原始 Markdown 前五行，并返回绑定 agent/thread/turn/item/block 的随机 `contentRef` 与 UTF-8 字节数。`conversation.content.read` 以稳定定位重新遍历该 turn 的 provider item 页，并按最多 128 KiB 返回正文；引用过期后，Mobile 可用相同定位调用 `conversation.content.resolve` 重新签发引用，item 已删除时返回 `content_not_found`。引用只保存定位，不缓存正文。
 
-Mobile contract 下的 `conversation.list` 额外返回 `needsAttention`，其值来自与该 thread 关联的未完成 action；无法归属 thread 的 action 不猜测列表目标。Mobile `action.list` 不透传原始 params：普通命令/权限请求归一化为 `kind=approval` 并保留 id、method、conversation/turn id 和 created time；官方 `item/tool/requestUserInput` 归一化为 `kind=userInput`，额外返回每题的 header、id、question、`isOther`、`isSecret` 以及 label/description options。`action.resolve` 仍执行 first-valid-wins；问题答案使用官方 `{answers:{questionId:{answers:[value]}}}` 结构，普通审批继续兼容 `{decision:"accept"|"decline"}`。
+Mobile contract 下的 `conversation.list` 额外返回 `needsAttention`，其值来自与该 thread 关联的未完成用户 action；无法归属 thread 的 action 不猜测列表目标。Mobile `action.list` 按创建时间稳定返回且不透传原始 params：普通命令/权限请求归一化为 `kind=approval` 并保留 id、method、conversation/turn id 和 created time；官方 `item/tool/requestUserInput` 归一化为 `kind=userInput`，额外返回每题的 header、id、question、`isOther`、`isSecret` 以及 label/description options。`attestation/generate` 不进入 Mobile DTO、待办计数或 action 事件，由官方 Desktop 透明响应。`action.resolve` 对用户 action 执行 first-valid-wins；问题答案使用官方 `{answers:{questionId:{answers:[value]}}}` 结构，普通审批继续兼容 `{decision:"accept"|"decline"}`。
 
 `hookPrompt` 不进入 Mobile DTO；user message 时间线项把官方 `clientId` 归一化为可选 `clientMessageId`，供 Mobile 将立即显示的本地发送气泡与权威消息精确合并，旧 runtime 未提供该字段时保持省略。function/tool、协作、搜索、图片、sleep、review 和 compaction item 只生成单个结构化 summary block：`summaryKind` 保存 provider item 类型，`summaryValue` 保存最长 512 UTF-8 字节的脱敏单行值，`text` 是语言无关 fallback。完整展示文案由 Mobile 本地化，daemon 不拼接中英文句子。summary 不含 arguments/output/result/error/path/prompt，也不生成 `contentRef`；`commandExecution` 只返回 command，不返回 aggregated output。过滤后可见 item 不足请求数量时，daemon 沿 provider cursor 补读后续页面，最多追踪 8 页。
 
@@ -85,7 +85,7 @@ Timeline 优先调用 `thread/items/list`。仅官方 JSON-RPC `-32601` 方法�
 
 ## State and persistence
 
-控制连接、subscriber 队列、会话 projection、pending action 和附件索引都在内存中。客户端通过 conversation sequence/cursor 恢复；每个 thread 的 collaboration mode/model/effort 和 permission 设置写入 DPAPI 保护的 JSON 配置，最多保留最近 2,000 条，不保存正文或计划内容。
+控制连接、subscriber 队列、会话 projection、pending action 和附件索引都在内存中。客户端通过 conversation sequence/cursor 恢复；每个 thread 的 collaboration mode/model/effort 和 permission 设置写入 DPAPI 保护的 JSON 配置，最多保留最近 2,000 条，不保存正文或计划内容。全部会话设置写入按实例串行，并在落盘前丢弃已被后续 Turn 状态取代的旧快照，避免同步设置更新或 started/completed 通知被旧快照倒序覆盖。
 
 附件分块直接追加到项目目录下的 `.part` 临时文件，commit 校验大小后原子重命名；索引不落盘。明确接受 `turn.start` 或 `conversation.queue.add` 后删除附件，失败或结果未知最多保留 24 小时。`turn.start` 根据 attachment ID 读取文件，仅将 `image/*` 转为 App Server data URI；全局只允许一个图片编码任务，其他 MIME 返回 `unsupported_attachment_type`。控制暂停只阻止本机控制操作，不改变 Desktop 原始连接。
 
@@ -94,7 +94,7 @@ Timeline 优先调用 `thread/items/list`。仅官方 JSON-RPC `-32601` 方法�
 - 控制服务仅绑定随机 `127.0.0.1` 端口；管理 Pipe 受当前 SID ACL 保护。
 - Web 管理入口使用一次性 fragment token 换取 SameSite/HttpOnly session，并校验 Origin 和 CSRF。
 - `expectedRevision` 防止基于陈旧状态开始 Turn。
-- 控制面暂停、实例未完成初始化、目标会话正在运行或等待 action 时拒绝不安全操作；其他会话的活动不造成误拒绝。
+- 控制面暂停、实例未完成初始化、目标会话正在运行或等待用户 action 时拒绝不安全操作；其他会话的活动和客户端基础设施请求不造成误拒绝。
 
 ## Invariants and non-goals
 

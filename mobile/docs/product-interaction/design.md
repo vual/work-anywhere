@@ -137,7 +137,7 @@ Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项�
 ### 最近对话
 
 项目/Bot 区域下方展示当前 Agent 最近 20 条对话，跨项目合并且不按项目分组，按最后更新时间倒序。对话使用与项目一致的约 54dp 紧凑扁平文本行，左侧单行标题、右侧相对时间；项目详情中的对话列表沿用相同行高。列表 DTO 不携带 preview，状态优先级为 `等待处理 > 运行中 > 正在停止 > 失败 > 空闲`。
-eedsAttention=true` 时标题右侧显示橙色描边感叹号并提供“需要人工处理”的无障碍文本，取代运行中 loading 和相对时间；工作台顶栏同时优先显示“n 个待处理”。
+`needsAttention=true` 时标题右侧显示橙色描边感叹号并提供“需要人工处理”的无障碍文本，取代运行中 loading 和相对时间；工作台顶栏同时优先显示“n 个待处理”。
 
 运行中的对话在卡片最右侧显示蓝色旋转 loading icon，并提供“运行中”的无障碍文本；它与 Daemon selector 的连接 loading 分属不同语义。点击任意对话进入会话详情。超过 20 条时工作台不继续分页，用户通过底部搜索访问更早对话；项目详情仍可独立分页。
 
@@ -211,12 +211,12 @@ eedsAttention=true` 时标题右侧显示橙色描边感叹号并提供“需要
 
 ## 待处理 Action
 
-待处理 action 优先附着到对应对话：Desktop 在 `ConversationSummary.needsAttention` 中投影与 thread 关联的未完成 action，工作台/项目页在标题右侧显示橙色描边感叹号；会话详情置顶 action card。工作台顶部存在一个或多个待处理对话时显示紧凑“n 个待处理”入口并优先进入第一条关联对话，不建立独立一级 action 页面。
+待处理 action 优先附着到对应对话：Desktop 在 `ConversationSummary.needsAttention` 中投影与 thread 关联的未完成用户 action，工作台/项目页在标题右侧显示橙色描边感叹号。进入会话后，Action 以底部非模态面板替换 Composer，优先级固定为 `Action > Plan confirmation > Queue + Composer`；多个 Action 按 Desktop 返回的创建时间顺序逐个展示，并提示剩余数量，处理成功后同步权威状态再展示下一项。工作台顶部存在一个或多个待处理对话时显示紧凑“n 个待处理”入口并优先进入第一条关联对话，不建立独立一级 action 页面。`attestation/generate` 等客户端基础设施请求不属于 Mobile 待办，不显示也不阻塞其他会话输入。
 
 - command/其他 approval：保持兼容的“允许 / 拒绝”操作，不进入问题弹窗。完整命令、文件、网络上下文与 provider 的全部审批选项仍属于尚未完成的 approval DTO，当前界面不能宣称提供永久授权。
-- `item/tool/requestUserInput`：进入会话后自动打开模态弹窗，同时保留置顶 action card 作为关闭弹窗后的再次入口。弹窗一次显示本 action 的全部问题；每题展示 header、问题、单选项与说明，并始终允许输入自定义答案。选择选项和自定义输入互斥，所有问题都有非空答案后底部“提交”按钮才启用；`isSecret` 问题使用遮蔽输入。
+- `item/tool/requestUserInput`：仅当它是当前最早 Action 时自动打开模态弹窗，同时保留底部 Action 面板作为关闭弹窗后的再次入口；关闭弹窗不会越过当前 Action 自动打开后续问题。弹窗一次显示本 action 的全部问题；每题展示 header、问题、单选项与说明，并始终允许输入自定义答案。选择选项和自定义输入互斥，所有问题都有非空答案后底部“提交”按钮才启用；`isSecret` 问题使用遮蔽输入。若 provider 返回无法展示的空问题列表，面板只提供拒绝操作并提交协议允许的空 answers，使异常 Action 不会永久阻塞后续待办。
 
-问题提交按 question id 组装 `answers[id].answers=[value]` 并只调用一次 `action.resolve`。成功后刷新会话与工作台，移除提醒；失败保留 action card 和用户可再次打开的入口，不自动重发。`already_resolved`、action 失效、Turn 结束或 revoke 最终都以权威同步结果清理。
+问题提交按 question id 组装 `answers[id].answers=[value]` 并只调用一次 `action.resolve`。普通审批和问题提交期间禁用当前面板入口并显示进度，防止重复响应；成功后刷新会话与工作台，移除提醒；失败保留 Action 面板和用户可再次打开的入口，不自动重发。`already_resolved`、action 失效、Turn 结束或 revoke 最终都以权威同步结果清理。Action 面板限制最大屏幕占比，较长内容在面板内部滚动，操作按钮保持可见；审批按钮可换行以适配动态字体。“回到底部”按钮定位在时间线区域内，自动避让 Action、Plan、Queue 和 Composer 底部区域。
 
 ## Daemon 管理与设置
 

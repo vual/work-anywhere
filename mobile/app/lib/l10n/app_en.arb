@@ -118,6 +118,8 @@
   "open": "Open",
   "remoteImageBlocked": "Remote image hidden",
   "confirmationRequired": "Your confirmation is required",
+  "pendingActionsRemaining": "{count} more pending",
+  "@pendingActionsRemaining": {"placeholders": {"count": {"type": "int"}}},
   "agentContinueRequest": "The agent requested permission to continue",
   "deny": "Deny",
   "allow": "Allow",

@@ -749,17 +749,31 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     final events = StreamController<Map<String, dynamic>>.broadcast();
     addTearDown(events.close);
+    final firstResolution = Completer<void>();
+    var resolveCalls = 0;
+    final pendingActions = <Map<String, dynamic>>[
+      {
+        'id': 'action-1',
+        'conversationId': 'thread-action-plan',
+        'method': 'first/requestApproval',
+      },
+      {
+        'id': 'action-2',
+        'conversationId': 'thread-action-plan',
+        'method': 'second/requestApproval',
+      },
+    ];
     final gateway = _FakeGateway((method, params) async {
       if (method == 'conversation.subscribe') return {'result': const {}};
       if (method == 'action.list') {
+        return {'result': pendingActions};
+      }
+      if (method == 'action.resolve') {
+        resolveCalls++;
+        if (params['id'] == 'action-1') await firstResolution.future;
+        pendingActions.removeWhere((item) => item['id'] == params['id']);
         return {
-          'result': [
-            {
-              'id': 'action-1',
-              'conversationId': 'thread-action-plan',
-              'method': 'requestApproval',
-            },
-          ],
+          'result': {'resolved': true},
         };
       }
       return {
@@ -799,8 +813,263 @@ void main() {
     expect(find.text('需要你确认'), findsOneWidget);
     expect(find.text('允许'), findsOneWidget);
     expect(find.text('拒绝'), findsOneWidget);
+    expect(find.text('first/requestApproval'), findsOneWidget);
+    expect(find.text('second/requestApproval'), findsNothing);
+    expect(find.text('还有 1 个待处理'), findsOneWidget);
     expect(find.byType(Dialog), findsNothing);
+    expect(
+      find.byKey(const ValueKey('action-confirmation-panel')),
+      findsOneWidget,
+    );
     expect(find.byKey(const ValueKey('plan-confirmation-panel')), findsNothing);
+    expect(find.byKey(const ValueKey('composer-collapsed')), findsNothing);
+    final panelBottom = tester.getBottomLeft(
+      find.byKey(const ValueKey('action-confirmation-panel')),
+    );
+    final logicalHeight =
+        tester.view.physicalSize.height / tester.view.devicePixelRatio;
+    expect(panelBottom.dy, greaterThan(logicalHeight / 2));
+
+    await tester.tap(find.text('允许'));
+    await tester.pump();
+    expect(
+      tester
+          .widget<TextButton>(find.widgetWithText(TextButton, '拒绝'))
+          .onPressed,
+      isNull,
+    );
+    expect(
+      tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, '允许'))
+          .onPressed,
+      isNull,
+    );
+    await tester.tap(find.text('允许'));
+    expect(resolveCalls, 1);
+    firstResolution.complete();
+    await tester.pumpAndSettle();
+
+    expect(find.text('first/requestApproval'), findsNothing);
+    expect(find.text('second/requestApproval'), findsOneWidget);
+    expect(find.text('还有 1 个待处理'), findsNothing);
+    expect(find.byKey(const ValueKey('plan-confirmation-panel')), findsNothing);
+  });
+
+  testWidgets('automatic question dialog waits for the oldest action', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final pendingActions = <Map<String, dynamic>>[
+      {
+        'id': 'approval-first',
+        'conversationId': 'thread-ordered-actions',
+        'method': 'item/commandExecution/requestApproval',
+      },
+      {
+        'id': 'question-second',
+        'kind': 'userInput',
+        'conversationId': 'thread-ordered-actions',
+        'method': 'item/tool/requestUserInput',
+        'questions': [
+          {
+            'header': 'Order',
+            'id': 'after_approval',
+            'question': 'Should this open after the approval?',
+            'options': const [],
+          },
+        ],
+      },
+    ];
+    final gateway = _FakeGateway((method, params) async {
+      if (method == 'conversation.subscribe') return {'result': const {}};
+      if (method == 'action.list') return {'result': pendingActions};
+      if (method == 'action.resolve') {
+        pendingActions.removeWhere((item) => item['id'] == params['id']);
+        return {
+          'result': {'resolved': true},
+        };
+      }
+      return {
+        'result': {
+          'conversation': {
+            'id': 'thread-ordered-actions',
+            'title': 'Ordered actions',
+            'running': true,
+          },
+          'revision': 1,
+          'timeline': {'items': const []},
+        },
+      };
+    });
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          coreGatewayProvider.overrideWithValue(gateway),
+          workspaceProvider.overrideWith(_FakeWorkspaceController.new),
+        ],
+        child: const MaterialApp(
+          locale: Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: ConversationScreen(conversationId: 'thread-ordered-actions'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(Dialog), findsNothing);
+    expect(find.text('item/commandExecution/requestApproval'), findsOneWidget);
+    expect(find.text('Should this open after the approval?'), findsNothing);
+
+    await tester.tap(find.text('Allow'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(Dialog), findsOneWidget);
+    expect(find.text('Should this open after the approval?'), findsWidgets);
+  });
+
+  testWidgets('malformed question can be rejected before the next action', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    Map<String, dynamic>? resolution;
+    final pendingActions = <Map<String, dynamic>>[
+      {
+        'id': 'malformed-question',
+        'kind': 'userInput',
+        'conversationId': 'thread-malformed-question',
+        'method': 'item/tool/requestUserInput',
+        'questions': const [],
+      },
+      {
+        'id': 'approval-after-malformed',
+        'conversationId': 'thread-malformed-question',
+        'method': 'next/requestApproval',
+      },
+    ];
+    final gateway = _FakeGateway((method, params) async {
+      if (method == 'conversation.subscribe') return {'result': const {}};
+      if (method == 'action.list') return {'result': pendingActions};
+      if (method == 'action.resolve') {
+        resolution = Map<String, dynamic>.from(params);
+        pendingActions.removeWhere((item) => item['id'] == params['id']);
+        return {
+          'result': {'resolved': true},
+        };
+      }
+      return {
+        'result': {
+          'conversation': {
+            'id': 'thread-malformed-question',
+            'title': 'Malformed question',
+            'running': true,
+          },
+          'revision': 1,
+          'timeline': {'items': const []},
+        },
+      };
+    });
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          coreGatewayProvider.overrideWithValue(gateway),
+          workspaceProvider.overrideWith(_FakeWorkspaceController.new),
+        ],
+        child: const MaterialApp(
+          locale: Locale('zh', 'CN'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: ConversationScreen(conversationId: 'thread-malformed-question'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(Dialog), findsNothing);
+    expect(find.text('填写回答'), findsNothing);
+    expect(find.text('拒绝'), findsOneWidget);
+    await tester.tap(find.text('拒绝'));
+    await tester.pumpAndSettle();
+
+    expect(resolution?['id'], 'malformed-question');
+    expect(resolution?['result'], {'answers': <String, dynamic>{}});
+    expect(find.text('next/requestApproval'), findsOneWidget);
+  });
+
+  testWidgets('action panel constrains long content at large text scale', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(320, 480));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    SharedPreferences.setMockInitialValues({});
+    final longMethod = List.filled(
+      20,
+      'item/commandExecution/requestApproval',
+    ).join(' ');
+    final gateway = _FakeGateway((method, params) async {
+      if (method == 'conversation.subscribe') return {'result': const {}};
+      if (method == 'action.list') {
+        return {
+          'result': [
+            {
+              'id': 'long-action',
+              'conversationId': 'thread-long-action',
+              'method': longMethod,
+            },
+          ],
+        };
+      }
+      return {
+        'result': {
+          'conversation': {
+            'id': 'thread-long-action',
+            'title': 'Long action',
+            'running': true,
+          },
+          'revision': 1,
+          'timeline': {'items': const []},
+        },
+      };
+    }, catalogs: _settingsCatalogs);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          coreGatewayProvider.overrideWithValue(gateway),
+          workspaceProvider.overrideWith(_FakeWorkspaceController.new),
+        ],
+        child: MaterialApp(
+          locale: const Locale('zh', 'CN'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context)
+                .copyWith(textScaler: const TextScaler.linear(2)),
+            child: child!,
+          ),
+          home: const ConversationScreen(conversationId: 'thread-long-action'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    final panel = find.byKey(const ValueKey('action-confirmation-panel'));
+    expect(panel, findsOneWidget);
+    final logicalHeight =
+        tester.view.physicalSize.height / tester.view.devicePixelRatio;
+    expect(
+      tester.getSize(panel).height,
+      lessThanOrEqualTo(logicalHeight * .55),
+    );
+    expect(
+      find.descendant(of: panel, matching: find.byType(SingleChildScrollView)),
+      findsOneWidget,
+    );
+    expect(find.text('允许'), findsOneWidget);
+    expect(find.text('拒绝'), findsOneWidget);
   });
 
   testWidgets('request user input opens all questions and submits answers', (
@@ -881,7 +1150,21 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('需要你的回答'), findsWidgets);
-    final dialog = find.byType(Dialog);
+    var dialog = find.byType(Dialog);
+    await tester.tap(
+      find.descendant(of: dialog, matching: find.byIcon(Icons.close_rounded)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(Dialog), findsNothing);
+    expect(
+      find.byKey(const ValueKey('action-confirmation-panel')),
+      findsOneWidget,
+    );
+    expect(find.text('填写回答'), findsOneWidget);
+
+    await tester.tap(find.text('填写回答'));
+    await tester.pumpAndSettle();
+    dialog = find.byType(Dialog);
     expect(
       find.descendant(of: dialog, matching: find.text('后端表尚未建立时如何展示？')),
       findsOneWidget,

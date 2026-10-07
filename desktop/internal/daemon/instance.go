@@ -10,6 +10,7 @@ import (
 	"io"
 	"os/exec"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +40,25 @@ type pendingAction struct {
 	TurnID         string          `json:"turnId,omitempty"`
 	CreatedAt      time.Time       `json:"createdAt"`
 	Resolved       bool            `json:"resolved"`
+}
+
+func requiresUserAction(action *pendingAction) bool {
+	return action != nil && action.Method != "attestation/generate"
+}
+
+func actionBlocksThread(action *pendingAction, threadID string) bool {
+	return requiresUserAction(action) && (action.ConversationID == "" || action.ConversationID == threadID)
+}
+
+// Called with i.mu held.
+func (i *Instance) pendingUserActionCountLocked() int {
+	count := 0
+	for _, action := range i.actions {
+		if requiresUserAction(action) && !action.Resolved {
+			count++
+		}
+	}
+	return count
 }
 
 type conversationProjection struct {
@@ -75,6 +95,7 @@ type Instance struct {
 
 	mu                       sync.Mutex
 	serverWriteMu            sync.Mutex
+	settingsPersistMu        sync.Mutex
 	controlWrites            map[string]*sync.Mutex
 	pendingTurnStarts        map[string]bool
 	createdThreads           map[string]bool
@@ -144,6 +165,14 @@ func (i *Instance) threadSettingsKey(threadID string) string {
 
 func (i *Instance) persistThreadSettings(threadID string, settings threadCollaborationSettings) {
 	if threadID == "" || settings.Mode == "" || settings.Model == "" {
+		return
+	}
+	i.settingsPersistMu.Lock()
+	defer i.settingsPersistMu.Unlock()
+	i.mu.Lock()
+	current, currentOK := i.threadSettings[threadID]
+	i.mu.Unlock()
+	if !currentOK || current != settings {
 		return
 	}
 	if err := i.manager.settings.PutSetting(i.threadSettingsKey(threadID), settings); err != nil && i.manager.log != nil {
@@ -287,7 +316,7 @@ func (i *Instance) observeOutgoingThreadSettings(method string, params json.RawM
 	}
 	i.mu.Unlock()
 	if method != "turn/start" {
-		i.persistThreadSettings(threadID, settings)
+		i.persistThreadSettingsAsync(threadID, settings)
 	}
 }
 
@@ -648,7 +677,9 @@ func (i *Instance) resolveServerRequest(message jsonrpc.Message, raw []byte) err
 	if err := i.writeServer(raw); err != nil {
 		return err
 	}
-	i.broadcastEvent("action.resolved", map[string]any{"id": json.RawMessage(message.ID), "threadId": action.ConversationID})
+	if requiresUserAction(action) {
+		i.broadcastEvent("action.resolved", map[string]any{"id": json.RawMessage(message.ID), "threadId": action.ConversationID})
+	}
 	return nil
 }
 
@@ -776,7 +807,9 @@ func (i *Instance) handleServerFrame(generation uint64, raw []byte) {
 		i.updateActivityStateLocked()
 		i.mu.Unlock()
 		i.broadcast(raw)
-		i.broadcastEvent("action.created", action)
+		if requiresUserAction(action) {
+			i.broadcastEvent("action.created", action)
+		}
 		return
 	}
 	if message.IsNotification() {
@@ -1218,7 +1251,7 @@ func (i *Instance) Snapshot() InstanceSnapshot {
 		ID: i.descriptor.ID, Name: i.descriptor.Name, CodexHome: i.descriptor.CodexHome,
 		UserDataDir: i.descriptor.UserDataDir, State: i.state, Runtime: i.runtime,
 		PendingRuntime: i.pendingRuntime, DesktopConnections: len(i.desktops), ActiveTurn: len(i.activeTurns) > 0,
-		PendingActions: len(i.actions), LastError: i.lastError,
+		PendingActions: i.pendingUserActionCountLocked(), LastError: i.lastError,
 	}
 }
 
@@ -1328,8 +1361,16 @@ func (i *Instance) Actions() []pendingAction {
 	defer i.mu.Unlock()
 	result := make([]pendingAction, 0, len(i.actions))
 	for _, action := range i.actions {
-		result = append(result, *action)
+		if requiresUserAction(action) && !action.Resolved {
+			result = append(result, *action)
+		}
 	}
+	sort.Slice(result, func(left, right int) bool {
+		if result[left].CreatedAt.Equal(result[right].CreatedAt) {
+			return string(result[left].ID) < string(result[right].ID)
+		}
+		return result[left].CreatedAt.Before(result[right].CreatedAt)
+	})
 	return result
 }
 
@@ -1348,7 +1389,7 @@ func (i *Instance) CanSubmitQueue(threadID string) bool {
 		return false
 	}
 	for _, action := range i.actions {
-		if action.ConversationID == "" || action.ConversationID == threadID {
+		if actionBlocksThread(action, threadID) {
 			return false
 		}
 	}
@@ -1365,7 +1406,7 @@ func (i *Instance) CanUpdateSettings(threadID string) bool {
 		return false
 	}
 	for _, action := range i.actions {
-		if action.ConversationID == "" || action.ConversationID == threadID {
+		if actionBlocksThread(action, threadID) {
 			return false
 		}
 	}
@@ -1376,7 +1417,7 @@ func (i *Instance) updateActivityStateLocked() {
 	if i.state == "starting" || i.state == "waiting_initialize" || i.state == "stopped" || i.state == "error" || i.state == "upgrade_pending" {
 		return
 	}
-	if len(i.actions) > 0 {
+	if i.pendingUserActionCountLocked() > 0 {
 		i.state = "waiting_action"
 	} else if len(i.activeTurns) > 0 {
 		i.state = "active"
@@ -1392,6 +1433,10 @@ func (i *Instance) ResolveAction(id, result json.RawMessage) error {
 	if action == nil || action.Resolved {
 		i.mu.Unlock()
 		return errors.New("action is no longer pending")
+	}
+	if !requiresUserAction(action) {
+		i.mu.Unlock()
+		return errors.New("request cannot be resolved as a user action")
 	}
 	action.Resolved = true
 	delete(i.actions, key)

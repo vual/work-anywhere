@@ -325,6 +325,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get confirmationRequired => 'Your confirmation is required';
 
   @override
+  String pendingActionsRemaining(int count) {
+    return '$count more pending';
+  }
+
+  @override
   String get agentContinueRequest =>
       'The agent requested permission to continue';
 

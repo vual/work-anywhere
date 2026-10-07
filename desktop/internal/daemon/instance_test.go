@@ -78,11 +78,15 @@ func TestCollaborationSettingsPersistWithoutDeveloperInstructions(t *testing.T) 
 		t.Fatalf("developer instructions leaked into the persisted projection: %s", encoded)
 	}
 
-	instance.observeThreadSettingsNotification(json.RawMessage(`{"threadId":"thread-1","threadSettings":{"permissions":":read-only","approvalPolicy":"on-request","approvalsReviewer":"user","collaborationMode":{"mode":"default","settings":{"model":"gpt-next","reasoning_effort":"medium","developer_instructions":"new secret"}}}}`))
+	instance.observeThreadSettingsNotification(json.RawMessage(`{"threadId":"thread-1","threadSettings":{"permissions":":read-only","approvalPolicy":"on-request","approvalsReviewer":"user","collaborationMode":{"mode":"default","settings":{"model":"gpt-stale","reasoning_effort":"low","developer_instructions":"stale secret"}}}}`))
+	instance.observeOutgoingThreadSettings("thread/settings/update", json.RawMessage(`{"threadId":"thread-1","permissions":":read-only","approvalPolicy":"on-request","approvalsReviewer":"user","collaborationMode":{"mode":"default","settings":{"model":"gpt-next","reasoning_effort":"medium","developer_instructions":"new secret"}}}`))
 	instance.manager.configWrites.Wait()
+	instance.mu.Lock()
+	instance.threadSettings = make(map[string]threadCollaborationSettings)
+	instance.mu.Unlock()
 	updated, ok := instance.collaborationSettings("thread-1")
 	if !ok || updated.Mode != "default" || updated.Model != "gpt-next" || updated.PermissionModeID != "readOnly" || updated.TurnID != "turn-1" || !updated.Succeeded {
-		t.Fatalf("settings notification did not preserve authoritative turn status: %#v", updated)
+		t.Fatalf("latest settings update did not win persistence ordering: %#v", updated)
 	}
 }
 
@@ -211,6 +215,70 @@ func TestCanStartTurnOnlyBlocksTheAffectedConversation(t *testing.T) {
 	}
 	if !instance.CanStartTurn("thread-idle") {
 		t.Fatal("unrelated active conversation blocked an idle conversation")
+	}
+}
+
+func TestAttestationRequestIsTransparentAndDoesNotBlockControl(t *testing.T) {
+	instance, writer, cleanup := testInstance(t)
+	defer cleanup()
+	instance.state = "ready"
+	serverSide, readerSide := net.Pipe()
+	defer serverSide.Close()
+	defer readerSide.Close()
+	desktop := &clientConn{id: "desktop-attestation", conn: serverSide}
+	instance.AddDesktop(desktop)
+
+	request := []byte(`{"jsonrpc":"2.0","id":73,"method":"attestation/generate","params":{}}` + "\n")
+	done := make(chan struct{})
+	go func() { instance.handleServerFrame(0, request); close(done) }()
+	frame, err := ipc.ReadFrame(readerSide)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	if !bytes.Contains(frame.Payload, []byte(`"attestation/generate"`)) {
+		t.Fatalf("attestation request was not forwarded to Desktop: %s", frame.Payload)
+	}
+	if actions := instance.Actions(); len(actions) != 0 {
+		t.Fatalf("attestation escaped into user actions: %#v", actions)
+	}
+	if snapshot := instance.Snapshot(); snapshot.PendingActions != 0 || snapshot.State != "ready" {
+		t.Fatalf("attestation changed user-facing activity: %+v", snapshot)
+	}
+	if !instance.CanStartTurn("thread-new") || !instance.CanSubmitQueue("thread-new") || !instance.CanUpdateSettings("thread-new") {
+		t.Fatal("attestation blocked an unrelated conversation write")
+	}
+	if err := instance.ResolveAction(json.RawMessage(`73`), json.RawMessage(`{"decision":"accept"}`)); err == nil {
+		t.Fatal("control resolved attestation as a user action")
+	}
+
+	writer.Reset()
+	if err := instance.HandleDesktop(desktop, []byte(`{"jsonrpc":"2.0","id":73,"result":{"token":"opaque-token"}}`+"\n")); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(writer.Bytes(), []byte(`"token":"opaque-token"`)) {
+		t.Fatalf("Desktop attestation response was not returned to App Server: %s", writer.String())
+	}
+	instance.mu.Lock()
+	pending := len(instance.actions)
+	instance.mu.Unlock()
+	if pending != 0 {
+		t.Fatalf("resolved attestation remained pending: %d", pending)
+	}
+}
+
+func TestActionsAreOldestFirstWithStableIDTieBreak(t *testing.T) {
+	instance, _, cleanup := testInstance(t)
+	defer cleanup()
+	created := time.Unix(100, 0)
+	instance.actions["later"] = &pendingAction{ID: json.RawMessage(`"later"`), Method: "requestApproval", CreatedAt: created.Add(time.Second)}
+	instance.actions["same-b"] = &pendingAction{ID: json.RawMessage(`"same-b"`), Method: "requestApproval", CreatedAt: created}
+	instance.actions["same-a"] = &pendingAction{ID: json.RawMessage(`"same-a"`), Method: "requestApproval", CreatedAt: created}
+	instance.actions["attestation"] = &pendingAction{ID: json.RawMessage(`"infra"`), Method: "attestation/generate", CreatedAt: created.Add(-time.Second)}
+
+	actions := instance.Actions()
+	if len(actions) != 3 || string(actions[0].ID) != `"same-a"` || string(actions[1].ID) != `"same-b"` || string(actions[2].ID) != `"later"` {
+		t.Fatalf("actions were not stable oldest-first user actions: %#v", actions)
 	}
 }
 

@@ -119,6 +119,8 @@
   "open": "打开",
   "remoteImageBlocked": "远程图片已隐藏",
   "confirmationRequired": "需要你确认",
+  "pendingActionsRemaining": "还有 {count} 个待处理",
+  "@pendingActionsRemaining": {"placeholders": {"count": {"type": "int"}}},
   "agentContinueRequest": "Agent 请求继续执行",
   "deny": "拒绝",
   "allow": "允许",

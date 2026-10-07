@@ -34,13 +34,13 @@ Turn 通知驱动会话状态：`idle`、`running`、`waiting_action`、`complet
 
 ## Pending actions
 
-App Server 发出的 server request 被规范化为 `PendingAction`，保留原 method、params 和 request ID，同时发往 Desktop frontend 和本机控制订阅者。Desktop 原始 response 或 `action.resolve` 的第一个有效结果通过锁内状态比较成为唯一结果：
+App Server 发出的 server request 保留原 method、params 和 request ID，并原样发往 Desktop frontend。需要用户处理的请求同时规范化为 `PendingAction` 并发往本机控制订阅者；`attestation/generate` 是由官方 Desktop 生成 opaque token 的客户端基础设施请求，只保留在内部请求表中等待 Desktop response，不进入用户 action、待办计数、`waiting_action` 或会话写入门禁。所有未完成 server request 仍参与 runtime/initialize 重启排空，避免响应路由在重启中丢失。Desktop 原始 response 或 `action.resolve` 的第一个有效结果通过锁内状态比较成为唯一结果：
 
 - 首个结果写回 App Server，action 标记 resolved，并广播 `action.resolved`。
 - 后续结果得到 `already_resolved`，不会再次写回 App Server。
 - `serverRequest/resolved`、Turn 完成或中断会清除相关未完成 action。
 
-原始 `PendingAction.params` 只用于 daemon 内部、Desktop 透明转发和加密持久化。`mobile-control-v1` 的 `action.list` 使用稳定投影：通用请求标记为 `approval`，`item/tool/requestUserInput` 标记为 `userInput` 并只暴露 questions/options 所需字段，不向 Mobile 透传其他 provider 参数。与 thread 关联的未完成 action 同时投影为 `ConversationSummary.needsAttention=true`。问题回答沿用官方 `answers[questionId].answers` 结构；命令审批继续接受 allow/deny 对应的 decision response。
+原始 `PendingAction.params` 只用于 daemon 内部和 Desktop 透明转发。`mobile-control-v1` 的 `action.list` 只返回需要用户处理的请求，并按 `createdAt`、request ID 稳定排序：通用请求标记为 `approval`，`item/tool/requestUserInput` 标记为 `userInput` 并只暴露 questions/options 所需字段，不向 Mobile 透传其他 provider 参数。与 thread 关联的未完成 action 同时投影为 `ConversationSummary.needsAttention=true`。问题回答沿用官方 `answers[questionId].answers` 结构；命令审批继续接受 allow/deny 对应的 decision response。控制端不能用 `action.resolve` 响应 `attestation/generate`，该响应必须来自实际收到请求的 Desktop frontend。
 
 ## Interfaces
 
@@ -54,7 +54,7 @@ App Server 发出的 server request 被规范化为 `PendingAction`，保留原 
 
 ## Security and failure handling
 
-- 控制客户端只有在实例 ready、会话 idle 且没有阻塞 action 时才能开始新 Turn。
+- 控制客户端只有在实例 ready、会话 idle 且没有阻塞用户 action 时才能开始新 Turn；`attestation/generate` 不阻塞其他会话。
 - Desktop 原始请求保持透明，由官方 App Server 决定并发冲突。
 - frontend 断开时移除其未完成 ID 路由；不会把 response 错送给其他连接。
 - 无法识别的 JSON-RPC envelope 返回/记录协议错误，未知业务 method 不作为协议错误。
@@ -64,7 +64,7 @@ App Server 发出的 server request 被规范化为 `PendingAction`，保留原 
 - request ID 在真实 App Server 连接上全局唯一，返回 frontend 时保持原类型和值。
 - action 最多向 App Server提交一次有效 resolution。
 - sequence 和 revision 对同一实例/会话单调递增。
-- 当前不保证把任意未来官方 server request 自动转换为专用 UI；它仍可作为通用 action 转发。
+- 当前不保证把任意未来官方 server request 自动转换为专用 UI；除明确分类的基础设施请求外，未知请求仍保守地作为通用阻塞 action 转发。
 
 ## Code ownership
 
@@ -77,7 +77,7 @@ App Server 发出的 server request 被规范化为 `PendingAction`，保留原 
 
 - 字符串/数字 ID、乱序 response、Desktop/control 命名空间隔离测试。
 - 首次 initialize、重连虚拟化和并发 waiter 测试。
-- 审批抢答、重复 resolution、Turn 完成/中断清理测试。
+- 审批抢答、重复 resolution、Turn 完成/中断清理、attestation 透明响应与非阻塞分类测试。
 - 未知方法/字段 passthrough 测试。
 
 ## Documentation update triggers
