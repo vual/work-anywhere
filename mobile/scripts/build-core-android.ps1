@@ -22,6 +22,23 @@ Push-Location (Join-Path $mobileRoot 'core')
 try {
     & (Join-Path $toolBin 'gomobile.exe') bind -target=android -androidapi 29 -o (Join-Path $outputDir 'mobilecore.aar') ./mobilecore
     if ($LASTEXITCODE -ne 0) { throw "gomobile bind failed with exit code $LASTEXITCODE" }
+    # Verify the actual binding, since gomobile silently omits unsupported signatures.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $bindingJar = Join-Path $outputDir 'mobilecore-binding-check.jar'
+    $archive = [System.IO.Compression.ZipFile]::OpenRead((Join-Path $outputDir 'mobilecore.aar'))
+    try {
+        $entry = $archive.GetEntry('classes.jar')
+        if (-not $entry) { throw 'mobilecore.aar has no classes.jar' }
+        [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $bindingJar, $true)
+        $javap = if ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME 'bin\javap.exe' } else { 'javap' }
+        $signatures = & $javap -classpath $bindingJar mobilecore.Core
+        if ($LASTEXITCODE -ne 0 -or ($signatures -join "`n") -notmatch 'reorderPairings\(java\.lang\.String\)') {
+            throw 'Generated AAR is missing reorderPairings(String)'
+        }
+    } finally {
+        $archive.Dispose()
+        if (Test-Path -LiteralPath $bindingJar) { Remove-Item -LiteralPath $bindingJar }
+    }
 } finally {
     Pop-Location
 }

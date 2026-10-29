@@ -140,3 +140,9 @@ Repository 中的权威划分：
 ## 文档更新触发
 
 修改 UI 框架、显示模式/刷新率策略、导航 shell、Daemon/Agent selection、Project/Bot capability、分页搜索、Go core/binding、状态分层、protobuf 生成、密码原语/Noise、平台 bridge、密钥存储、正文持久化、socket owner、后台策略、通知处理、日志或支持平台时，必须更新本文档及协议同步、交互、交付计划和相关 Relay/Desktop 设计。
+
+## Catalog 选择与 Android 绑定不变量
+
+活动电脑与 generation 由 Go Core catalog 决定；Flutter 的兼容偏好不覆盖它。catalog 变更与探测串行执行，Android 安全存储失败时恢复旧 catalog；UI 重新读取 Core 结果。当前活动项探测复用原 client，避免 Relay 单连接策略替换会话。无有效活动项时启用电脑会激活该项；全部禁用保持无选择。
+
+本机调用附加 `_wawTarget`，Core 校验目标/代次后剥离，再路由给捕获的 client；工作台、项目分页、会话读写均丢弃旧选择结果。具体契约见 [协议同步](../protocol-and-sync/design.md#活动电脑与本机调用绑定)。排序跨 Go/Kotlin 边界使用 JSON 字符串数组，Pigeon 保持 List<String>；构建必须检查生成 AAR 的实际方法签名。

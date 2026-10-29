@@ -11,6 +11,40 @@ void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
   test(
+    'Core selection overrides stale UI preference and binds requests',
+    () async {
+      SharedPreferences.setMockInitialValues({'lastDaemonId': 'daemon-b'});
+      final gateway = _TargetGateway();
+      final container = ProviderContainer(
+        overrides: [coreGatewayProvider.overrideWithValue(gateway)],
+      );
+      addTearDown(container.dispose);
+      final initial = await container.read(workspaceProvider.future);
+      expect(initial.selectedDaemonId, 'daemon-a');
+      expect(gateway.targets.single, {'daemonId': 'daemon-a', 'generation': 1});
+    },
+  );
+
+  test('late workspace load cannot overwrite a newer Core selection', () async {
+    final gateway = _TargetGateway();
+    final container = ProviderContainer(
+      overrides: [coreGatewayProvider.overrideWithValue(gateway)],
+    );
+    addTearDown(container.dispose);
+    await container.read(workspaceProvider.future);
+    final controller = container.read(workspaceProvider.notifier);
+    final slow = controller.selectDaemon('daemon-b');
+    await gateway.slowStarted.future;
+    await controller.selectDaemon('daemon-a');
+    gateway.slow.complete({'result': <dynamic>[]});
+    await slow;
+    final result = container.read(workspaceProvider).requireValue;
+    expect(result.selectedDaemonId, 'daemon-a');
+    expect(result.eventGeneration, 3);
+    expect(gateway.targets.last, {'daemonId': 'daemon-a', 'generation': 3});
+  });
+
+  test(
     'pair failure keeps the unpaired state instead of failing the gate',
     () async {
       final gateway = _FakeCoreGateway(pairFails: true);
@@ -605,5 +639,48 @@ class _FakeCoreGateway extends CoreGateway {
       };
     }
     return {'result': <String, dynamic>{}};
+  }
+}
+
+class _TargetGateway extends CoreGateway {
+  String active = 'daemon-a';
+  int generation = 1;
+  final targets = <Map<String, dynamic>>[];
+  final slow = Completer<Map<String, dynamic>>();
+  final slowStarted = Completer<void>();
+  @override
+  Stream<Map<String, dynamic>> get events => const Stream.empty();
+  @override
+  Future<Map<String, dynamic>> status() async => {
+    'result': {
+      'activeDaemonId': active,
+      'generation': generation,
+      'pairings': [
+        for (final id in ['daemon-a', 'daemon-b'])
+          {'daemonId': id, 'enabled': true, 'order': id == 'daemon-a' ? 0 : 1},
+      ],
+    },
+  };
+  @override
+  Future<Map<String, dynamic>> probePairing(String daemonId) => status();
+  @override
+  Future<Map<String, dynamic>> selectPairing(String daemonId) async {
+    active = daemonId;
+    generation++;
+    return status();
+  }
+
+  @override
+  Future<Map<String, dynamic>> call(
+    String method,
+    Map<String, dynamic> params, {
+    int timeoutMilliseconds = 30000,
+  }) async {
+    targets.add(params['_wawTarget'] as Map<String, dynamic>);
+    if (active == 'daemon-b') {
+      slowStarted.complete();
+      return slow.future;
+    }
+    return {'result': <dynamic>[]};
   }
 }

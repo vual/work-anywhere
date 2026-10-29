@@ -55,10 +55,11 @@ pairing session 最多允许五次尝试且只能成功一次。daemon 离线、
 
 ## Authorization scopes
 
-V1 scope：
+V1 scope 的权威集合定义在本节，Desktop 默认集合及 Relay 白名单由跨模块契约测试校验：
 
 - `status.read`
 - `conversation.read`
+- `conversation.create`
 - `turn.start`
 - `turn.interrupt`
 - `action.read`
@@ -110,3 +111,7 @@ Relay 保存 device public keys/status、pairing edges/scopes、pairing session 
 ## Documentation update triggers
 
 修改设备 key、enrollment、challenge、QR 字段、pairing transcript、scope、撤销或恢复策略时，必须更新本文档、E2EE、wire、存储、Desktop connector 和未来 Mobile 文档。
+
+## 默认授权与兼容升级
+
+Desktop CLI 和管理页批准时均可省略 scopes，由 Desktop 使用上述九项默认授权。显式 API scope 子集仍需通过 Relay 和 Desktop 校验；非法及重复项被拒绝。旧八项 pairing 的 `turn.start` 继续兼容授权创建会话，不要求重新配对。升级顺序为 Relay → Desktop → Mobile；不自动重签或降级已提交的授权决定。跨模块测试读取 Desktop 实际默认声明并以该集合执行 Relay 配对握手，另测旧八项、显式子集和非法 scope。

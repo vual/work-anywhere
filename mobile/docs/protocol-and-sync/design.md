@@ -115,7 +115,7 @@ App 前台对未选中 Daemon 以有界短连接依次执行 status probe，更�
 
 `conversation.read` 组合 metadata-only `thread/read`、`thread/items/list(sortDirection=desc)` 和 `thread/queue/list`，默认 timeline 20、最大 50。snapshot 包含 metadata、revision、sequence、可选 `syncEpoch`、timeline、权威 queue 和 `settings={mode,modelId,reasoningEffort,permissionModeId}`。queue item 固定为 `id`、`clientMessageId`、`text` 与 `attachmentCount`，不得把 Desktop 图片/mention 路径带到 Mobile。`TimelineItem` 固定为 id、可选 turnId、kind、status 与 blocks，不透传 provider JSON。Plan item 使用单个 `kind=plan` block，daemon 保留原始 Markdown；真正超过 5 个源文件行时普通 Timeline response 只返回前 5 行，并为完整正文返回 `contentRef` 与 `totalBytes`，不生成 title/summary。Plan 和其他大 block 通过 `conversation.content.read` 按 128 KiB 分块读取；引用过期后，Flutter 使用私有的 turnId/itemId/blockIndex 调用 `conversation.content.resolve`，daemon 在该 turn 内分页查找 item 并重新签发引用，找不到时返回 `content_not_found`，不要求刷新或丢弃已加载旧页。
 
-`catalog.models` 返回模型 ID/名称/说明、default/selectable、默认思考等级与该模型支持的等级；`catalog.permissionProfiles(modelId)` 固定返回 `default`、`autoReview`、`readOnly`、`fullAccess` 及 Desktop 根据 profile catalog、企业配置和该模型 auto-review 要求计算的可用性。更换模型时 Mobile 重新读取权限 catalog，仅保留仍可用的权限，并仅保留新模型仍支持的思考等级，否则分别回落到可用权限和模型默认等级。`conversation.settings.update` 携带最后确认的 revision 和完整 settings；空闲或运行中的 thread 均可在无阻塞 action 时更新后续 Turn 设置，当前正在执行的 Turn 不改变；明确失败后刷新 snapshot，结果不明不自动重试。尚未创建的草稿只在进程内保存选择，首次 `turn.start` 才提交完整 settings。计划的 revise/implement 继承 permission/model/effort，implement 将 mode 切回 `default`。
+`catalog.models` 返回模型 ID/名称/说明、default/selectable、默认思考等级与该模型支持的等级；`catalog.permissionProfiles(modelId)` 固定返回 `default`、`autoReview`、`readOnly`、`fullAccess` 及 Desktop 根据 profile catalog、企业配置和该模型 auto-review 要求计算的可用性。更换模型时 Mobile 重新读取权限 catalog，保留当前自定义权限或仍可用的内置权限，并仅保留新模型仍支持的思考等级，否则分别回落到可用权限和模型默认等级。`conversation.settings.update` 携带最后确认的 revision 和完整 settings；Desktop 仅发送 `sandboxPolicy` 和审批字段，不同时发送互斥的 `permissions`。投影优先采用 `activePermissionProfile`，缺失时依据 sandbox、审批策略与 reviewer 推导，无法准确映射则显示 `custom`（自定义权限）。自定义权限仅代表当前配置，不进入新会话预设；模型变化保留它并由 App Server 校验。完整策略在 Desktop 加密保存，模型/思考/模式变化不得重置网络或可写目录。空闲或运行中的 thread 均可在无阻塞 action 时更新后续 Turn 设置，当前正在执行的 Turn 不改变；明确失败后刷新 snapshot，结果不明不自动重试。尚未创建的草稿只在进程内保存选择，首次 `turn.start` 才提交完整 settings。计划的 revise/implement 继承 model/effort，省略权限覆盖以继承实时线程权限，implement 将 mode 切回 `default`。
 
 目标 thread 运行时，Composer 继续接受文字和图片，发送调用 `conversation.queue.add` 并携带稳定 `clientMessageId`；成功后从下一次 snapshot 显示权威 queue。编辑操作先调用 `conversation.queue.delete`，明确成功后才把文字和当前进程仍持有的图片草稿放回 Composer；应用重启后无法恢复原图片内容的排队消息不允许编辑，但仍可立即引导或取消。立即引导调用 `conversation.queue.start`，取消调用 `conversation.queue.delete`；`conversation.queue.update` 保留为稳定协议能力，用于原位替换文字且保留非文字输入。所有队列写入结果未知时只刷新 snapshot 并按 ID/clientMessageId 对账，不自动重试。
 
@@ -149,7 +149,7 @@ Mobile 产品页面只消费稳定 timeline、catalog/settings 和 action DTO；
 4. response 成功后气泡显示等待电脑确认；权威 timeline 的 user message 通过 `clientMessageId` 替换本地气泡。兼容未返回该字段的旧 Desktop 时，只允许用成功响应中的 Turn ID 和该 Turn 下唯一 user message 对账，不能按正文或 running 状态猜测。
 5. 全部图片 commit 后，`turn.start.attachmentIds` 按选择顺序一次提交 0–10 个 ID。任一图片上传失败时不调用 `turn.start`，abort 当前未完成上传并保留失败气泡；若 `turn.start` response 前断线，禁止自动重发。重连同步后按 `clientMessageId`/snapshot 判定；无法判定则显示“提交结果未知”，只允许同步确认。会话创建结果未知时禁止从该草稿继续创建或发送，避免重复 thread。
 
-V1 只支持图片附件，一条消息最多 10 张；单文件和图片总大小均不得超过 Desktop 48 MiB 上限，并预留 base64/1 MiB route frame 的分块余量。Desktop 将附件写入项目目录临时 spool，索引只在内存中；明确受理后删除，失败或结果未知最多保留 24 小时。图片转 base64 全局单并发。`turn.start` 只提交 attachment ID，不向 Mobile 或 Relay 暴露本地绝对路径。
+V1 只支持图片附件，一条消息最多 10 张；单文件和图片总大小均不得超过 Desktop 48 MiB 上限，route frame 按 1 MiB 上限分块。Desktop 另检查 base64、文字、JSON 与换行组成的完整 App Server 请求不超过 64 MiB，超限返回 `too_large` 并保留草稿。Desktop 将附件写入项目目录临时 spool，索引只在内存中；明确受理后删除，失败或结果未知最多保留 24 小时。图片转 base64 全局单并发。`turn.start` 只提交 attachment ID，不向 Mobile 或 Relay 暴露本地绝对路径。
 
 ### Action resolve
 
@@ -226,3 +226,13 @@ Mobile 获取新 APNs/FCM token 后递增本地 generation，并由 host 直接�
 ## 文档更新触发
 
 修改 frame/content type、canonical binding、pairing、scope、control method/DTO、cursor/revision、retry/idempotency、attachment、push metadata 或 revoke 行为时，必须更新本文档、Mobile 架构/交互、Relay wire/E2EE/push 和 Desktop control/connector 设计。
+
+## 活动电脑与本机调用绑定
+
+Go Core catalog 的 `activeDaemonId` 和 generation 为选择权威；Flutter 启动不使用 `lastDaemonId` 覆盖 catalog。旧 catalog 的活动项无效时 Core 按排序选择首个已启用电脑并由 host 持久化；全部禁用保持无活动项。重新启用且无有效活动项时选择该电脑并递增 generation，有有效项时不抢占。
+
+Flutter 的工作台、项目分页和会话调用通过本机 `_wawTarget={daemonId,generation}` 绑定目标。Core 在捕获活动 client 的同一锁下校验，过期返回 `stale_selection`，发送前剥离此字段，不改变 Relay/Desktop 控制协议。迟到结果按选择代次丢弃；切换/启停/删除/保存失败后重新读取 Core catalog，不以旧 UI 快照猜测回滚目标。并发 catalog 操作完成后再次核对 Core 状态。
+
+Core 串行协调 catalog 变更和探测；当前活动设备复用自己的 client 探测，禁止第二次登录挤掉 Relay 连接。Android host 将导出旧 catalog、执行变更、加密保存及失败恢复作为同一串行事务。
+
+排序的 Pigeon/Flutter 接口仍接收 `List<String>`，Kotlin 编码为 JSON 数组字符串调用 Go `ReorderPairings(idsJSON string) string`。参数必须为全部 catalog ID 的无重复排列，非法输入不修改顺序。生成脚本使用 javap 验证真实 AAR 的 `reorderPairings(String)`；AAR 为忽略的构建产物，Pigeon 生成文件无协议变更。

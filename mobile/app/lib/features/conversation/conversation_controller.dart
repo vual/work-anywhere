@@ -394,11 +394,12 @@ class ConversationController extends ChangeNotifier {
     if (_syncing || _disposed || _state.loading) return;
     _syncing = true;
     try {
-      final envelope = await gateway.call('conversation.subscribe', {
-        'agentId': agentId,
-        'threadId': threadId,
-        'cursor': _state.sequence,
-      });
+      final envelope = await gateway.callFor(
+        daemonId,
+        selectionGeneration,
+        'conversation.subscribe',
+        {'agentId': agentId, 'threadId': threadId, 'cursor': _state.sequence},
+      );
       final result = envelope['result'] as Map<String, dynamic>? ?? const {};
       final syncEpoch = result['syncEpoch'] as String?;
       if (syncEpoch != null &&
@@ -479,11 +480,12 @@ class ConversationController extends ChangeNotifier {
 
   Future<bool> _readConversation() async {
     try {
-      final envelope = await gateway.call('conversation.read', {
-        'agentId': agentId,
-        'threadId': threadId,
-        'limit': 20,
-      });
+      final envelope = await gateway.callFor(
+        daemonId,
+        selectionGeneration,
+        'conversation.read',
+        {'agentId': agentId, 'threadId': threadId, 'limit': 20},
+      );
       if (!isCurrent) return false;
       final result = envelope['result'] as Map<String, dynamic>? ?? const {};
       final timeline = result['timeline'] as Map<String, dynamic>? ?? const {};
@@ -584,7 +586,12 @@ class ConversationController extends ChangeNotifier {
 
   Future<void> refreshActions() async {
     try {
-      final envelope = await gateway.call('action.list', {'agentId': agentId});
+      final envelope = await gateway.callFor(
+        daemonId,
+        selectionGeneration,
+        'action.list',
+        {'agentId': agentId},
+      );
       if (!isCurrent) return;
       final actions = _maps(envelope['result'])
           .where(
@@ -658,12 +665,17 @@ class ConversationController extends ChangeNotifier {
     );
     _notify();
     try {
-      final envelope = await gateway.call('conversation.timeline.list', {
-        'agentId': agentId,
-        'threadId': threadId,
-        'cursor': cursor,
-        'limit': 20,
-      });
+      final envelope = await gateway.callFor(
+        daemonId,
+        selectionGeneration,
+        'conversation.timeline.list',
+        {
+          'agentId': agentId,
+          'threadId': threadId,
+          'cursor': cursor,
+          'limit': 20,
+        },
+      );
       if (!isCurrent) return;
       final page = envelope['result'] as Map<String, dynamic>? ?? const {};
       final older = _maps(page['items']).reversed;
@@ -730,13 +742,18 @@ class ConversationController extends ChangeNotifier {
           blockIndex == null) {
         rethrow;
       }
-      final envelope = await gateway.call('conversation.content.resolve', {
-        'agentId': agentId,
-        'threadId': threadId,
-        'turnId': turnId,
-        'itemId': itemId,
-        'blockIndex': blockIndex,
-      });
+      final envelope = await gateway.callFor(
+        daemonId,
+        selectionGeneration,
+        'conversation.content.resolve',
+        {
+          'agentId': agentId,
+          'threadId': threadId,
+          'turnId': turnId,
+          'itemId': itemId,
+          'blockIndex': blockIndex,
+        },
+      );
       final result = envelope['result'] as Map<String, dynamic>? ?? const {};
       final refreshedReference = result['contentRef'] as String?;
       if (refreshedReference == null || refreshedReference.isEmpty) {
@@ -759,12 +776,17 @@ class ConversationController extends ChangeNotifier {
     var offset = 0;
     var hasMore = true;
     while (hasMore) {
-      final envelope = await gateway.call('conversation.content.read', {
-        'agentId': agentId,
-        'threadId': threadId,
-        'contentRef': reference,
-        'offset': offset,
-      });
+      final envelope = await gateway.callFor(
+        daemonId,
+        selectionGeneration,
+        'conversation.content.read',
+        {
+          'agentId': agentId,
+          'threadId': threadId,
+          'contentRef': reference,
+          'offset': offset,
+        },
+      );
       final result = envelope['result'] as Map<String, dynamic>? ?? const {};
       buffer.write(result['text'] as String? ?? '');
       final next = result['nextOffset'] as int? ?? offset;

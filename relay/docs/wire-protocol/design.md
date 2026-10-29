@@ -74,3 +74,7 @@ field number 只能追加，不得重解释；删除字段必须 reserved。Rela
 ## 文档更新触发
 
 修改 endpoint、frame/field、版本协商、content type、allowlist、限制、ACK/error 语义或生成策略时，必须更新本文档及所有消费模块文档和 vectors。
+
+## Pairing scope ownership
+
+scope 名称与兼容规则以 [配对授权规范](../identity-and-pairing/design.md#authorization-scopes) 为唯一权威。`conversation.create` 属于允许集合；这不改变 protobuf 或数据库 schema。变更 scope 必须通过 Desktop 默认集合与 Relay 接受集合的跨模块契约测试。

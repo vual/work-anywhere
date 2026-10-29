@@ -94,3 +94,7 @@ Relay schema 主归属为 [Relay wire protocol](../../../relay/docs/wire-protoco
 ## 文档更新触发
 
 修改 remote 配置/方法、device key、Relay protocol、pairing、scope、事件过滤、reconnect、push hint、存储或管理入口时，必须更新本文档以及 Desktop local-control/security 和 Relay 对应设计。
+
+## 默认 scope 契约
+
+默认授权使用 [Relay 配对规范](../../../relay/docs/identity-and-pairing/design.md#authorization-scopes) 的九项集合。CLI 与管理页均省略 scopes 以复用同一默认值；显式 API 子集仍校验。旧 pairing 的 `turn.start` 保持创建会话的兼容授权。应先升级 Relay，再升级 Desktop/Mobile；已提交授权不自动重签或降级。Relay 契约测试读取 Desktop 的实际默认值并完成签名配对握手。

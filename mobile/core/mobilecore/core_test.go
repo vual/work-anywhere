@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
@@ -186,4 +187,83 @@ func testCatalogCredential(relayURL string) endpoint.CredentialSet {
 func mustResult(envelope resultEnvelope) []byte {
 	raw, _ := json.Marshal(envelope.Result)
 	return raw
+}
+
+func TestCatalogEnableReorderAndTargetGeneration(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(429) }))
+	defer server.Close()
+	a, b := testCatalogCredential(server.URL), testCatalogCredential(server.URL)
+	ar, _ := json.Marshal(a)
+	br, _ := json.Marshal(b)
+	stored := catalog{Version: 2, ActiveDaemonID: "missing", Pairings: []catalogPairing{
+		{DaemonID: a.DaemonDeviceID, RelayURL: server.URL, Enabled: false, Order: 0, Credential: ar},
+		{DaemonID: b.DaemonDeviceID, RelayURL: server.URL, Enabled: false, Order: 1, Credential: br},
+	}}
+	raw, _ := json.Marshal(stored)
+	c := NewCore()
+	defer c.Close()
+	c.Restore(string(raw))
+	before := c.statusValue()
+	if before.ActiveDaemonID != "" {
+		t.Fatal("disabled catalog selected")
+	}
+	c.SetPairingEnabled(b.DaemonDeviceID, true)
+	after := c.statusValue()
+	if after.ActiveDaemonID != b.DaemonDeviceID || after.Generation <= before.Generation {
+		t.Fatal("enable did not select/increment")
+	}
+	c.SetPairingEnabled(a.DaemonDeviceID, true)
+	if c.statusValue().ActiveDaemonID != b.DaemonDeviceID {
+		t.Fatal("enable stole selection")
+	}
+	target, _ := json.Marshal(map[string]any{"_wawTarget": map[string]any{"daemonId": b.DaemonDeviceID, "generation": before.Generation}})
+	var result resultEnvelope
+	json.Unmarshal([]byte(c.Call("turn.start", string(target), 10)), &result)
+	if result.Error == nil || result.Error.Code != "stale_selection" {
+		t.Fatalf("old target dispatched: %+v", result)
+	}
+	snapshot := c.ExportCatalog()
+	for _, order := range []string{`[]`, `["unknown"]`, `null`, `{}`, `["` + a.DaemonDeviceID + `","` + a.DaemonDeviceID + `"]`} {
+		json.Unmarshal([]byte(c.ReorderPairings(order)), &result)
+		if result.OK || c.ExportCatalog() != snapshot {
+			t.Fatalf("invalid order mutated catalog: %s", order)
+		}
+	}
+	order, _ := json.Marshal([]string{b.DaemonDeviceID, a.DaemonDeviceID})
+	c.ReorderPairings(string(order))
+	restored := NewCore()
+	defer restored.Close()
+	restored.Restore(c.ExportCatalog())
+	if restored.statusValue().Pairings[0].DaemonID != b.DaemonDeviceID || restored.statusValue().ActiveDaemonID != b.DaemonDeviceID {
+		t.Fatal("sort/selection did not survive restore")
+	}
+	stored.ActiveDaemonID = "missing"
+	stored.Pairings[0].Enabled = true
+	stored.Pairings[1].Enabled = true
+	stored.Pairings[0].Order = 1
+	stored.Pairings[1].Order = 0
+	raw, _ = json.Marshal(stored)
+	restored.Restore(string(raw))
+	if restored.statusValue().ActiveDaemonID != b.DaemonDeviceID {
+		t.Fatal("legacy fallback ignored sort order")
+	}
+}
+
+func TestActiveProbeReusesClientReconnectGate(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { attempts.Add(1); w.WriteHeader(429) }))
+	defer server.Close()
+	credential := testCatalogCredential(server.URL)
+	raw, _ := json.Marshal(credential)
+	c := NewCore()
+	defer c.Close()
+	c.Restore(string(raw))
+	before := attempts.Load()
+	if before == 0 {
+		t.Fatal("initial connection not attempted")
+	}
+	c.ProbePairing(credential.DaemonDeviceID)
+	if attempts.Load() != before {
+		t.Fatal("active probe created another client/login instead of sharing reconnect cooldown")
+	}
 }

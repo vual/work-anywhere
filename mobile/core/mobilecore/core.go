@@ -23,6 +23,7 @@ const probeTimeout = 15 * time.Second
 type EventSink interface{ OnEvent(eventJSON string) }
 
 type Core struct {
+	operations sync.Mutex
 	mu         sync.Mutex
 	sink       EventSink
 	records    map[string]*pairingRuntime
@@ -115,6 +116,8 @@ func (c *Core) bindEventSink(daemonID string, client *endpoint.Client, generatio
 }
 
 func (c *Core) Pair(uri string) string {
+	c.operations.Lock()
+	defer c.operations.Unlock()
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -150,6 +153,8 @@ func (c *Core) Pair(uri string) string {
 
 // Restore accepts the versioned catalog and the legacy single credential JSON.
 func (c *Core) Restore(raw string) string {
+	c.operations.Lock()
+	defer c.operations.Unlock()
 	rawBytes := []byte(raw)
 	var envelope struct {
 		Pairings []json.RawMessage `json:"pairings"`
@@ -222,6 +227,8 @@ func (c *Core) ExportCatalog() string {
 }
 
 func (c *Core) SelectPairing(daemonID string) string {
+	c.operations.Lock()
+	defer c.operations.Unlock()
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -249,7 +256,13 @@ func (c *Core) SelectPairing(daemonID string) string {
 }
 
 func (c *Core) SetPairingEnabled(daemonID string, enabled bool) string {
+	c.operations.Lock()
+	defer c.operations.Unlock()
 	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return failure("closed", "mobile core is closed")
+	}
 	runtime := c.records[daemonID]
 	if runtime == nil {
 		c.mu.Unlock()
@@ -265,6 +278,12 @@ func (c *Core) SetPairingEnabled(daemonID string, enabled bool) string {
 		c.activeID = c.firstEnabledLocked()
 		c.generation++
 	}
+	selected := c.records[c.activeID]
+	activated := enabled && (selected == nil || !selected.enabled)
+	if activated {
+		c.activeID = daemonID
+		c.generation++
+	}
 	nextID := c.activeID
 	var oldClient *endpoint.Client
 	if !enabled || (wasActive && nextID != daemonID) {
@@ -274,7 +293,7 @@ func (c *Core) SetPairingEnabled(daemonID string, enabled bool) string {
 	if oldClient != nil {
 		oldClient.Disconnect()
 	}
-	if nextID != "" && (wasActive || (!enabled && nextID != daemonID)) {
+	if nextID != "" && (wasActive || activated) {
 		_ = c.connectActive(context.Background())
 	}
 	return success(c.statusValue())
@@ -283,6 +302,8 @@ func (c *Core) SetPairingEnabled(daemonID string, enabled bool) string {
 // RemovePairing forgets one local pairing and closes its transport. This does
 // not revoke the phone from the Desktop authorization list.
 func (c *Core) RemovePairing(daemonID string) string {
+	c.operations.Lock()
+	defer c.operations.Unlock()
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -310,6 +331,8 @@ func (c *Core) RemovePairing(daemonID string) string {
 }
 
 func (c *Core) UpdatePairing(daemonID, displayName, relayURL string) string {
+	c.operations.Lock()
+	defer c.operations.Unlock()
 	displayName = strings.TrimSpace(displayName)
 	if displayName == "" || len([]rune(displayName)) > 80 {
 		return failure("invalid_display_name", "computer name must contain 1 to 80 characters")
@@ -342,28 +365,37 @@ func (c *Core) UpdatePairing(daemonID, displayName, relayURL string) string {
 	return success(c.statusValue())
 }
 
-func (c *Core) ReorderPairings(ids []string) string {
+func (c *Core) ReorderPairings(idsJSON string) string {
+	c.operations.Lock()
+	defer c.operations.Unlock()
+	var ids []string
+	if json.Unmarshal([]byte(idsJSON), &ids) != nil || ids == nil {
+		return failure("invalid_order", "order must be a JSON array of computer IDs")
+	}
 	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return failure("closed", "mobile core is closed")
+	}
 	seen := make(map[string]bool, len(ids))
-	order := 0
+	if len(ids) != len(c.records) {
+		return failure("invalid_order", "order must contain every computer exactly once")
+	}
 	for _, id := range ids {
-		if runtime := c.records[id]; runtime != nil && !seen[id] {
-			runtime.order = order
-			seen[id] = true
-			order++
+		if c.records[id] == nil || seen[id] {
+			return failure("invalid_order", "order must contain every computer exactly once")
 		}
+		seen[id] = true
 	}
-	for id, runtime := range c.records {
-		if !seen[id] {
-			runtime.order = order
-			order++
-		}
+	for order, id := range ids {
+		c.records[id].order = order
 	}
-	c.mu.Unlock()
-	return success(c.statusValue())
+	return success(c.statusLocked())
 }
 
 func (c *Core) ProbePairing(daemonID string) string {
+	c.operations.Lock()
+	defer c.operations.Unlock()
 	_ = c.probe(daemonID)
 	return success(c.statusValue())
 }
@@ -373,7 +405,26 @@ func (c *Core) Call(method, paramsJSON string, timeoutMilliseconds int64) string
 	if !json.Valid(params) {
 		return failure("invalid_params", "paramsJSON must be valid JSON")
 	}
+	var object map[string]json.RawMessage
+	if json.Unmarshal(params, &object) != nil || object == nil {
+		return failure("invalid_params", "params must be an object")
+	}
+	var target *struct {
+		DaemonID   string `json:"daemonId"`
+		Generation uint64 `json:"generation"`
+	}
+	if raw, present := object["_wawTarget"]; present {
+		if json.Unmarshal(raw, &target) != nil || target == nil || target.DaemonID == "" {
+			return failure("invalid_params", "invalid request target")
+		}
+		delete(object, "_wawTarget")
+		params, _ = json.Marshal(object)
+	}
 	c.mu.Lock()
+	if target != nil && (target.DaemonID != c.activeID || target.Generation != c.generation) {
+		c.mu.Unlock()
+		return failure("stale_selection", "the selected computer has changed")
+	}
 	if c.closed {
 		c.mu.Unlock()
 		return failure("closed", "mobile core is closed")
@@ -383,7 +434,7 @@ func (c *Core) Call(method, paramsJSON string, timeoutMilliseconds int64) string
 		c.mu.Unlock()
 		return failure("no_active_pairing", "no enabled computer is selected")
 	}
-	activeID, client := c.activeID, runtime.client
+	activeID, client, generation := c.activeID, runtime.client, c.generation
 	c.mu.Unlock()
 	if timeoutMilliseconds <= 0 {
 		timeoutMilliseconds = 30000
@@ -392,7 +443,11 @@ func (c *Core) Call(method, paramsJSON string, timeoutMilliseconds int64) string
 	defer cancel()
 	response, err := client.Call(ctx, method, params)
 	if err != nil {
-		c.markOffline(activeID, err.Error())
+		c.mu.Lock()
+		if c.activeID == activeID && c.generation == generation && c.records[activeID] == runtime {
+			runtime.phase, runtime.lastError, runtime.checkedAt = "offline", err.Error(), time.Now().UnixMilli()
+		}
+		c.mu.Unlock()
 		return failureFromError(err, "call_failed")
 	}
 	return string(response)
@@ -409,6 +464,8 @@ func (c *Core) statusValue() statusPayload {
 }
 
 func (c *Core) Close() {
+	c.operations.Lock()
+	defer c.operations.Unlock()
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -509,6 +566,11 @@ func (c *Core) probe(daemonID string) error {
 		runtime.phase = "disabled"
 		c.mu.Unlock()
 		return nil
+	}
+	if c.activeID == daemonID {
+		// A second login replaces the active transport at Relay.
+		c.mu.Unlock()
+		return c.connectActive(context.Background())
 	}
 	raw, err := runtime.client.ExportCredentials()
 	c.mu.Unlock()

@@ -11,6 +11,7 @@ import 'package:work_anywhere/app/theme.dart';
 import 'package:work_anywhere/core/core_gateway.dart';
 import 'package:work_anywhere/core/models.dart';
 import 'package:work_anywhere/features/conversation/conversation_screen.dart';
+import 'package:work_anywhere/features/conversation/local_submissions.dart';
 import 'package:work_anywhere/features/workspace/workspace_controller.dart';
 import 'package:work_anywhere/l10n/generated/app_localizations.dart';
 
@@ -206,88 +207,114 @@ final _settingsCatalogs = <String, Map<String, dynamic>>{
 };
 
 void main() {
-  testWidgets('first send waits for snapshot and uses its revision', (
-    tester,
-  ) async {
-    SharedPreferences.setMockInitialValues({});
-    final snapshot = Completer<Map<String, dynamic>>();
-    Map<String, dynamic>? sent;
-    var creates = 0;
-    final events = StreamController<Map<String, dynamic>>.broadcast();
-    addTearDown(events.close);
-    final gateway = _FakeGateway((method, params) async {
-      if (method == 'action.list') return {'result': <dynamic>[]};
-      if (method == 'conversation.create') {
-        creates++;
-        return {
-          'result': {'id': 'fresh'},
-        };
-      }
-      if (method == 'conversation.read') return snapshot.future;
-      if (method == 'turn.start') {
-        sent = Map.of(params);
-        throw CoreFault('revision_conflict', 'changed');
-      }
-      return {'result': {}};
-    }, events: events.stream);
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          coreGatewayProvider.overrideWithValue(gateway),
-          workspaceProvider.overrideWith(_FakeWorkspaceController.new),
-        ],
-        child: const MaterialApp(
-          locale: Locale('zh', 'CN'),
-          localizationsDelegates: AppLocalizations.localizationsDelegates,
-          supportedLocales: AppLocalizations.supportedLocales,
-          home: ConversationScreen(
-            conversationId: null,
-            projectId: 'project-1',
+  for (final rejection in [
+    'revision_conflict',
+    'too_large',
+    'stale_selection',
+  ]) {
+    testWidgets(
+      'first send waits for snapshot and retains a rejected draft: $rejection',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({});
+        final snapshot = Completer<Map<String, dynamic>>();
+        Map<String, dynamic>? sent;
+        var creates = 0;
+        final events = StreamController<Map<String, dynamic>>.broadcast();
+        addTearDown(events.close);
+        final gateway = _FakeGateway((method, params) async {
+          if (method == 'action.list') return {'result': <dynamic>[]};
+          if (method == 'conversation.create') {
+            creates++;
+            return {
+              'result': {'id': 'fresh'},
+            };
+          }
+          if (method == 'conversation.read') return snapshot.future;
+          if (method == 'turn.start') {
+            sent = Map.of(params);
+            throw CoreFault(rejection, 'rejected');
+          }
+          return {'result': {}};
+        }, events: events.stream);
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              coreGatewayProvider.overrideWithValue(gateway),
+              workspaceProvider.overrideWith(_FakeWorkspaceController.new),
+            ],
+            child: const MaterialApp(
+              locale: Locale('zh', 'CN'),
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              home: ConversationScreen(
+                conversationId: null,
+                projectId: 'project-1',
+              ),
+            ),
           ),
-        ),
-      ),
-    );
-    for (var n = 0; n < 5; n++) {
-      await tester.pump(const Duration(milliseconds: 100));
-    }
-    await tester.enterText(find.byType(TextField), 'retain this draft');
-    await tester.pump();
-    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-    await tester.pump();
-    expect(sent, isNull);
-    expect(find.text('retain this draft'), findsOneWidget);
-    expect(find.text('正在同步电脑状态…'), findsOneWidget);
-    expect(
-      tester.widget<TextField>(find.byType(TextField)).controller!.text,
-      isEmpty,
-    );
-    await tester.enterText(find.byType(TextField), 'prepare the next message');
-    await tester.pump();
-    expect(
-      tester.widget<TextField>(find.byType(TextField)).controller!.text,
-      'prepare the next message',
-    );
-    // A real event starts a background read while the send prerequisite waits.
-    events.add({'type': 'event', 'conversationId': 'fresh', 'sequence': 20});
-    await tester.pump(const Duration(milliseconds: 200));
-    expect(sent, isNull);
-    snapshot.complete({
-      'result': {
-        'conversation': {'id': 'fresh', 'running': false},
-        'timeline': {'items': []},
-        'revision': 13,
-        'sequence': 20,
+        );
+        for (var n = 0; n < 5; n++) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+        await tester.enterText(find.byType(TextField), 'retain this draft');
+        await tester.pump();
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump();
+        expect(sent, isNull);
+        expect(find.text('retain this draft'), findsOneWidget);
+        expect(find.text('正在同步电脑状态…'), findsOneWidget);
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller!.text,
+          isEmpty,
+        );
+        await tester.enterText(
+          find.byType(TextField),
+          'prepare the next message',
+        );
+        await tester.pump();
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller!.text,
+          'prepare the next message',
+        );
+        // A real event starts a background read while the send prerequisite waits.
+        events.add({
+          'type': 'event',
+          'conversationId': 'fresh',
+          'sequence': 20,
+        });
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(sent, isNull);
+        snapshot.complete({
+          'result': {
+            'conversation': {'id': 'fresh', 'running': false},
+            'timeline': {'items': []},
+            'revision': 13,
+            'sequence': 20,
+          },
+        });
+        for (var n = 0; n < 5; n++) {
+          await tester.pump();
+        }
+        expect(sent?['expectedRevision'], 13);
+        expect(creates, 1);
+        expect(find.text('retain this draft'), findsOneWidget);
+        if (rejection == 'revision_conflict') {
+          expect(find.text('会话状态已变化，请重试'), findsOneWidget);
+        }
+        final container = ProviderScope.containerOf(
+          tester.element(find.byType(ConversationScreen)),
+        );
+        final record = container.read(localSubmissionsProvider).records((
+          'daemon-1',
+          'agent-1',
+          'fresh',
+        )).single;
+        expect(record.phase, SubmissionPhase.failed);
+        expect(record.text, 'retain this draft');
+        await tester.pumpWidget(const SizedBox());
       },
-    });
-    for (var n = 0; n < 5; n++) {
-      await tester.pump();
-    }
-    expect(sent?['expectedRevision'], 13);
-    expect(creates, 1);
-    expect(find.text('retain this draft'), findsOneWidget);
-    expect(find.text('会话状态已变化，请重试'), findsOneWidget);
-    await tester.pumpWidget(const SizedBox());
-  });
+    );
+  }
 
   testWidgets(
     'first send succeeds once despite MCP events during snapshot sync',

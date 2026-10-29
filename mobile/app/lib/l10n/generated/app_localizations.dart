@@ -100,6 +100,12 @@ abstract class AppLocalizations {
     Locale('zh', 'CN'),
   ];
 
+  /// No description provided for @permissionCustom.
+  ///
+  /// In zh, this message translates to:
+  /// **'自定义权限'**
+  String get permissionCustom;
+
   /// No description provided for @messageSyncing.
   ///
   /// In zh, this message translates to:

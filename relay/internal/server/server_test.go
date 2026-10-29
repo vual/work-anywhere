@@ -231,7 +231,7 @@ func TestPairingCreatesSignedMobileIdentity(t *testing.T) {
 	if hello == nil {
 		t.Fatal("daemon did not receive mobile pairing request")
 	}
-	scopes := []string{"conversation.read", "status.read"}
+	scopes := desktopDefaultScopes(t)
 	grantExpires := expiresAt.Add(-time.Second).UnixMilli()
 	signatureInput := waProtocol.PairGrantSignatureInput(pairingID[:], daemon.id[:], hello.CandidateMobileDeviceId, mobilePublic, mobileX, scopes, grantExpires)
 	writeClientFrame(t, daemonConn, &relayv1.ClientFrame{WireMajor: waProtocol.WireMajor, WireMinor: waProtocol.WireMinor, MessageId: mustTestID(t), Body: &relayv1.ClientFrame_PairDecision{PairDecision: &relayv1.PairDecision{PairingId: pairingID[:], Approved: true, MobileDeviceId: hello.CandidateMobileDeviceId, Scopes: scopes, GrantExpiresAtMs: grantExpires, GrantSignature: ed25519.Sign(daemon.privateKey, signatureInput)}}})

@@ -1,4 +1,5 @@
 {
+  "permissionCustom": "Custom permissions",
   "messageSyncing": "Syncing with computer…",
   "messageUploading": "Uploading image {index}/{count} · {percent}%",
   "messageSending": "Sending…",

@@ -297,7 +297,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       mode: value?.mode == 'plan' ? 'plan' : 'default',
       modelId: model.id,
       reasoningEffort: effort,
-      permissionModeId: (permission ?? fallbackPermission)?.id ?? 'default',
+      permissionModeId: value?.permissionModeId == 'custom'
+          ? 'custom'
+          : (permission ?? fallbackPermission)?.id ?? 'default',
     );
   }
 
@@ -306,9 +308,12 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     if (mounted) setState(() => _catalogLoading = true);
     try {
       final gateway = ref.read(coreGatewayProvider);
-      final modelResponse = await gateway.call('catalog.models', {
-        'agentId': agentId,
-      });
+      final modelResponse = await gateway.callFor(
+        _boundDaemonId,
+        _boundGeneration,
+        'catalog.models',
+        {'agentId': agentId},
+      );
       final modelResult =
           modelResponse['result'] as Map<String, dynamic>? ?? const {};
       final models = (modelResult['items'] as List? ?? const [])
@@ -346,7 +351,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     String agentId,
     String modelId,
   ) async {
-    final response = await ref.read(coreGatewayProvider).call(
+    final response = await ref.read(coreGatewayProvider).callFor(
+      _boundDaemonId,
+      _boundGeneration,
       'catalog.permissionProfiles',
       {'agentId': agentId, 'modelId': modelId},
     );
@@ -443,7 +450,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     final selectedDaemon = selectedWorkspace?.selectedDaemonId;
     final selectedGeneration = selectedWorkspace?.eventGeneration;
     final draftScope = _submissionScope;
-    final response = await ref.read(coreGatewayProvider).call(
+    final response = await ref.read(coreGatewayProvider).callFor(
+      _boundDaemonId,
+      _boundGeneration,
       'conversation.create',
       {'agentId': agentId, 'projectId': projectId},
     );
@@ -571,14 +580,20 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     final expectedRevision = (confirmation['revision'] as num?)?.toInt();
     setState(() => _planSubmitting = true);
     try {
-      await ref.read(coreGatewayProvider).call('plan.respond', {
-        'agentId': _agentId,
-        'threadId': _activeConversationId,
-        'planItemId': confirmation['planItemId'],
-        'expectedRevision': expectedRevision,
-        'decision': decision,
-        'text': text,
-      }, timeoutMilliseconds: 60000);
+      await ref.read(coreGatewayProvider).callFor(
+        _boundDaemonId,
+        _boundGeneration,
+        'plan.respond',
+        {
+          'agentId': _agentId,
+          'threadId': _activeConversationId,
+          'planItemId': confirmation['planItemId'],
+          'expectedRevision': expectedRevision,
+          'decision': decision,
+          'text': text,
+        },
+        timeoutMilliseconds: 60000,
+      );
       _planRevision.clear();
       if (dismissalKey != null) {
         _handledPlanConfirmations.add(dismissalKey);
@@ -661,38 +676,57 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       _assertSubmissionCurrent();
       String? attachmentId;
       try {
-        final begin = await gateway.call('attachment.begin', {
-          'agentId': _agentId,
-          'conversationId': conversationId,
-          'clientMessageId': record.clientMessageId,
-          if (projectId != null && projectId.isNotEmpty) 'projectId': projectId,
-          'mimeType': _imageMimeType(image),
-          'fileName': image.name,
-          'size': bytes.length,
-        });
+        final begin = await gateway.callFor(
+          _boundDaemonId,
+          _boundGeneration,
+          'attachment.begin',
+          {
+            'agentId': _agentId,
+            'conversationId': conversationId,
+            'clientMessageId': record.clientMessageId,
+            if (projectId != null && projectId.isNotEmpty)
+              'projectId': projectId,
+            'mimeType': _imageMimeType(image),
+            'fileName': image.name,
+            'size': bytes.length,
+          },
+        );
         attachmentId =
             (begin['result'] as Map<String, dynamic>)['attachmentId'] as String;
         const chunkSize = 256 * 1024;
         for (var offset = 0; offset < bytes.length; offset += chunkSize) {
           _assertSubmissionCurrent();
           final end = (offset + chunkSize).clamp(0, bytes.length);
-          await gateway.call('attachment.chunk', {
-            'attachmentId': attachmentId,
-            'data': base64Encode(bytes.sublist(offset, end)),
-          });
+          await gateway.callFor(
+            _boundDaemonId,
+            _boundGeneration,
+            'attachment.chunk',
+            {
+              'attachmentId': attachmentId,
+              'data': base64Encode(bytes.sublist(offset, end)),
+            },
+          );
           record.uploadedBytes += end - offset;
           _submissions.changed();
         }
         _assertSubmissionCurrent();
-        await gateway.call('attachment.commit', {'attachmentId': attachmentId});
+        await gateway.callFor(
+          _boundDaemonId,
+          _boundGeneration,
+          'attachment.commit',
+          {'attachmentId': attachmentId},
+        );
         record.attachmentIds[index] = attachmentId;
         attachmentIds.add(attachmentId);
       } catch (_) {
         if (attachmentId != null) {
           try {
-            await gateway.call('attachment.abort', {
-              'attachmentId': attachmentId,
-            });
+            await gateway.callFor(
+              _boundDaemonId,
+              _boundGeneration,
+              'attachment.abort',
+              {'attachmentId': attachmentId},
+            );
           } catch (_) {
             // The original upload error is more useful to the user.
           }
@@ -796,12 +830,17 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     try {
       await controller.requireFreshSnapshot();
       if (!mounted || !controller.isCurrent) return;
-      await ref.read(coreGatewayProvider).call('conversation.settings.update', {
-        'agentId': agentId,
-        'threadId': threadId,
-        'expectedRevision': controller.state.revision,
-        'settings': next.toJson(),
-      });
+      await ref.read(coreGatewayProvider).callFor(
+        _boundDaemonId,
+        _boundGeneration,
+        'conversation.settings.update',
+        {
+          'agentId': agentId,
+          'threadId': threadId,
+          'expectedRevision': controller.state.revision,
+          'settings': next.toJson(),
+        },
+      );
       await controller.refreshConversation();
       if (mounted && controller.isCurrent) {
         setState(() => _settings = _normalizeSettings(controller.settings));
@@ -884,6 +923,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   }
 
   String _permissionTitle(String id) => switch (id) {
+    'custom' => context.l10n.permissionCustom,
     'autoReview' => context.l10n.permissionAutoReview,
     'readOnly' => context.l10n.permissionReadOnly,
     'fullAccess' => context.l10n.permissionFullAccess,
@@ -1111,9 +1151,10 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       if (!mounted || _catalogFailed) return;
     }
     var permissionModeId = current.permissionModeId;
-    if (!_permissionModes.any(
-      (item) => item.id == permissionModeId && item.available,
-    )) {
+    if (permissionModeId != 'custom' &&
+        !_permissionModes.any(
+          (item) => item.id == permissionModeId && item.available,
+        )) {
       permissionModeId =
           _permissionModes
               .where((item) => item.id == 'autoReview' && item.available)
@@ -1192,7 +1233,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       record.phase = SubmissionPhase.sending;
       _submissions.changed();
       writeSent = true;
-      final envelope = await ref.read(coreGatewayProvider).call(
+      final envelope = await ref.read(coreGatewayProvider).callFor(
+        _boundDaemonId,
+        _boundGeneration,
         record.queueWrite ? 'conversation.queue.add' : 'turn.start',
         {
           'agentId': _boundAgentId,
@@ -1269,6 +1312,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         'forbidden',
         'scope_missing',
         'payload_too_large',
+        'too_large',
+        'stale_selection',
+        'no_active_pairing',
         'project_not_resolved',
         'unsupported_attachment_type',
       }.contains(error.code);
@@ -1357,11 +1403,17 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     }
     setState(() => _queueUpdating.add(item.id));
     try {
-      await ref.read(coreGatewayProvider).call(method, {
-        'agentId': agentId,
-        'threadId': threadId,
-        'queuedSubmissionId': item.id,
-      }, timeoutMilliseconds: 60000);
+      await ref.read(coreGatewayProvider).callFor(
+        _boundDaemonId,
+        _boundGeneration,
+        method,
+        {
+          'agentId': agentId,
+          'threadId': threadId,
+          'queuedSubmissionId': item.id,
+        },
+        timeoutMilliseconds: 60000,
+      );
       await _controller?.refreshConversation();
       return true;
     } catch (error) {
@@ -1397,10 +1449,12 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         ) ??
         false;
     if (!confirmed) return;
-    await ref.read(coreGatewayProvider).call('turn.interrupt', {
-      'agentId': _agentId,
-      'threadId': _activeConversationId,
-    });
+    await ref.read(coreGatewayProvider).callFor(
+      _boundDaemonId,
+      _boundGeneration,
+      'turn.interrupt',
+      {'agentId': _agentId, 'threadId': _activeConversationId},
+    );
     await _refresh();
   }
 
@@ -1460,11 +1514,12 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     setState(() => _resolvingActionKey = actionKey);
     final result = approved ? {'decision': 'accept'} : {'decision': 'decline'};
     try {
-      await ref.read(coreGatewayProvider).call('action.resolve', {
-        'agentId': _agentId,
-        'id': action['id'],
-        'result': result,
-      });
+      await ref.read(coreGatewayProvider).callFor(
+        _boundDaemonId,
+        _boundGeneration,
+        'action.resolve',
+        {'agentId': _agentId, 'id': action['id'], 'result': result},
+      );
       await _refresh();
       await ref.read(workspaceProvider.notifier).refresh();
     } catch (error) {
@@ -1487,16 +1542,21 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     if (_resolvingActionKey != null) return;
     setState(() => _resolvingActionKey = actionKey);
     try {
-      await ref.read(coreGatewayProvider).call('action.resolve', {
-        'agentId': _agentId,
-        'id': action['id'],
-        'result': {
-          'answers': {
-            for (final entry in answers.entries)
-              entry.key: {'answers': entry.value},
+      await ref.read(coreGatewayProvider).callFor(
+        _boundDaemonId,
+        _boundGeneration,
+        'action.resolve',
+        {
+          'agentId': _agentId,
+          'id': action['id'],
+          'result': {
+            'answers': {
+              for (final entry in answers.entries)
+                entry.key: {'answers': entry.value},
+            },
           },
         },
-      });
+      );
       await _refresh();
       await ref.read(workspaceProvider.notifier).refresh();
     } catch (error) {

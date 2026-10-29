@@ -666,7 +666,8 @@ func (s *Server) completePairing(connection *routing.Connection, decision *relay
 
 func validScopes(scopes []string) bool {
 	allowed := map[string]bool{
-		"status.read": true, "conversation.read": true, "turn.start": true, "turn.interrupt": true,
+		"conversation.create": true,
+		"status.read":         true, "conversation.read": true, "turn.start": true, "turn.interrupt": true,
 		"action.read": true, "action.resolve": true, "attachment.write": true, "catalog.read": true,
 	}
 	if len(scopes) == 0 || len(scopes) > len(allowed) {

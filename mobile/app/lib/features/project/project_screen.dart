@@ -30,16 +30,27 @@ class _ProjectScreenState extends ConsumerState<ProjectScreen> {
 
   Future<void> _load() async {
     final workspace = ref.read(workspaceProvider).value;
-    if (workspace?.selectedAgentId == null) return;
+    if (workspace == null || workspace.selectedAgentId == null) return;
+    bool current() {
+      if (!mounted) return false;
+      final latest = ref.read(workspaceProvider).value;
+      return mounted &&
+          latest?.selectedDaemonId == workspace.selectedDaemonId &&
+          latest?.eventGeneration == workspace.eventGeneration &&
+          latest?.selectedAgentId == workspace.selectedAgentId;
+    }
+
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final response = await ref.read(coreGatewayProvider).call(
+      final response = await ref.read(coreGatewayProvider).callFor(
+        workspace.selectedDaemonId,
+        workspace.eventGeneration,
         'conversation.list',
         {
-          'agentId': workspace!.selectedAgentId,
+          'agentId': workspace.selectedAgentId,
           'projectId': widget.projectId,
           'limit': 15,
           if (_cursor != null) 'cursor': _cursor,
@@ -47,6 +58,7 @@ class _ProjectScreenState extends ConsumerState<ProjectScreen> {
           'sortDirection': 'desc',
         },
       );
+      if (!current()) return;
       final result = response['result'] as Map<String, dynamic>? ?? const {};
       final next = conversationSummariesFromResult(result);
       setState(() {
@@ -55,9 +67,9 @@ class _ProjectScreenState extends ConsumerState<ProjectScreen> {
         _cursor = result['nextCursor'] as String?;
       });
     } catch (error) {
-      setState(() => _error = error.toString());
+      if (current()) setState(() => _error = error.toString());
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (current()) setState(() => _loading = false);
     }
   }
 

@@ -95,6 +95,18 @@ class CoreGateway {
   Future<void> deleteStoredCredentials() async =>
       _decodeReply(await _api.deleteStoredCredentials());
 
+  Future<Map<String, dynamic>> callFor(
+    String? daemonId,
+    int? generation,
+    String method,
+    Map<String, dynamic> params, {
+    int timeoutMilliseconds = 30000,
+  }) => call(method, {
+    ...params,
+    if (daemonId != null && generation != null)
+      '_wawTarget': {'daemonId': daemonId, 'generation': generation},
+  }, timeoutMilliseconds: timeoutMilliseconds);
+
   Future<Map<String, dynamic>> call(
     String method,
     Map<String, dynamic> params, {

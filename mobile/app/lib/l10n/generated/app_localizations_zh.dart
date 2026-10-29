@@ -10,6 +10,9 @@ class AppLocalizationsZh extends AppLocalizations {
   AppLocalizationsZh([String locale = 'zh']) : super(locale);
 
   @override
+  String get permissionCustom => '自定义权限';
+
+  @override
   String get messageSyncing => '正在同步电脑状态…';
 
   @override
@@ -643,4 +646,7 @@ class AppLocalizationsZh extends AppLocalizations {
 /// The translations for Chinese, as used in China (`zh_CN`).
 class AppLocalizationsZhCn extends AppLocalizationsZh {
   AppLocalizationsZhCn() : super('zh_CN');
+
+  @override
+  String get permissionCustom => '自定义权限';
 }

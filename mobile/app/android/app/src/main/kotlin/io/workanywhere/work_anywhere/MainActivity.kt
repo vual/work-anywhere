@@ -99,6 +99,7 @@ class MainActivity : FlutterActivity() {
 }
 
 private class ReflectiveMobileCore(context: Context) : MobileCoreApi {
+    private val catalogLock = Any()
     private val credentials = SecureCredentialStore(context.applicationContext)
     private val core: Any? = runCatching {
         val factory = Class.forName("mobilecore.Mobilecore")
@@ -126,15 +127,19 @@ private class ReflectiveMobileCore(context: Context) : MobileCoreApi {
     }
 
     override suspend fun pair(uri: String): CoreReply = withContext(Dispatchers.IO) {
-        invoke("pair", arrayOf<Class<*>>(String::class.java), arrayOf<Any>(uri))
+        synchronized(catalogLock) {
+            mutate("pair", arrayOf<Class<*>>(String::class.java), arrayOf<Any>(uri))
+        }
     }
 
     override suspend fun restoreStored(): CoreReply = withContext(Dispatchers.IO) {
-        val stored = credentials.load()
-            ?: return@withContext failure("no_stored_pairing", "No pairing credentials are stored")
-        val before = exportCatalog()
-        val reply = invoke("restore", arrayOf<Class<*>>(String::class.java), arrayOf<Any>(stored))
-        persistAfter(reply, before.payload.takeIf { before.ok })
+        synchronized(catalogLock) {
+            val stored = credentials.load()
+                ?: return@synchronized failure("no_stored_pairing", "No pairing credentials are stored")
+            val before = exportCatalog()
+            val reply = invoke("restore", arrayOf<Class<*>>(String::class.java), arrayOf<Any>(stored))
+            persistAfter(reply, before.payload.takeIf { before.ok })
+        }
     }
 
     override suspend fun selectPairing(daemonId: String): CoreReply = withContext(Dispatchers.IO) {
@@ -154,19 +159,21 @@ private class ReflectiveMobileCore(context: Context) : MobileCoreApi {
     }
 
     override suspend fun reorderPairings(daemonIds: List<String>): CoreReply = withContext(Dispatchers.IO) {
-        mutate("reorderPairings", arrayOf(List::class.java), arrayOf(daemonIds))
+        mutate("reorderPairings", arrayOf(String::class.java), arrayOf(org.json.JSONArray(daemonIds).toString()))
     }
 
     override suspend fun probePairing(daemonId: String): CoreReply = withContext(Dispatchers.IO) {
-        val before = exportCatalog()
-        persistAfter(
-            invoke("probePairing", arrayOf(String::class.java), arrayOf(daemonId)),
-            before.payload.takeIf { before.ok },
-        )
+        synchronized(catalogLock) {
+            val before = exportCatalog()
+            persistAfter(
+                invoke("probePairing", arrayOf(String::class.java), arrayOf(daemonId)),
+                before.payload.takeIf { before.ok },
+            )
+        }
     }
 
     override fun persistCredentials(): CoreReply {
-        return persistCatalog()
+        return synchronized(catalogLock) { persistCatalog() }
     }
 
     private fun persistCatalog(): CoreReply {
@@ -209,10 +216,10 @@ private class ReflectiveMobileCore(context: Context) : MobileCoreApi {
         }.getOrElse { failure("native_core_failed", it.cause?.message ?: it.message ?: "Native core call failed") }
     }
 
-    private fun mutate(name: String, types: Array<Class<*>>, arguments: Array<Any>): CoreReply {
+    private fun mutate(name: String, types: Array<Class<*>>, arguments: Array<Any>): CoreReply = synchronized(catalogLock) {
         val before = exportCatalog()
         val reply = invoke(name, types, arguments)
-        return persistAfter(reply, before.payload.takeIf { before.ok })
+        persistAfter(reply, before.payload.takeIf { before.ok })
     }
 
     private fun persistAfter(reply: CoreReply, rollbackCatalog: String? = null): CoreReply {

@@ -10,6 +10,9 @@ class AppLocalizationsEn extends AppLocalizations {
   AppLocalizationsEn([String locale = 'en']) : super(locale);
 
   @override
+  String get permissionCustom => 'Custom permissions';
+
+  @override
   String get messageSyncing => 'Syncing with computer…';
 
   @override
@@ -668,4 +671,7 @@ class AppLocalizationsEn extends AppLocalizations {
 /// The translations for English, as used in the United States (`en_US`).
 class AppLocalizationsEnUs extends AppLocalizationsEn {
   AppLocalizationsEnUs() : super('en_US');
+
+  @override
+  String get permissionCustom => 'Custom permissions';
 }

@@ -1,4 +1,5 @@
 {
+  "permissionCustom": "自定义权限",
   "messageSyncing": "正在同步电脑状态…",
   "messageUploading": "正在上传图片 {index}/{count} · {percent}%",
   "messageSending": "正在发送…",
