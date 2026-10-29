@@ -26,6 +26,7 @@ APNs 配置为 `APNS_TEAM_ID`、`APNS_KEY_ID`、`APNS_KEY_FILE`；FCM 使用 `FC
 
 - 日志 scrubber 不输出 token、credential、签名、payload 或数据库 URL。
 - notify 按 daemon 做 token-bucket 限流，River unique key 防止同 endpoint/notification 重复入队。
+- endpoint 查询返回 `pgx.ErrNoRows` 或 endpoint 已停用时结束任务；连接中断、超时等数据库查询错误返回稳定的可重试错误，由 River 重试。错误不带 token、正文或数据库细节，原有有效期、去重与最大次数不变。
 - 未配置 provider 时对应任务失败且可观测，不回退到包含业务正文的其他通道。
 - Mobile 点击通知后必须重新连接、Noise handshake 并向 daemon 读取状态。
 
@@ -42,7 +43,7 @@ Push 不是可靠业务队列、状态数据库或 command transport。V1 不支
 
 ## 验证方式
 
-单元测试覆盖 APNs JWT、FCM request、provider error 分类、worker expiry/dedup 和 invalid token 清理；数据库集成测试覆盖 encrypted endpoint 与 job enqueue。Apple sandbox、FCM test project、前后台/被杀 Mobile 场景需要真实凭据和正式 Mobile 后补充。
+单元测试覆盖 APNs JWT、FCM request、provider error 分类、worker expiry/dedup、endpoint 缺失/停用、临时数据库查询错误重试和 invalid token 清理；数据库集成测试覆盖 encrypted endpoint 与 job enqueue。Apple sandbox、FCM test project、前后台/被杀 Mobile 场景需要真实凭据和正式 Mobile 后补充。
 
 ## 文档更新触发
 

@@ -124,3 +124,5 @@ mobile/scripts/build-android.ps1    Android tester APK
 ## 文档更新触发
 
 阶段依赖、范围、Daemon/Agent/Project/Bot 模型、列表数量、分页搜索、Provider 优先级、发布门槛、技术栈、目标平台、CI、DTO/vector 策略或验收方式变化时直接重写本文档，并同步 Mobile README、相关功能设计与 Relay remaining plan。
+
+当前缺陷修复的本地检查与外部验收缺口见 [验收记录](verification.md)。

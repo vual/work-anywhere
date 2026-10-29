@@ -61,6 +61,8 @@ Mobile for Android provides:
 
 Mobile refreshes authoritative Desktop state before sending and preserves drafts on revision conflicts. iOS, mobile push, complete approval DTOs, application lock, and production release validation remain incomplete. See the [Mobile guide](mobile/README.md).
 
+Upgrade modules in **Relay → Desktop → Mobile** order so Relay accepts `conversation.create` in default pairing grants; existing pairings do not need to be recreated. Image selection is limited to 48 MiB, and the complete request after base64 and JSON encoding must fit within 64 MiB. Oversized requests preserve the draft for editing.
+
 ## Architecture
 
 ```text

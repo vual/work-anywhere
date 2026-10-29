@@ -61,6 +61,8 @@ Android Mobile 提供：
 
 Mobile 发送前同步 Desktop 权威状态，版本冲突时保留草稿。iOS、手机推送、完整 approval DTO、应用锁和生产发布验收尚未完成，详见 [Mobile 指南](mobile/README.md)。
 
+升级这些模块时遵循 **Relay → Desktop → Mobile** 顺序，以支持默认配对权限中的 `conversation.create`；已有配对无需重建。图片选择上限为 48 MiB，完整请求经 base64 和 JSON 编码后仍须小于等于 64 MiB；超限保留草稿并提示减少内容。
+
 ## 总体架构
 
 ```text

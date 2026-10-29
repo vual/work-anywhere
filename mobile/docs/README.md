@@ -11,7 +11,7 @@
 | 技术栈、分层与平台边界 | [`architecture/design.md`](architecture/design.md) | 协议同步、交互、交付计划 | `core/`, `app/lib/`, `app/android/`, `app/ios/` |
 | 配对、E2EE、请求与状态同步 | [`protocol-and-sync/design.md`](protocol-and-sync/design.md) | Relay wire/E2EE、Desktop control、交互 | `core/mobilecore/`, `app/lib/core/` |
 | 单工作台、Daemon/Agent/Project/Conversation 交互 | [`product-interaction/design.md`](product-interaction/design.md) | 架构、协议同步 | `app/lib/features/`, `app/lib/app/` |
-| 分阶段实施与验收 | [`delivery-plan/design.md`](delivery-plan/design.md) | 全部设计 | `mobile/app/` 与跨模块前置改动 |
+| 分阶段实施与验收 | [`delivery-plan/design.md`](delivery-plan/design.md) | [当前验收记录](delivery-plan/verification.md)、全部设计 | `mobile/app/` 与跨模块前置改动 |
 
 ## Cross-module ownership
 

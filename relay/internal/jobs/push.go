@@ -63,7 +63,13 @@ func (w *pushWorker) Work(ctx context.Context, job *river.Job[NotificationArgs])
 		return nil
 	}
 	endpoint, err := w.store.PushEndpoint(ctx, endpointID)
-	if err != nil || endpoint.Status != "active" {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return errors.New("push endpoint lookup temporarily unavailable")
+	}
+	if endpoint.Status != "active" {
 		return nil
 	}
 	aad := secretbox.AssociatedData(endpoint.MobileDeviceID.String(), endpoint.Platform, endpoint.AppID, endpoint.Environment)

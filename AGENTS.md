@@ -5,8 +5,8 @@
 ## Repository layout
 
 - `desktop/`：Windows Desktop Bridge、daemon、本机控制 API、CLI 和管理入口。
-- `relay/`：Relay 服务模块；当前处于方案阶段，运行代码尚未实现。
-- `mobile/`：iOS/Android 客户端；当前已建立产品、架构、协议同步、交互和交付设计，应用代码尚未实现。
+- `relay/`：Relay 服务模块；单节点认证、配对、密文路由、PostgreSQL 与 River 推送任务已实现。
+- `mobile/`：移动客户端；Android Flutter、Go Core 和 Kotlin host 已实现，iOS host、正式推送和真机发布验收尚未完成。
 
 各模块必须保持独立的构建入口、依赖定义、测试和设计文档。跨模块共享协议时，应明确协议的所有者，并在所有消费模块的文档中链接同一份规范，不能复制出互相漂移的版本。
 
