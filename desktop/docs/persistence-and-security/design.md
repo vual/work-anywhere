@@ -67,3 +67,9 @@ Desktop 只持久化重新连接所需的小型配置，并对运行内存、临
 ## Documentation update triggers
 
 修改配置 schema/路径、DPAPI、原子写入、内存限额、附件生命周期、日志字段、traffic capture 或权威数据来源时，必须更新本文档及控制、平台和 Relay connector 文档。
+
+## 完整权限与附件请求限制
+
+线程设置增加可选 `sandboxPolicyJSON` 字符串，随原有 DPAPI 配置加密保存；旧记录无需迁移，重建 workspace 权限前从项目有效配置补齐策略。字段不保存 developer instructions 或正文。
+
+图片选择上限仍为 48 MiB，base64、文字和 JSON 包装后的完整 App Server JSONL 请求（含换行）不得超过 64 MiB。超限在写入前返回 `too_large`，不受理 Turn、不删除手机草稿；不通过提高协议行上限规避限制。验证使用 48 MiB 图片对应 base64 长度加 JSON 包装的边界请求。

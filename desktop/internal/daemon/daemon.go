@@ -519,7 +519,7 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 		}
 		result, callErr := m.mobileProjectList(instance, params)
 		if callErr != nil {
-			response.Error = &protocol.ControlError{Code: "provider_error", Message: callErr.Error()}
+			response.Error = mobileControlError(callErr)
 		} else {
 			response.Result = result
 		}
@@ -586,7 +586,7 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 		}
 		result, callErr := instance.Call(m.ctx, "thread/start", params)
 		if callErr != nil {
-			response.Error = &protocol.ControlError{Code: "provider_error", Message: callErr.Error()}
+			response.Error = mobileControlError(callErr)
 			break
 		}
 		response.Result, callErr = normalizeConversationCreate(result)
@@ -712,7 +712,7 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 			result, callErr = instance.Call(m.ctx, method, params)
 		}
 		if callErr != nil {
-			response.Error = &protocol.ControlError{Code: "provider_error", Message: callErr.Error()}
+			response.Error = mobileControlError(callErr)
 		} else if request.Contract == protocol.MobileControlContract && request.Method == "conversation.list" {
 			var page mobilePage[mobileConversationSummary]
 			projects, projectErr := fetchMobileProjects(m.ctx, instance)
@@ -803,7 +803,7 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 		}
 		result, callErr := instance.Call(m.ctx, "permissionProfile/list", providerParams)
 		if callErr != nil {
-			response.Error = &protocol.ControlError{Code: "provider_error", Message: callErr.Error()}
+			response.Error = mobileControlError(callErr)
 		} else if request.Contract == protocol.MobileControlContract {
 			requirements, requirementsErr := instance.Call(m.ctx, "configRequirements/read", json.RawMessage(`{}`))
 			if requirementsErr != nil {
@@ -1165,7 +1165,7 @@ func (m *Manager) normalizeTurnStart(instanceID string, raw json.RawMessage) (js
 			return nil, &mobileContractError{code: "invalid_selection", message: "settings are invalid"}
 		}
 		current, _ := instance.collaborationSettings(threadID)
-		providerSettings, _, settingsErr := m.providerThreadSettings(instance, requested, current.Model)
+		providerSettings, _, settingsErr := m.providerThreadSettings(instance, requested, current, threadID)
 		if settingsErr != nil {
 			return nil, settingsErr
 		}

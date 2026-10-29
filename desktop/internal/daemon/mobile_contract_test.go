@@ -321,7 +321,7 @@ func TestPlanConfirmationRequiresLatestSuccessfulPlanTurn(t *testing.T) {
 func TestPlanTurnStartParamsSwitchModeAndDiscardDeveloperInstructions(t *testing.T) {
 	settings := threadCollaborationSettings{
 		Model: "gpt-test", ReasoningEffort: "high", PermissionModeID: "autoReview",
-		PermissionProfile: ":workspace", ApprovalPolicy: "on-request", ApprovalsReviewer: "auto_review",
+		PermissionProfile: ":workspace", SandboxMode: "workspaceWrite", ApprovalPolicy: "on-request", ApprovalsReviewer: "auto_review",
 	}
 	for _, test := range []struct {
 		decision string
@@ -342,8 +342,10 @@ func TestPlanTurnStartParamsSwitchModeAndDiscardDeveloperInstructions(t *testing
 		if value, exists := modeSettings["developer_instructions"]; !exists || value != nil {
 			t.Fatalf("developer instructions must be explicitly cleared: %#v", modeSettings)
 		}
-		if params["permissions"] != ":workspace" || params["approvalPolicy"] != "on-request" || params["approvalsReviewer"] != "auto_review" {
-			t.Fatalf("permission settings were not carried forward: %#v", params)
+		for _, field := range []string{"permissions", "sandboxPolicy", "approvalPolicy", "approvalsReviewer"} {
+			if _, exists := params[field]; exists {
+				t.Fatalf("plan must inherit permissions: %s", field)
+			}
 		}
 	}
 }
@@ -399,6 +401,7 @@ func TestMobileConversationSettingsUpdateCommitsOnlyAfterProviderSuccess(t *test
 	instance.conversations["thread-1"] = &conversationProjection{ID: "thread-1", Revision: 3}
 	instance.threadSettings["thread-1"] = threadCollaborationSettings{
 		Mode: "default", Model: "model-a", ReasoningEffort: "high", PermissionModeID: "default",
+		SandboxPolicyJSON: `{"type":"workspaceWrite","networkAccess":true,"writableRoots":["D:/project"],"excludeSlashTmp":true,"excludeTmpdirEnvVar":true}`,
 		PermissionProfile: ":workspace", ApprovalPolicy: "on-request", ApprovalsReviewer: "user",
 	}
 
@@ -407,14 +410,16 @@ func TestMobileConversationSettingsUpdateCommitsOnlyAfterProviderSuccess(t *test
 	defer serverWriter.Close()
 	instance.stdin = serverWriter
 	var failUpdate atomic.Bool
+	var notifyUnchanged atomic.Bool
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		scanner := bufio.NewScanner(serverReader)
 		for scanner.Scan() {
 			var request struct {
-				ID     string `json:"id"`
-				Method string `json:"method"`
+				ID     string          `json:"id"`
+				Method string          `json:"method"`
+				Params json.RawMessage `json:"params"`
 			}
 			_ = json.Unmarshal(scanner.Bytes(), &request)
 			var response string
@@ -426,6 +431,17 @@ func TestMobileConversationSettingsUpdateCommitsOnlyAfterProviderSuccess(t *test
 			case "configRequirements/read":
 				response = `{"jsonrpc":"2.0","id":"` + request.ID + `","result":{"requirements":null}}`
 			case "thread/settings/update":
+				var params map[string]any
+				_ = json.Unmarshal(request.Params, &params)
+				policy, _ := params["sandboxPolicy"].(map[string]any)
+				if policy["type"] != "workspaceWrite" || params["permissions"] != nil {
+					response = `{"jsonrpc":"2.0","id":"` + request.ID + `","error":{"code":-32602,"message":"sandboxPolicy missing"}}`
+					instance.handleServerFrame(instance.generation, []byte(response))
+					continue
+				}
+				if notifyUnchanged.Load() {
+					instance.observeThreadSettingsNotification(json.RawMessage(`{"threadId":"thread-1","threadSettings":{"collaborationMode":{"mode":"plan","settings":{"model":"model-a","reasoning_effort":"high"}},"sandboxPolicy":{"type":"workspaceWrite","networkAccess":true,"writableRoots":["D:/project"],"excludeSlashTmp":true,"excludeTmpdirEnvVar":true},"approvalPolicy":"on-request","approvalsReviewer":"auto_review"}}`))
+				}
 				if failUpdate.Load() {
 					response = `{"jsonrpc":"2.0","id":"` + request.ID + `","error":{"code":-32602,"message":"rejected"}}`
 				} else {
@@ -462,8 +478,16 @@ func TestMobileConversationSettingsUpdateCommitsOnlyAfterProviderSuccess(t *test
 	if afterFailure.Mode != "plan" || afterFailure.PermissionModeID != "autoReview" {
 		t.Fatalf("provider rejection changed the committed projection: %#v", afterFailure)
 	}
+	failUpdate.Store(false)
+	notifyUnchanged.Store(true)
+	request = json.RawMessage(`{"threadId":"thread-1","expectedRevision":5,"settings":{"mode":"default","modelId":"model-a","reasoningEffort":"high","permissionModeId":"default"}}`)
+	corrected, err := instance.manager.mobileConversationSettingsUpdate(instance, request)
+	if err != nil || corrected.Mode != "plan" || corrected.PermissionModeID != "autoReview" {
+		t.Fatalf("authoritative notification lost: %#v %v", corrected, err)
+	}
 	_ = serverWriter.Close()
 	<-done
+	instance.manager.configWrites.Wait()
 }
 
 func TestMobileQueueMethodsMapToProviderQueue(t *testing.T) {

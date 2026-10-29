@@ -90,6 +90,17 @@ func TestCollaborationSettingsPersistWithoutDeveloperInstructions(t *testing.T) 
 	}
 }
 
+func TestCollaborationSettingsReadsModernPermissionProfile(t *testing.T) {
+	instance, _, cleanup := testInstance(t)
+	defer cleanup()
+	instance.observeThreadSettingsNotification(json.RawMessage(`{"threadId":"thread-modern","threadSettings":{"activePermissionProfile":{"id":":danger-full-access"},"approvalPolicy":"never","approvalsReviewer":"user","collaborationMode":{"mode":"default","settings":{"model":"gpt-test","reasoning_effort":"medium"}},"sandboxPolicy":{"type":"dangerFullAccess"}}}`))
+	settings, ok := instance.collaborationSettings("thread-modern")
+	if !ok || settings.PermissionModeID != "fullAccess" || settings.PermissionProfile != ":danger-full-access" || settings.SandboxMode != "dangerFullAccess" {
+		t.Fatalf("modern permission settings were not projected: %#v, ok=%v", settings, ok)
+	}
+	instance.manager.configWrites.Wait()
+}
+
 func TestDesktopRequestIDIsRestoredAndInitializeIsVirtualized(t *testing.T) {
 	instance, writer, cleanup := testInstance(t)
 	defer cleanup()

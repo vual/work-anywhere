@@ -37,9 +37,9 @@ daemon 将控制方法路由到实例 supervisor；Codex driver/能力描述用�
 - 流量：`traffic.enable`, `traffic.disable`
 - Remote：`remote.status`, `remote.configure`, `remote.register`, `remote.enroll`, `remote.reconnect`, `remote.pair.start/list/resolve/cancel/revoke`
 
-`turn.start` 当前接受 `instanceId`、`threadId`、文字、attachment IDs、model、reasoning effort、approval policy、sandbox policy、client message ID 和 expected revision。附件中的图片被转换为官方 App Server 支持的输入项；调用必须指向已有 thread。忙碌门禁按目标 thread 判断：同一 thread 已有活跃 Turn、等待该 thread 的用户 action，或用户 action 无法归属 thread 时拒绝；同一 Agent 的其他 thread 正在运行或等待自身 action 时不阻塞本 thread。`attestation/generate` 等明确分类的客户端基础设施请求不参与会话门禁。实例仍汇总保存全部活跃 Turn，用于状态、升级和强制退出。
+`turn.start` 当前接受 `instanceId`、`threadId`、文字、attachment IDs、model、reasoning effort、approval policy、sandbox policy、client message ID 和 expected revision。Mobile 内置权限设置只发送 `sandboxPolicy`、`approvalPolicy` 和 `approvalsReviewer`，不与 `permissions` 混用；profile ID 用于目录可用性校验和界面映射。附件中的图片被转换为官方 App Server 支持的输入项；调用必须指向已有 thread。忙碌门禁按目标 thread 判断：同一 thread 已有活跃 Turn、等待该 thread 的用户 action，或用户 action 无法归属 thread 时拒绝；同一 Agent 的其他 thread 正在运行或等待自身 action 时不阻塞本 thread。`attestation/generate` 等明确分类的客户端基础设施请求不参与会话门禁。实例仍汇总保存全部活跃 Turn，用于状态、升级和强制退出。
 
-Desktop 从 `turn/start`、`thread/settings/update` 和 `thread/settings/updated` 投影各 thread 最近确认的 collaboration mode、model、reasoning effort 与稳定 permission mode，并使用现有加密 settings 存储按 instance/thread 持久化。Mobile 的 `conversation.read.settings` 固定返回 `mode`、`modelId`、`reasoningEffort` 与 `permissionModeId`。投影不保存 developer instructions 或计划正文；Turn 的 started/completed/failed/interrupted 通知用于把配置绑定到权威 Turn 并记录其是否成功完成。`ConversationSnapshot.planConfirmation` 仅在最新 Turn 成功完成、以 plan mode 启动、包含完成的 Plan item、当前 thread 空闲且无阻塞 action，并且 model/effort 足以安全启动下一 Turn 时返回 `{planItemId, turnId, revision}`。
+Desktop 从 `turn/start`、`thread/settings/update` 和 `thread/settings/updated` 投影各 thread 最近确认的 collaboration mode、model、reasoning effort 与稳定 permission mode，并兼容 App Server 的 `activePermissionProfile`/`sandboxPolicy` 回执字段；使用现有加密 settings 存储按 instance/thread 持久化。权限投影优先识别 `activePermissionProfile`，缺失时结合 sandbox 类型、审批策略和 reviewer 推导内置模式；无法映射时返回 `custom`（自定义权限），不能作为新会话预设选择。Mobile 的 `conversation.read.settings` 固定返回 `mode`、`modelId`、`reasoningEffort` 与 `permissionModeId`。投影不保存 developer instructions 或计划正文；Turn 的 started/completed/failed/interrupted 通知用于把配置绑定到权威 Turn 并记录其是否成功完成。`ConversationSnapshot.planConfirmation` 仅在最新 Turn 成功完成、以 plan mode 启动、包含完成的 Plan item、当前 thread 空闲且无阻塞 action，并且 model/effort 足以安全启动下一 Turn 时返回 `{planItemId, turnId, revision}`。
 
 `plan.respond` 接受 `agentId`、`threadId`、`planItemId`、`expectedRevision`、`decision=implement|revise` 和非空 `text`。它重新读取权威 snapshot 并校验计划身份、revision、空闲/action 状态和配置：`implement` 继承 model/effort/permission 并以 `collaborationMode.mode=default` 启动 Turn，`revise` 继承同一组设置并以 `mode=plan` 启动 Turn，两者都显式清空 `developer_instructions`。响应为 `{started:true, turnId?}`；`invalid_params`、`conversation_busy`、`revision_conflict`、`stale_plan`、`plan_mode_unavailable` 和 `provider_error` 保持稳定。该方法复用 `turn.start` pairing scope。
 
@@ -126,3 +126,11 @@ Timeline 优先调用 `thread/items/list`。仅官方 JSON-RPC `-32601` 方法�
 ## Documentation update triggers
 
 增加/删除/重命名控制方法、字段、事件、错误码、Provider capability、附件协议、认证方式或 CLI 命令时，必须更新本文档以及消费该接口的模块文档。
+
+## 权限策略与请求边界
+
+每个线程的加密配置包含可选 `sandboxPolicyJSON`，保存完整策略和未知字段。模型、思考等级或协作模式更新保留有效策略；计划确认只提交 mode/model/effort 并继承线程的实时权限。自定义权限的模型/模式更新不重建权限，交由 App Server 校验配置要求。显式切换至 workspace 模式时读取 thread cwd 和该项目的有效 `config/read`，保留 networkAccess、writableRoots、excludeSlashTmp、excludeTmpdirEnvVar；无法读取配置返回 `selection_unavailable`。同一 workspace 策略仅切换 reviewer 时原样保留。旧记录可读；同一权限模式下仅修改模型/思考/计划模式时省略权限覆盖，继承实时策略，等待权威通知补齐。缺少完整策略而显式切换 workspace 模式时读取有效项目配置，不根据类型猜测。
+
+设置 RPC 失败不提交本地成功状态；期间收到的权威设置通知优先，即使其内容与更新前相同。提交与通知版本比较在同一锁下完成，落盘继续使用现有串行加密存储。
+
+控制请求在发出 Turn 开始事件和写入 App Server 前检查完整序列化 JSONL（含换行）是否超过 64 MiB，超限返回 `too_large`；Mobile 保留草稿。权限回归覆盖两套仓库协议 fixture 的权限字段、互斥字段、仅 sandbox 回执、配置保留、custom、计划继承和失败/权威通知竞争。

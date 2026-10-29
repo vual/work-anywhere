@@ -996,7 +996,7 @@ func projectedMobileSettings(settings threadCollaborationSettings) mobileConvers
 	}
 	permissionMode := settings.PermissionModeID
 	if permissionMode == "" {
-		permissionMode = "default"
+		permissionMode = "custom"
 	}
 	return mobileConversationSettings{
 		Mode: mode, ModelID: settings.Model, ReasoningEffort: settings.ReasoningEffort, PermissionModeID: permissionMode,
@@ -1006,7 +1006,7 @@ func projectedMobileSettings(settings threadCollaborationSettings) mobileConvers
 func (m *Manager) mobileCatalogModels(instance mobileProviderCaller) (mobileModelCatalog, error) {
 	raw, err := instance.Call(m.ctx, "model/list", json.RawMessage(`{}`))
 	if err != nil {
-		return mobileModelCatalog{}, &mobileContractError{code: "provider_error", message: err.Error()}
+		return mobileModelCatalog{}, err
 	}
 	catalog, err := normalizeMobileModelCatalog(raw)
 	if err != nil {
@@ -1018,11 +1018,11 @@ func (m *Manager) mobileCatalogModels(instance mobileProviderCaller) (mobileMode
 func (m *Manager) mobileCatalogPermissions(instance mobileProviderCaller, modelID string) (mobilePermissionCatalog, error) {
 	profileRaw, err := instance.Call(m.ctx, "permissionProfile/list", json.RawMessage(`{}`))
 	if err != nil {
-		return mobilePermissionCatalog{}, &mobileContractError{code: "provider_error", message: err.Error()}
+		return mobilePermissionCatalog{}, err
 	}
 	requirementsRaw, err := instance.Call(m.ctx, "configRequirements/read", json.RawMessage(`{}`))
 	if err != nil {
-		return mobilePermissionCatalog{}, &mobileContractError{code: "provider_error", message: err.Error()}
+		return mobilePermissionCatalog{}, err
 	}
 	catalog, err := normalizeMobilePermissionCatalog(profileRaw, requirementsRaw, modelID)
 	if err != nil {
@@ -1031,7 +1031,7 @@ func (m *Manager) mobileCatalogPermissions(instance mobileProviderCaller, modelI
 	return catalog, nil
 }
 
-func (m *Manager) providerThreadSettings(instance mobileProviderCaller, requested mobileConversationSettings, currentModelID string) (map[string]any, threadCollaborationSettings, error) {
+func (m *Manager) providerThreadSettings(instance mobileProviderCaller, requested mobileConversationSettings, current threadCollaborationSettings, threadID string) (map[string]any, threadCollaborationSettings, error) {
 	if requested.Mode != "default" && requested.Mode != "plan" {
 		return nil, threadCollaborationSettings{}, &mobileContractError{code: "invalid_selection", message: "mode must be default or plan"}
 	}
@@ -1049,7 +1049,7 @@ func (m *Manager) providerThreadSettings(instance mobileProviderCaller, requeste
 	if selectedModel == nil || requested.ModelID == "" {
 		return nil, threadCollaborationSettings{}, &mobileContractError{code: "invalid_selection", message: "unknown model"}
 	}
-	if !selectedModel.Selectable && selectedModel.ID != currentModelID {
+	if !selectedModel.Selectable && selectedModel.ID != current.Model {
 		return nil, threadCollaborationSettings{}, &mobileContractError{code: "selection_unavailable", message: "model is not selectable"}
 	}
 	effortAllowed := false
@@ -1061,6 +1061,16 @@ func (m *Manager) providerThreadSettings(instance mobileProviderCaller, requeste
 	}
 	if !effortAllowed {
 		return nil, threadCollaborationSettings{}, &mobileContractError{code: "invalid_selection", message: "reasoning effort is not supported by the model"}
+	}
+	if requested.PermissionModeID == "custom" && current.PermissionModeID == "custom" {
+		// Preserve the live policy, including approval variants this client cannot
+		// represent. The provider validates model requirements on this update.
+		projected := current
+		projected.Mode, projected.Model, projected.ReasoningEffort = requested.Mode, requested.ModelID, requested.ReasoningEffort
+		return map[string]any{
+			"collaborationMode": map[string]any{"mode": requested.Mode, "settings": map[string]any{"model": requested.ModelID, "reasoning_effort": requested.ReasoningEffort, "developer_instructions": nil}},
+			"model":             requested.ModelID, "effort": requested.ReasoningEffort,
+		}, projected, nil
 	}
 	permissions, err := m.mobileCatalogPermissions(instance, requested.ModelID)
 	if err != nil {
@@ -1079,17 +1089,37 @@ func (m *Manager) providerThreadSettings(instance mobileProviderCaller, requeste
 	if !selectedPermission.Available {
 		return nil, threadCollaborationSettings{}, &mobileContractError{code: "selection_unavailable", message: firstNonempty(selectedPermission.Reason, "permission mode is unavailable")}
 	}
+	if requested.PermissionModeID == current.PermissionModeID {
+		if _, complete := decodeSandboxPolicy(current.SandboxPolicyJSON); !complete {
+			// A legacy record cannot prove the live network/root policy. Only
+			// change model/mode; a later authority notification can hydrate it.
+			projected := current
+			projected.Mode, projected.Model, projected.ReasoningEffort = requested.Mode, requested.ModelID, requested.ReasoningEffort
+			return map[string]any{
+				"collaborationMode": map[string]any{"mode": requested.Mode, "settings": map[string]any{"model": requested.ModelID, "reasoning_effort": requested.ReasoningEffort, "developer_instructions": nil}},
+				"model":             requested.ModelID, "effort": requested.ReasoningEffort,
+			}, projected, nil
+		}
+	}
 	modeSettings := map[string]any{"model": requested.ModelID, "developer_instructions": nil, "reasoning_effort": requested.ReasoningEffort}
+	policy, err := m.permissionPolicy(instance, threadID, requested.PermissionModeID, current)
+	if err != nil {
+		return nil, threadCollaborationSettings{}, err
+	}
+	policyJSON, _ := json.Marshal(policy)
 	provider := map[string]any{
 		"collaborationMode": map[string]any{"mode": requested.Mode, "settings": modeSettings},
 		"model":             requested.ModelID, "effort": requested.ReasoningEffort,
-		"permissions": selectedPermission.Profile, "approvalPolicy": selectedPermission.Approval,
+		"approvalPolicy":    selectedPermission.Approval,
 		"approvalsReviewer": selectedPermission.Reviewer,
+		"sandboxPolicy":     policy,
 	}
 	projected := threadCollaborationSettings{
 		Mode: requested.Mode, Model: requested.ModelID, ReasoningEffort: requested.ReasoningEffort,
 		PermissionModeID: selectedPermission.ID, PermissionProfile: selectedPermission.Profile,
-		ApprovalPolicy: selectedPermission.Approval, ApprovalsReviewer: selectedPermission.Reviewer,
+		SandboxMode:       sandboxPolicyTypeForProfile(selectedPermission.Profile),
+		SandboxPolicyJSON: string(policyJSON),
+		ApprovalPolicy:    selectedPermission.Approval, ApprovalsReviewer: selectedPermission.Reviewer,
 	}
 	return provider, projected, nil
 }
@@ -1109,20 +1139,32 @@ func (m *Manager) mobileConversationSettingsUpdate(instance *Instance, params js
 	if err := instance.CheckExpectedRevision(params); err != nil {
 		return mobileConversationSettings{}, &mobileContractError{code: "revision_conflict", message: err.Error()}
 	}
-	current, _ := instance.collaborationSettings(request.ThreadID)
-	provider, projected, err := m.providerThreadSettings(instance, request.Settings, current.Model)
+	instance.mu.Lock()
+	current := instance.threadSettings[request.ThreadID]
+	notificationVersion := instance.settingsNotifications[request.ThreadID]
+	instance.mu.Unlock()
+	provider, projected, err := m.providerThreadSettings(instance, request.Settings, current, request.ThreadID)
 	if err != nil {
 		return mobileConversationSettings{}, err
 	}
 	provider["threadId"] = request.ThreadID
 	providerParams, _ := json.Marshal(provider)
 	if _, err = instance.callWithoutSettingsProjection(m.ctx, "thread/settings/update", providerParams); err != nil {
-		return mobileConversationSettings{}, &mobileContractError{code: "provider_error", message: err.Error()}
+		return mobileConversationSettings{}, err
 	}
-	if current.Model != "" {
-		projected.TurnID, projected.Succeeded = current.TurnID, current.Succeeded
+	// Compare and commit under the same lock. Even an unchanged authoritative
+	// notification must win over the requested local projection.
+	instance.mu.Lock()
+	latest := instance.threadSettings[request.ThreadID]
+	if instance.settingsNotifications[request.ThreadID] != notificationVersion {
+		instance.mu.Unlock()
+		return projectedMobileSettings(latest), nil
 	}
-	instance.commitThreadSettings(providerParams)
+	projected.TurnID, projected.Succeeded = latest.TurnID, latest.Succeeded
+	instance.threadSettings[request.ThreadID] = projected
+	instance.mu.Unlock()
+	instance.persistThreadSettingsAsync(request.ThreadID, projected)
+	instance.broadcastEvent("frontend.thread.settings.updated", map[string]any{"threadId": request.ThreadID})
 	return projectedMobileSettings(projected), nil
 }
 
@@ -1568,7 +1610,7 @@ func (m *Manager) fetchTimelineSegmentsScoped(instance mobileProviderCaller, thr
 		rawParams, _ := json.Marshal(providerParams)
 		raw, callErr := instance.Call(m.ctx, "thread/items/list", rawParams)
 		if callErr != nil {
-			return nil, &mobileContractError{code: "provider_error", message: callErr.Error()}
+			return nil, callErr
 		}
 		page, _, decodeErr := normalizeTimelinePage(raw)
 		if decodeErr != nil {
@@ -1648,7 +1690,7 @@ func (m *Manager) conversationSnapshotOnce(instance *Instance, agentID string, p
 	metadataParams, _ := json.Marshal(map[string]any{"threadId": request.ThreadID, "includeTurns": false})
 	raw, err := instance.Call(m.ctx, "thread/read", metadataParams)
 	if err != nil {
-		return mobileConversationSnapshot{}, &mobileContractError{code: "provider_error", message: err.Error()}
+		return mobileConversationSnapshot{}, err
 	}
 	metadata, err := normalizeConversationMetadata(agentID, raw)
 	if err != nil {
@@ -1755,7 +1797,7 @@ func (m *Manager) mobilePlanRespond(instance *Instance, agentID string, params j
 	}
 	result, callErr := instance.Call(m.ctx, "turn/start", providerParams)
 	if callErr != nil {
-		return nil, &mobileContractError{code: "provider_error", message: callErr.Error()}
+		return nil, callErr
 	}
 	response := map[string]any{"started": true}
 	var started struct {
@@ -1783,15 +1825,8 @@ func planTurnStartParams(threadID, decision, text string, settings threadCollabo
 		"input":             []map[string]any{{"type": "text", "text": text}},
 		"collaborationMode": map[string]any{"mode": mode, "settings": modeSettings},
 	}
-	if settings.PermissionProfile != "" {
-		params["permissions"] = settings.PermissionProfile
-	}
-	if settings.ApprovalPolicy != "" {
-		params["approvalPolicy"] = settings.ApprovalPolicy
-	}
-	if settings.ApprovalsReviewer != "" {
-		params["approvalsReviewer"] = settings.ApprovalsReviewer
-	}
+	// Omitting permission overrides inherits the live thread policy, including
+	// fields not understood by this client. A plan response only changes mode.
 	return params
 }
 
@@ -1802,7 +1837,7 @@ func (m *Manager) mobileQueueList(instance mobileProviderCaller, threadID string
 	params, _ := json.Marshal(map[string]any{"threadId": threadID, "limit": mobileMaxTimelineLimit})
 	raw, err := instance.Call(m.ctx, "thread/queue/list", params)
 	if err != nil {
-		return mobileQueuePage{}, &mobileContractError{code: "provider_error", message: err.Error()}
+		return mobileQueuePage{}, err
 	}
 	page, err := normalizeMobileQueuePage(raw)
 	if err != nil {
@@ -1840,7 +1875,7 @@ func (m *Manager) mobileQueueAdd(instance *Instance, params json.RawMessage) (mo
 	providerParams, _ := json.Marshal(provider)
 	raw, err := instance.Call(m.ctx, "thread/queue/add", providerParams)
 	if err != nil {
-		return mobileQueuedSubmission{}, &mobileContractError{code: "provider_error", message: err.Error()}
+		return mobileQueuedSubmission{}, err
 	}
 	result, err := normalizeQueuedMutation(raw)
 	if err != nil {
@@ -1860,7 +1895,7 @@ func (m *Manager) providerQueuedSubmission(instance mobileProviderCaller, thread
 		params, _ := json.Marshal(provider)
 		raw, err := instance.Call(m.ctx, "thread/queue/list", params)
 		if err != nil {
-			return providerQueuedSubmission{}, &mobileContractError{code: "provider_error", message: err.Error()}
+			return providerQueuedSubmission{}, err
 		}
 		var response struct {
 			Data       []providerQueuedSubmission `json:"data"`
@@ -1907,7 +1942,7 @@ func (m *Manager) mobileQueueUpdate(instance *Instance, params json.RawMessage) 
 	})
 	raw, err := instance.Call(m.ctx, "thread/queue/update", providerParams)
 	if err != nil {
-		return mobileQueuedSubmission{}, &mobileContractError{code: "provider_error", message: err.Error()}
+		return mobileQueuedSubmission{}, err
 	}
 	result, err := normalizeQueuedMutation(raw)
 	if err != nil {
@@ -1929,7 +1964,7 @@ func (m *Manager) mobileQueueDelete(instance *Instance, params json.RawMessage) 
 	}
 	providerParams, _ := json.Marshal(map[string]any{"threadId": request.ThreadID, "queuedSubmissionId": request.QueuedSubmission})
 	if _, err := instance.Call(m.ctx, "thread/queue/delete", providerParams); err != nil {
-		return nil, &mobileContractError{code: "provider_error", message: err.Error()}
+		return nil, err
 	}
 	return map[string]any{"deleted": true, "queuedSubmissionId": request.QueuedSubmission}, nil
 }
@@ -1948,7 +1983,7 @@ func (m *Manager) mobileQueueStart(instance *Instance, params json.RawMessage) (
 	providerParams, _ := json.Marshal(map[string]any{"threadId": request.ThreadID, "queuedSubmissionId": request.QueuedSubmission})
 	raw, err := instance.Call(m.ctx, "thread/queue/start", providerParams)
 	if err != nil {
-		return nil, &mobileContractError{code: "provider_error", message: err.Error()}
+		return nil, err
 	}
 	result := map[string]any{"started": true, "queuedSubmissionId": request.QueuedSubmission}
 	var started struct {

@@ -20,7 +20,7 @@ stopped → starting → waiting_initialize → ready
 - App Server 重启时用最新缓存参数自动 initialize。
 - 新 runtime 注册且实例空闲、无待处理 action 时立即重启。
 - 有活跃 Turn 或待处理 action 时标记 `upgrade_pending`，在安全边界后切换。
-- App Server 异常退出时清理 pending request；实例空闲且存在初始化缓存时最多自动重启一次，使用 250 ms 延迟。活跃 Turn、待处理 action 或自动重启失败时保持 `error`，不自动重放工作。
+- App Server 异常退出时清理 pending request；实例空闲且存在初始化缓存时最多自动重启一次，使用 250 ms 延迟。活跃 Turn、待处理 action、待启动 Turn、未完成写请求、结果未知的写请求或已用过自动恢复机会时保持 `error`，不自动重放工作。
 - Desktop Bridge 全部断开不会触发空闲回收。
 
 ## Interfaces
@@ -37,6 +37,9 @@ supervisor 接收 Bridge 的 WAI1 frames 和 daemon 控制请求，向 App Serve
 - 实例 lease 与 fallback lease 互斥，避免同一逻辑实例的重复 writer。
 - 启动失败进入 `error`，保留官方 session 文件和现有 JSON 配置，不覆盖原会话。
 - Pipe 在请求执行中断开只移除 frontend，不立即终止 App Server。
+- stdout JSONL 行上限为 64 MiB。超长或不可恢复读取错误按 generation 标记故障，保留具体错误，并直接终止该代子进程；终止不等待 stdin 写锁。旧 generation 的迟到错误不得影响新进程。
+- stderr 每行最多保留 64 KiB 诊断文本，超出部分继续分段排空至换行，并标记截断；读取错误同样结束对应进程。两个 reader 结束后统一回收进程、结束等待请求并通知 Desktop/Mobile，避免管道写满后永久阻塞。
+- 自动初始化成功不重置已经使用的自动恢复机会；业务写操作不重放。
 
 ## Invariants and non-goals
 
@@ -57,7 +60,7 @@ supervisor 接收 Bridge 的 WAI1 frames 和 daemon 控制请求，向 App Serve
 
 ## Verification
 
-- Fake App Server 测试启动、initialize、退出、重启和并发响应。
+- Fake App Server 测试启动、initialize、退出、重启和并发响应；独立测试子进程验证超长 stdout 退出、等待请求完成、超长 stderr 后继续读取、旧 generation 和恢复门禁。
 - Bridge 断开后 `instance list` 仍显示 `ready`。
 - daemon 正常/异常退出后确认其 Job Object 中的测试 App Server 已结束。
 - 升级测试覆盖空闲立即切换和活跃 Turn 后延迟切换。

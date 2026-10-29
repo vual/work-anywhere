@@ -80,6 +80,8 @@ type threadCollaborationSettings struct {
 	ReasoningEffort   string `json:"reasoningEffort,omitempty"`
 	PermissionModeID  string `json:"permissionModeId,omitempty"`
 	PermissionProfile string `json:"permissionProfile,omitempty"`
+	SandboxMode       string `json:"sandboxMode,omitempty"`
+	SandboxPolicyJSON string `json:"sandboxPolicyJSON,omitempty"`
 	ApprovalPolicy    string `json:"approvalPolicy,omitempty"`
 	ApprovalsReviewer string `json:"approvalsReviewer,omitempty"`
 	Succeeded         bool   `json:"succeeded"`
@@ -108,12 +110,14 @@ type Instance struct {
 	environment              []string
 	state                    string
 	lastError                string
+	outputError              string
 	activeTurns              map[string]string
 	desktops                 map[string]*clientConn
 	requests                 map[string]requestOrigin
 	actions                  map[string]*pendingAction
 	conversations            map[string]*conversationProjection
 	threadSettings           map[string]threadCollaborationSettings
+	settingsNotifications    map[string]uint64
 	pendingTurnSettings      map[string]threadCollaborationSettings
 	nextRequest              uint64
 	eventSequence            int64
@@ -128,6 +132,7 @@ type Instance struct {
 	initializeInFlight       bool
 	initializeWaiters        []initializeWaiter
 	autoRestartAttempted     bool
+	uncertainWrite           bool
 }
 
 type InstanceSnapshot struct {
@@ -150,12 +155,13 @@ func NewInstance(manager *Manager, hello protocol.Hello) *Instance {
 		args: append([]string(nil), hello.Args...), cwd: hello.CWD,
 		environment: append([]string(nil), hello.Environment...), state: "stopped",
 		desktops: make(map[string]*clientConn), requests: make(map[string]requestOrigin),
-		actions:             make(map[string]*pendingAction),
-		activeTurns:         make(map[string]string),
-		conversations:       make(map[string]*conversationProjection),
-		threadSettings:      make(map[string]threadCollaborationSettings),
-		pendingTurnSettings: make(map[string]threadCollaborationSettings),
-		pendingTurnStarts:   make(map[string]bool), createdThreads: make(map[string]bool), legacyTimeline: make(map[string]uint64),
+		actions:               make(map[string]*pendingAction),
+		activeTurns:           make(map[string]string),
+		conversations:         make(map[string]*conversationProjection),
+		threadSettings:        make(map[string]threadCollaborationSettings),
+		pendingTurnSettings:   make(map[string]threadCollaborationSettings),
+		settingsNotifications: make(map[string]uint64),
+		pendingTurnStarts:     make(map[string]bool), createdThreads: make(map[string]bool), legacyTimeline: make(map[string]uint64),
 	}
 }
 
@@ -246,17 +252,53 @@ func collaborationSettingsFromParams(params json.RawMessage, notification bool) 
 		model, _ = settingsRoot["model"].(string)
 	}
 	permissionProfile, _ := settingsRoot["permissions"].(string)
+	if active, ok := settingsRoot["activePermissionProfile"].(map[string]any); ok {
+		if id, ok := active["id"].(string); ok {
+			permissionProfile = id
+		}
+	}
 	approvalPolicy, _ := settingsRoot["approvalPolicy"].(string)
 	approvalsReviewer, _ := settingsRoot["approvalsReviewer"].(string)
+	sandboxMode := ""
+	sandboxJSON := ""
+	if sandbox, ok := settingsRoot["sandboxPolicy"].(map[string]any); ok {
+		sandboxMode, _ = sandbox["type"].(string)
+		encoded, _ := json.Marshal(sandbox)
+		sandboxJSON = string(encoded)
+	}
+	if sandboxMode == "" {
+		sandboxMode = sandboxPolicyTypeForProfile(permissionProfile)
+	}
+	if permissionProfile == "" {
+		permissionProfile = sandboxProfile(sandboxMode)
+	}
 	permissionModeID := permissionModeID(permissionProfile, approvalPolicy, approvalsReviewer)
+	if permissionModeID == "" {
+		permissionModeID = "custom"
+	}
 	if threadID == "" || (mode != "plan" && mode != "default") || model == "" {
 		return threadID, threadCollaborationSettings{}, false
 	}
 	return threadID, threadCollaborationSettings{
 		Mode: mode, Model: model, ReasoningEffort: effort,
 		PermissionModeID: permissionModeID, PermissionProfile: permissionProfile,
-		ApprovalPolicy: approvalPolicy, ApprovalsReviewer: approvalsReviewer,
+		SandboxMode:       sandboxMode,
+		SandboxPolicyJSON: sandboxJSON,
+		ApprovalPolicy:    approvalPolicy, ApprovalsReviewer: approvalsReviewer,
 	}, true
+}
+
+func sandboxPolicyTypeForProfile(profile string) string {
+	switch profile {
+	case ":danger-full-access":
+		return "dangerFullAccess"
+	case ":read-only":
+		return "readOnly"
+	case ":workspace":
+		return "workspaceWrite"
+	default:
+		return ""
+	}
 }
 
 func permissionModeID(profile, approvalPolicy, reviewer string) string {
@@ -281,6 +323,18 @@ func (i *Instance) observeOutgoingThreadSettings(method string, params json.RawM
 	threadID, settings, explicit := collaborationSettingsFromParams(params, false)
 	if threadID == "" {
 		return
+	}
+	if explicit && settings.SandboxPolicyJSON == "" && settings.PermissionProfile == "" {
+		if current, exists := i.collaborationSettings(threadID); exists {
+			settings.PermissionModeID, settings.PermissionProfile = current.PermissionModeID, current.PermissionProfile
+			settings.SandboxMode, settings.SandboxPolicyJSON = current.SandboxMode, current.SandboxPolicyJSON
+			if settings.ApprovalPolicy == "" {
+				settings.ApprovalPolicy = current.ApprovalPolicy
+			}
+			if settings.ApprovalsReviewer == "" {
+				settings.ApprovalsReviewer = current.ApprovalsReviewer
+			}
+		}
 	}
 	if !explicit {
 		var ok bool
@@ -346,6 +400,7 @@ func (i *Instance) observeThreadSettingsNotification(params json.RawMessage) {
 		settings.TurnID = current.TurnID
 		settings.Succeeded = current.Succeeded
 	}
+	i.settingsNotifications[threadID]++
 	i.threadSettings[threadID] = settings
 	i.mu.Unlock()
 	i.persistThreadSettingsAsync(threadID, settings)
@@ -400,13 +455,20 @@ func (i *Instance) RemoveDesktop(id string) {
 	i.mu.Unlock()
 }
 
-func (i *Instance) Start() error {
+func (i *Instance) Start() error { return i.startGeneration(nil) }
+
+func (i *Instance) startGeneration(expected *uint64) error {
 	i.mu.Lock()
+	if expected != nil && i.generation != *expected {
+		i.mu.Unlock()
+		return nil
+	}
 	if i.cmd != nil {
 		i.mu.Unlock()
 		return nil
 	}
-	i.state, i.lastError = "starting", ""
+	i.uncertainWrite = false
+	i.state, i.lastError, i.outputError = "starting", "", ""
 	if i.lease == nil {
 		lease, already, err := identity.AcquireLease(identity.InstanceMutexName(i.descriptor.ID))
 		if err != nil {
@@ -464,9 +526,11 @@ func (i *Instance) Start() error {
 	i.cmd, i.stdin, i.state = cmd, stdin, "waiting_initialize"
 	cachedInit := append([]byte(nil), i.cachedInitializeRequest...)
 	i.mu.Unlock()
-	go i.readServer(generation, stdout)
-	go i.readServerStderr(generation, stderr)
-	go i.waitServer(generation, cmd)
+	var readers sync.WaitGroup
+	readers.Add(2)
+	go func() { defer readers.Done(); i.readServer(generation, stdout) }()
+	go func() { defer readers.Done(); i.readServerStderr(generation, stderr) }()
+	go func() { readers.Wait(); i.waitServer(generation, cmd) }()
 	if len(cachedInit) > 0 {
 		i.mu.Lock()
 		i.initializeInFlight = true
@@ -653,6 +717,15 @@ func (i *Instance) removeRequest(key string) {
 	i.mu.Unlock()
 }
 
+func (i *Instance) abandonRequest(key string) {
+	i.mu.Lock()
+	if origin, ok := i.requests[key]; ok && !readOnlyProviderMethod(origin.method) {
+		i.uncertainWrite = true
+	}
+	delete(i.requests, key)
+	i.mu.Unlock()
+}
+
 func (i *Instance) logRequestFailure(key, method, reason string, started time.Time) {
 	if i.manager.log != nil {
 		i.manager.log.Event("appserver.request_failed", map[string]any{
@@ -684,6 +757,9 @@ func (i *Instance) resolveServerRequest(message jsonrpc.Message, raw []byte) err
 }
 
 func (i *Instance) writeServer(raw []byte) error {
+	if len(ensureNewline(raw)) > ipc.DefaultMaxFrame {
+		return &mobileContractError{code: "too_large", message: "serialized App Server request exceeds 64 MiB"}
+	}
 	i.mu.Lock()
 	stdin := i.stdin
 	i.mu.Unlock()
@@ -711,19 +787,66 @@ func (i *Instance) readServer(generation uint64, stream io.Reader) {
 			i.handleServerFrame(generation, line)
 		}
 		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				i.failServerOutput(generation, "stdout", err)
+			}
 			return
 		}
 	}
 }
 
 func (i *Instance) readServerStderr(generation uint64, stream io.Reader) {
-	reader := bufio.NewScanner(stream)
-	for reader.Scan() {
-		i.mu.Lock()
-		if generation == i.generation {
-			i.lastError = reader.Text()
+	reader := bufio.NewReaderSize(stream, 16<<10)
+	const maxDiagnostic = 64 << 10
+	line := make([]byte, 0, maxDiagnostic)
+	truncated := false
+	for {
+		fragment, err := reader.ReadSlice('\n')
+		remaining := maxDiagnostic - len(line)
+		if len(fragment) > remaining {
+			line = append(line, fragment[:remaining]...)
+			truncated = true
+		} else {
+			line = append(line, fragment...)
 		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		if len(line) > 0 {
+			message := strings.TrimRight(string(line), "\r\n")
+			if truncated {
+				message += " [truncated]"
+			}
+			i.mu.Lock()
+			if generation == i.generation && i.outputError == "" {
+				i.lastError = message
+			}
+			i.mu.Unlock()
+		}
+		line, truncated = line[:0], false
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				i.failServerOutput(generation, "stderr", err)
+			}
+			return
+		}
+	}
+}
+
+func (i *Instance) failServerOutput(generation uint64, stream string, err error) {
+	i.mu.Lock()
+	if generation != i.generation || i.outputError != "" {
 		i.mu.Unlock()
+		return
+	}
+	i.outputError = fmt.Sprintf("App Server %s read failed: %v", stream, err)
+	i.lastError, i.state = i.outputError, "error"
+	cmd := i.cmd
+	i.mu.Unlock()
+	// Never acquire serverWriteMu: the child may be blocked writing output
+	// while another goroutine is blocked writing its stdin.
+	if cmd != nil && cmd.Process != nil {
+		_ = cmd.Process.Kill()
 	}
 }
 
@@ -763,7 +886,6 @@ func (i *Instance) handleServerFrame(generation uint64, raw []byte) {
 			i.state = "ready"
 			i.cachedInitializeResponse = append([]byte(nil), raw...)
 			i.initializeInFlight = false
-			i.autoRestartAttempted = false
 			waiters := append([]initializeWaiter(nil), i.initializeWaiters...)
 			i.initializeWaiters = nil
 			initialized := append([]byte(nil), i.cachedInitialized...)
@@ -784,7 +906,6 @@ func (i *Instance) handleServerFrame(generation uint64, raw []byte) {
 			i.mu.Lock()
 			i.cachedInitializeResponse = append([]byte(nil), restored...)
 			i.initializeInFlight = false
-			i.autoRestartAttempted = false
 			waiters := append([]initializeWaiter(nil), i.initializeWaiters...)
 			i.initializeWaiters = nil
 			i.state = "ready"
@@ -991,7 +1112,15 @@ func (i *Instance) waitServer(generation uint64, cmd *exec.Cmd) {
 	origins := i.requests
 	i.requests = make(map[string]requestOrigin)
 	waiters := append([]initializeWaiter(nil), i.initializeWaiters...)
-	restartable := len(i.activeTurns) == 0 && len(i.actions) == 0 && len(i.cachedInitializeRequest) > 0 && !i.autoRestartAttempted
+	restartable := len(i.activeTurns) == 0 && len(i.actions) == 0 && len(i.pendingTurnStarts) == 0 && len(i.cachedInitializeRequest) > 0 && !i.autoRestartAttempted && !i.uncertainWrite
+	for _, origin := range origins {
+		if !readOnlyProviderMethod(origin.method) {
+			restartable = false
+		}
+	}
+	if i.outputError != "" {
+		err = errors.New(i.outputError)
+	}
 	if restartable {
 		i.autoRestartAttempted = true
 		for _, origin := range origins {
@@ -1005,6 +1134,7 @@ func (i *Instance) waitServer(generation uint64, cmd *exec.Cmd) {
 	i.cmd, i.stdin = nil, nil
 	i.activeTurns = make(map[string]string)
 	i.pendingTurnStarts = make(map[string]bool)
+	i.pendingTurnSettings = make(map[string]threadCollaborationSettings)
 	i.createdThreads = make(map[string]bool)
 	i.legacyTimeline = make(map[string]uint64)
 	i.actions = make(map[string]*pendingAction)
@@ -1016,12 +1146,13 @@ func (i *Instance) waitServer(generation uint64, cmd *exec.Cmd) {
 	}
 	i.mu.Unlock()
 	for id, origin := range origins {
-		i.notifyRequestFailure(id, origin, "App Server exited")
+		i.notifyRequestFailure(id, origin, "App Server exited: "+errorText(err))
 	}
 	if !restartable {
 		i.answerInitializeFailure(waiters, "App Server exited")
 	}
 	i.broadcastFrame(ipc.Frame{Kind: ipc.KindServerExit, Metadata: ipc.Metadata(map[string]any{"code": code, "error": errorText(err)})})
+	i.broadcastEvent("frontend.instance.exited", map[string]any{"code": code, "error": errorText(err)})
 	if restartable {
 		go func() {
 			timer := time.NewTimer(250 * time.Millisecond)
@@ -1035,7 +1166,7 @@ func (i *Instance) waitServer(generation uint64, cmd *exec.Cmd) {
 			} else {
 				<-timer.C
 			}
-			if restartErr := i.Restart(); restartErr != nil && i.manager.log != nil {
+			if restartErr := i.startGeneration(&generation); restartErr != nil && i.manager.log != nil {
 				i.manager.log.Event("instance.auto_restart_failed", map[string]any{"instanceId": i.descriptor.ID, "error": restartErr.Error()})
 			}
 		}()
@@ -1281,14 +1412,19 @@ func (i *Instance) call(ctx context.Context, method string, params json.RawMessa
 	response := make(chan []byte, 1)
 	i.requests[string(mustJSON(id))] = requestOrigin{method: method, internal: true, response: response, startedAt: time.Now()}
 	i.mu.Unlock()
-	if observeSettings {
-		i.observeOutgoingThreadSettings(method, params)
-	}
 	request := map[string]any{"jsonrpc": "2.0", "id": id, "method": method}
 	if len(bytes.TrimSpace(params)) > 0 && !bytes.Equal(bytes.TrimSpace(params), []byte("null")) {
 		request["params"] = json.RawMessage(params)
 	}
 	raw, _ := json.Marshal(request)
+	if len(raw)+1 > ipc.DefaultMaxFrame {
+		i.removeRequest(string(mustJSON(id)))
+		i.clearPendingTurnSettings(method, params)
+		return nil, &mobileContractError{code: "too_large", message: "serialized App Server request exceeds 64 MiB"}
+	}
+	if observeSettings {
+		i.observeOutgoingThreadSettings(method, params)
+	}
 	if method == "turn/start" {
 		i.broadcastEvent("frontend.turn.start", map[string]any{"params": json.RawMessage(params), "source": "control"})
 	}
@@ -1301,7 +1437,7 @@ func (i *Instance) call(ctx context.Context, method string, params json.RawMessa
 	}
 	i.mu.Unlock()
 	if err := i.writeServer(append(raw, '\n')); err != nil {
-		i.removeRequest(requestKey)
+		i.abandonRequest(requestKey)
 		i.logRequestFailure(requestKey, method, err.Error(), started)
 		i.clearPendingTurnSettings(method, params)
 		return nil, err
@@ -1344,12 +1480,12 @@ func (i *Instance) call(ctx context.Context, method string, params json.RawMessa
 		}
 		return append(json.RawMessage(nil), message.Result...), nil
 	case <-ctx.Done():
-		i.removeRequest(requestKey)
+		i.abandonRequest(requestKey)
 		i.logRequestFailure(requestKey, method, ctx.Err().Error(), started)
 		i.clearPendingTurnSettings(method, params)
 		return nil, ctx.Err()
 	case <-timer.C:
-		i.removeRequest(requestKey)
+		i.abandonRequest(requestKey)
 		i.logRequestFailure(requestKey, method, "App Server request timed out", started)
 		i.clearPendingTurnSettings(method, params)
 		return nil, errors.New("App Server request timed out")
