@@ -1,6 +1,7 @@
 // Package claudecode serves local Claude Code sessions through the Mobile
-// contract. Conversations are read from the CLI's transcript store; sessions
-// that are open in another Claude Code process are exposed read-only.
+// contract. History is read from the CLI's transcript store; turns run in
+// headless Claude Code processes owned by the daemon. Sessions that are open
+// in another Claude Code process are exposed read-only.
 package claudecode
 
 import (
@@ -11,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -27,9 +29,11 @@ import (
 const (
 	Kind                 = "claude-code"
 	defaultPollInterval  = 2 * time.Second
+	defaultIdleTimeout   = 10 * time.Minute
 	defaultListLimit     = 20
 	maxListLimit         = 100
 	maxCachedTranscripts = 8
+	maxClientMessages    = 1024
 )
 
 var sessionIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -37,11 +41,20 @@ var sessionIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-
 type Options struct {
 	// ConfigDir is the Claude Code configuration directory. Empty means
 	// CLAUDE_CONFIG_DIR, then ~/.claude.
-	ConfigDir    string
+	ConfigDir string
+	// Executable overrides Claude Code executable discovery.
+	Executable   string
 	Name         string
 	PollInterval time.Duration
-	// Alive overrides process liveness checks in tests.
-	Alive func(pid int, startTime string) bool
+	// IdleTimeout stops a session process that has had no turn or pending
+	// request for this long. The conversation resumes on the next turn.
+	IdleTimeout time.Duration
+	// Attach places started processes into the daemon's process group.
+	Attach func(*exec.Cmd) error
+	// Alive and Resolve override process liveness and runtime discovery in
+	// tests.
+	Alive   func(pid int, startTime string) bool
+	Resolve func(ctx context.Context) (Runtime, error)
 }
 
 type fileEntry struct {
@@ -57,24 +70,44 @@ type cachedTranscript struct {
 	lastUsed time.Time
 }
 
-type liveSession struct {
+type registryEntry struct {
 	PID       int    `json:"pid"`
 	SessionID string `json:"sessionId"`
 	ProcStart string `json:"procStart"`
 }
 
-type Backend struct {
-	agentID   string
-	name      string
-	configDir string
-	poll      time.Duration
-	alive     func(int, string) bool
+// createdConversation is a conversation created from Mobile whose first turn
+// has not produced a transcript yet.
+type createdConversation struct {
+	projectID string
+	cwd       string
+	createdAt int64
+}
 
-	mu          sync.Mutex
-	files       map[string]*fileEntry
-	transcripts map[string]*cachedTranscript
-	live        map[string]bool
-	notify      provider.Notifier
+type Backend struct {
+	agentID     string
+	name        string
+	configDir   string
+	executable  string
+	poll        time.Duration
+	idleTimeout time.Duration
+	alive       func(int, string) bool
+	resolve     func(context.Context) (Runtime, error)
+	attach      func(*exec.Cmd) error
+
+	mu             sync.Mutex
+	files          map[string]*fileEntry
+	transcripts    map[string]*cachedTranscript
+	live           map[string]bool
+	created        map[string]*createdConversation
+	settings       map[string]provider.ConversationSettings
+	processes      map[string]*sessionProcess
+	ownPIDs        map[int]bool
+	clientMessages map[string]string
+	runtime        Runtime
+	runtimeError   string
+	runtimeReady   bool
+	notify         provider.Notifier
 }
 
 func ResolveConfigDir(configured string) (string, error) {
@@ -103,28 +136,41 @@ func New(options Options) (*Backend, error) {
 	if err != nil {
 		return nil, err
 	}
-	name := options.Name
-	if name == "" {
-		name = "Claude Code"
+	b := &Backend{
+		agentID:        AgentID(configDir),
+		name:           options.Name,
+		configDir:      configDir,
+		executable:     options.Executable,
+		poll:           options.PollInterval,
+		idleTimeout:    options.IdleTimeout,
+		alive:          options.Alive,
+		resolve:        options.Resolve,
+		attach:         options.Attach,
+		files:          make(map[string]*fileEntry),
+		transcripts:    make(map[string]*cachedTranscript),
+		live:           make(map[string]bool),
+		created:        make(map[string]*createdConversation),
+		settings:       make(map[string]provider.ConversationSettings),
+		processes:      make(map[string]*sessionProcess),
+		ownPIDs:        make(map[int]bool),
+		clientMessages: make(map[string]string),
 	}
-	poll := options.PollInterval
-	if poll <= 0 {
-		poll = defaultPollInterval
+	if b.name == "" {
+		b.name = "Claude Code"
 	}
-	alive := options.Alive
-	if alive == nil {
-		alive = processinfo.Alive
+	if b.poll <= 0 {
+		b.poll = defaultPollInterval
 	}
-	return &Backend{
-		agentID:     AgentID(configDir),
-		name:        name,
-		configDir:   configDir,
-		poll:        poll,
-		alive:       alive,
-		files:       make(map[string]*fileEntry),
-		transcripts: make(map[string]*cachedTranscript),
-		live:        make(map[string]bool),
-	}, nil
+	if b.idleTimeout <= 0 {
+		b.idleTimeout = defaultIdleTimeout
+	}
+	if b.alive == nil {
+		b.alive = processinfo.Alive
+	}
+	if b.resolve == nil {
+		b.resolve = func(ctx context.Context) (Runtime, error) { return ResolveRuntime(ctx, b.executable) }
+	}
+	return b, nil
 }
 
 // AgentID is stable for one Claude Code configuration directory.
@@ -133,17 +179,29 @@ func AgentID(configDir string) string {
 }
 
 func (b *Backend) Agent() provider.AgentSummary {
-	status := "ready"
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	summary := provider.AgentSummary{ID: b.agentID, Name: b.name, Kind: Kind, Status: "ready"}
 	if !Available(b.configDir) {
-		status = "unavailable"
+		summary.Status = "unavailable"
 	}
-	return provider.AgentSummary{ID: b.agentID, Name: b.name, Kind: Kind, Status: status, Capabilities: &provider.Capabilities{History: true, DesktopMirror: true}}
+	capabilities := provider.Capabilities{History: true, DesktopMirror: true}
+	if b.runtime.Executable != "" {
+		capabilities = provider.Capabilities{History: true, LiveStream: true, TextInput: true, ImageInput: true, Approval: true, Question: true, Interrupt: true, Plan: true, CreateConversation: true, ModelSelection: true, ReasoningSelection: true, PermissionMode: true, DesktopMirror: true}
+	}
+	summary.Capabilities = &capabilities
+	for _, process := range b.processes {
+		summary.ActiveTurn = summary.ActiveTurn || process.turnActive
+		summary.PendingActions += len(process.requests)
+	}
+	return summary
 }
 
 func (b *Backend) Start(ctx context.Context, notify provider.Notifier) error {
 	b.mu.Lock()
 	b.notify = notify
 	b.mu.Unlock()
+	go b.resolveRuntime(ctx)
 	if err := b.refresh(); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -151,7 +209,43 @@ func (b *Backend) Start(ctx context.Context, notify provider.Notifier) error {
 	return nil
 }
 
-func (b *Backend) Close() error { return nil }
+func (b *Backend) resolveRuntime(ctx context.Context) {
+	resolved, err := b.resolve(ctx)
+	b.mu.Lock()
+	b.runtimeReady = true
+	if err != nil {
+		b.runtimeError = err.Error()
+	} else {
+		b.runtime, b.runtimeError = resolved, ""
+	}
+	b.mu.Unlock()
+	// Capabilities change once the CLI is known; let Mobile refresh.
+	b.emit(provider.Event{Kind: provider.EventChanged})
+}
+
+// Close stops every session process. The daemon's process group also kills
+// them if the daemon exits without calling Close.
+func (b *Backend) Close() error {
+	b.mu.Lock()
+	processes := make([]*sessionProcess, 0, len(b.processes))
+	for _, process := range b.processes {
+		processes = append(processes, process)
+	}
+	b.mu.Unlock()
+	for _, process := range processes {
+		process.kill()
+	}
+	return nil
+}
+
+func (b *Backend) emit(event provider.Event) {
+	b.mu.Lock()
+	notify := b.notify
+	b.mu.Unlock()
+	if notify != nil {
+		notify(event)
+	}
+}
 
 func (b *Backend) watch(ctx context.Context) {
 	ticker := time.NewTicker(b.poll)
@@ -159,10 +253,27 @@ func (b *Backend) watch(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			_ = b.Close()
 			return
 		case <-ticker.C:
 			_ = b.refresh()
+			b.stopIdleProcesses(time.Now())
 		}
+	}
+}
+
+func (b *Backend) stopIdleProcesses(now time.Time) {
+	b.mu.Lock()
+	idle := make([]*sessionProcess, 0)
+	for id, process := range b.processes {
+		if !process.turnActive && len(process.requests) == 0 && now.Sub(process.lastUsed) >= b.idleTimeout {
+			delete(b.processes, id)
+			idle = append(idle, process)
+		}
+	}
+	b.mu.Unlock()
+	for _, process := range idle {
+		process.stop()
 	}
 }
 
@@ -170,20 +281,14 @@ func (b *Backend) watch(ctx context.Context) {
 // change through the notifier. It is the only writer of the summary index.
 func (b *Backend) refresh() error {
 	changed, listChanged, err := b.refreshIndex()
-	liveChanged := b.refreshLive()
-	for id := range liveChanged {
+	for id := range b.refreshLive() {
 		changed[id] = true
 	}
-	b.mu.Lock()
-	notify := b.notify
-	b.mu.Unlock()
-	if notify != nil {
-		if listChanged || len(changed) > 0 {
-			notify("")
-		}
-		for id := range changed {
-			notify(id)
-		}
+	if listChanged || len(changed) > 0 {
+		b.emit(provider.Event{Kind: provider.EventChanged})
+	}
+	for id := range changed {
+		b.emit(provider.Event{Kind: provider.EventChanged, ConversationID: id})
 	}
 	return err
 }
@@ -222,6 +327,9 @@ func (b *Backend) refreshIndex() (map[string]bool, bool, error) {
 		if entry.scan != before {
 			changed[id] = true
 		}
+		if entry.summary.HasPrompt {
+			delete(b.created, id)
+		}
 	}
 	for id := range b.files {
 		if !seen[id] {
@@ -234,8 +342,15 @@ func (b *Backend) refreshIndex() (map[string]bool, bool, error) {
 }
 
 // refreshLive reads the CLI's live-session registry. Each running Claude
-// Code process writes sessions/<pid>.json naming the session it owns.
+// Code process writes sessions/<pid>.json naming the session it owns;
+// processes started by this backend are not external owners.
 func (b *Backend) refreshLive() map[string]bool {
+	b.mu.Lock()
+	own := make(map[int]bool, len(b.ownPIDs))
+	for pid := range b.ownPIDs {
+		own[pid] = true
+	}
+	b.mu.Unlock()
 	live := make(map[string]bool)
 	paths, _ := filepath.Glob(filepath.Join(b.configDir, "sessions", "*.json"))
 	for _, path := range paths {
@@ -243,8 +358,8 @@ func (b *Backend) refreshLive() map[string]bool {
 		if err != nil {
 			continue
 		}
-		var session liveSession
-		if json.Unmarshal(data, &session) != nil || session.SessionID == "" {
+		var session registryEntry
+		if json.Unmarshal(data, &session) != nil || session.SessionID == "" || own[session.PID] {
 			continue
 		}
 		if b.alive(session.PID, session.ProcStart) {
@@ -300,11 +415,27 @@ func (b *Backend) ListProjects(context.Context) ([]provider.ProjectSummary, erro
 	return result, nil
 }
 
-// ProjectRoot returns the working directory recorded for projectID. Mobile
-// never supplies paths; every cwd is taken from the transcript index.
-func (b *Backend) ProjectRoot(projectID string) (string, bool) {
+// ProjectRoot returns the working directory of a project, or of the project
+// that owns conversationID. Every cwd comes from the transcript index or from
+// a conversation created against an indexed project.
+func (b *Backend) ProjectRoot(projectID, conversationID string) (string, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	return b.projectRootLocked(projectID, conversationID)
+}
+
+func (b *Backend) projectRootLocked(projectID, conversationID string) (string, bool) {
+	if conversationID != "" {
+		if entry := b.files[conversationID]; entry != nil && entry.summary.CWD != "" {
+			return entry.summary.CWD, true
+		}
+		if created := b.created[conversationID]; created != nil {
+			return created.cwd, true
+		}
+		if projectID == "" {
+			return "", false
+		}
+	}
 	for _, entry := range b.files {
 		if entry.summary.CWD != "" && ProjectID(entry.summary.CWD) == projectID {
 			return entry.summary.CWD, true
@@ -363,18 +494,46 @@ func (b *Backend) ListConversations(_ context.Context, query provider.Conversati
 }
 
 func (b *Backend) conversationSummaryLocked(id string, entry *fileEntry) provider.ConversationSummary {
-	result := provider.ConversationSummary{ID: id, AgentID: b.agentID, Title: entry.summary.title(), Status: "idle", ExternallyActive: b.live[id], CreatedAt: entry.summary.CreatedAt, UpdatedAt: entry.updatedAt()}
+	result := provider.ConversationSummary{ID: id, AgentID: b.agentID, Title: entry.summary.title(), ExternallyActive: b.live[id], CreatedAt: entry.summary.CreatedAt, UpdatedAt: entry.updatedAt()}
 	if entry.summary.CWD != "" {
 		result.ProjectID = ProjectID(entry.summary.CWD)
 		result.ProjectName = projectName(entry.summary.CWD)
 	}
+	result.Status, result.Running, result.NeedsAttention = b.statusLocked(id)
 	return result
+}
+
+// statusLocked derives the Mobile status from this backend's own process.
+// Conversations open elsewhere report idle with ExternallyActive set.
+func (b *Backend) statusLocked(id string) (string, bool, bool) {
+	process := b.processes[id]
+	if process == nil {
+		return "idle", false, false
+	}
+	for _, request := range process.requests {
+		switch request.kind {
+		case actionKindUserInput:
+			return "waitingOnUserInput", true, true
+		default:
+			return "waitingOnApproval", true, true
+		}
+	}
+	if process.turnActive {
+		return "running", true, false
+	}
+	return "idle", false, false
 }
 
 func (b *Backend) ReadConversation(_ context.Context, conversationID string) (provider.ConversationMetadata, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	entry := b.files[conversationID]
+	if entry == nil || !entry.summary.HasPrompt {
+		if created := b.created[conversationID]; created != nil {
+			status, running, _ := b.statusLocked(conversationID)
+			return provider.ConversationMetadata{ID: conversationID, AgentID: b.agentID, ProjectID: created.projectID, Title: "New conversation", Status: status, Running: running, CreatedAt: created.createdAt, UpdatedAt: created.createdAt}, nil
+		}
+	}
 	if entry == nil {
 		return provider.ConversationMetadata{}, provider.NewError("not_found", "conversation not found")
 	}
@@ -410,11 +569,16 @@ func (b *Backend) Timeline(_ context.Context, conversationID, cursor string, lim
 	}
 	start := max(end-limit, 0)
 	page := provider.TimelinePage{Items: make([]provider.TimelineItem, 0, end-start)}
+	b.mu.Lock()
 	for index := end - 1; index >= start; index-- {
 		item := items[index]
 		item.Blocks = append([]provider.TimelineBlock(nil), item.Blocks...)
+		if item.Kind == "userMessage" {
+			item.ClientMessageID = b.clientMessages[item.ID]
+		}
 		page.Items = append(page.Items, item)
 	}
+	b.mu.Unlock()
 	if start > 0 {
 		page.NextCursor = base64.RawURLEncoding.EncodeToString([]byte(items[start].ID))
 	}
@@ -445,6 +609,9 @@ func (b *Backend) timelineItems(conversationID string) ([]provider.TimelineItem,
 	defer b.mu.Unlock()
 	entry := b.files[conversationID]
 	if entry == nil {
+		if b.created[conversationID] != nil {
+			return nil, nil
+		}
 		return nil, provider.NewError("not_found", "conversation not found")
 	}
 	cached := b.transcripts[conversationID]

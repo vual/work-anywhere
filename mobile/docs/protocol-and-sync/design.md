@@ -50,7 +50,7 @@ plan.respond(agentId, threadId, planItemId, expectedRevision, decision, text)
 
 `agent.list` 的 Codex adapter 可由现有 `instance.list` 投影；Mobile contract 下的 `project.list` 由 Desktop 根据 provider 项目和完整 thread metadata 聚合，只返回有对话的项目，并以项目最近一条对话的 `updatedAt desc, projectId desc` 排序。Desktop 优先使用 thread `projectId` 关联项目；该字段缺失、为空或无效时，根据 thread cwd/environment workspace roots 匹配 provider 项目的主目录。Codex 当前的 Project DTO 没有单独的主目录标记，Desktop 将 `roots` 中第一项非空路径视为主目录，后续 roots 仅作为附加工作目录，不参与项目归属匹配。`ProjectSummary.updatedAt` 表示该最近对话时间；cursor 以更新时间和项目 ID 锚定，不能因并列时间重复或漏项。不能由 Mobile 对最近 20 条记录按路径字符串猜测项目。`conversation.list` 的 `projectId`、`query`、`limit` 和 cursor 由 Desktop 执行，排序固定为 `updatedAt desc, id desc`，同一 cursor 下不能因并列时间重复或漏项。Desktop 归一化 `thread/list` 时以及 Mobile 展示分页结果时都以会话 ID 作为唯一键；同一会话在 provider 刷新或分页边界重复返回时只保留一条。同名但 ID 不同的会话仍分别展示。
 
-Agent 声明 `navigationKind = projects | bots | none`。Codex 为 `projects`；Hermes 未来为 `bots`，并在实现时增加同属 `conversation.read` scope 的 `bot.list`。Claude Code 由 Desktop 只读后端提供（`kind=claude-code`，`projects` 导航，见 [Desktop 设计](../../../desktop/docs/claude-code-provider/design.md)）：`agent.list` 返回的 `capabilities` 只声明 `history` 与 `desktopMirror`，写方法返回 `unsupported_capability`；`ConversationSummary`/快照 metadata 的 `externallyActive=true` 表示会话正在电脑端使用。Mobile 当前尚未按 `capabilities` 隐藏写控件，也未展示 `externallyActive`。未适配的 OpenCode、Pi 等可以由 `agent.list` 返回 discovery metadata，但 `supported=false`，Mobile 不调用项目/对话写接口。
+Agent 声明 `navigationKind = projects | bots | none`。Codex 为 `projects`；Hermes 未来为 `bots`，并在实现时增加同属 `conversation.read` scope 的 `bot.list`。Claude Code 由 Desktop 后端提供（`kind=claude-code`，`projects` 导航，见 [Desktop 设计](../../../desktop/docs/claude-code-provider/design.md)）：会话浏览、新建、发送文字/图片、实时文字与思考、审批、提问、计划确认、中断、模型/effort/权限选择使用与 Codex 相同的方法和 DTO；`capabilities.queue`/`steer` 为 false，快照 `capabilities.queue=false`；action 可带 `detail`；`ConversationSummary`/快照 metadata 的 `externallyActive=true` 表示会话正在电脑端使用，`turn.start` 返回 `conversation_busy_external`。Mobile 当前尚未按 agent `capabilities` 隐藏控件，也未展示 `externallyActive` 或 action `detail`。未适配的 OpenCode、Pi 等可以由 `agent.list` 返回 discovery metadata，但 `supported=false`，Mobile 不调用项目/对话写接口。
 
 ## 配对流程
 
@@ -206,7 +206,7 @@ Mobile 获取新 APNs/FCM token 后递增本地 generation，并由 host 直接�
 - 无已验证 grant 就没有持久 pairing；无完成 Noise handshake 就不发送 control JSON。
 - 任一 session 每方向 sequence 单调；gap/tamper/revoke 必须重建而非继续。
 - 不提供离线 outbox、自动重放写命令、exactly-once 承诺或通知内审批。`conversation.create` 只接受当前项目 ID，不接受 Mobile 提供 cwd；Desktop 必须使用 provider 项目目录解析出的可信主目录创建 thread，结果未知时不自动重放。
-- V1 发布 Codex `projects` adapter 和只读 Claude Code `projects` adapter；Hermes `bots` 和其他 Provider 仅保留 capability/DTO 边界，不作为已实现能力。
+- V1 发布 Codex `projects` adapter 和 Claude Code `projects` adapter；Hermes `bots` 和其他 Provider 仅保留 capability/DTO 边界，不作为已实现能力。
 - Mobile 不拥有 Relay schema 或 Desktop 业务 DTO 的平行副本。
 
 ## 代码归属

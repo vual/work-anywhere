@@ -865,15 +865,7 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 			object["instanceId"], _ = json.Marshal(instance.descriptor.ID)
 			rawParams, _ = json.Marshal(object)
 		}
-		var params struct {
-			InstanceID     string `json:"instanceId"`
-			ProjectID      string `json:"projectId"`
-			ConversationID string `json:"conversationId"`
-			MessageID      string `json:"clientMessageId"`
-			MimeType       string `json:"mimeType"`
-			FileName       string `json:"fileName"`
-			Size           int64  `json:"size"`
-		}
+		var params attachmentBeginParams
 		if json.Unmarshal(rawParams, &params) != nil || params.InstanceID == "" || params.MimeType == "" || params.ConversationID == "" || params.MessageID == "" {
 			response.Error = &protocol.ControlError{Code: "invalid_params", Message: "target, conversationId, clientMessageId, and mimeType are required"}
 			break
@@ -892,44 +884,7 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 			response.Error = &protocol.ControlError{Code: "project_not_resolved", Message: err.Error()}
 			break
 		}
-		if err = validateAttachmentSegment(params.ConversationID); err != nil {
-			response.Error = &protocol.ControlError{Code: "invalid_params", Message: "invalid conversationId"}
-			break
-		}
-		if err = validateAttachmentSegment(params.MessageID); err != nil {
-			response.Error = &protocol.ControlError{Code: "invalid_params", Message: "invalid clientMessageId"}
-			break
-		}
-		if err = validateAttachmentFileName(params.FileName); err != nil {
-			response.Error = &protocol.ControlError{Code: "invalid_params", Message: "invalid fileName"}
-			break
-		}
-		id := randomToken(18)
-		fileName := attachmentFileName(params.FileName)
-		directory := filepath.Join(root, remoteAttachmentDirectory, params.ConversationID, params.MessageID)
-		if err = os.MkdirAll(directory, 0o700); err != nil {
-			response.Error = &protocol.ControlError{Code: "attachment_store_error", Message: err.Error()}
-			break
-		}
-		m.cleanupExpiredAttachments()
-		cleanupStaleAttachmentFiles(filepath.Join(root, remoteAttachmentDirectory))
-		ext := filepath.Ext(fileName)
-		finalPath := filepath.Join(directory, strings.TrimSuffix(fileName, ext)+"-"+id+ext)
-		temporaryPath := filepath.Join(directory, "."+id+".part")
-		file, createErr := os.OpenFile(temporaryPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-		if createErr != nil {
-			response.Error = &protocol.ControlError{Code: "attachment_store_error", Message: createErr.Error()}
-			break
-		}
-		if closeErr := file.Close(); closeErr != nil {
-			_ = os.Remove(temporaryPath)
-			response.Error = &protocol.ControlError{Code: "attachment_store_error", Message: closeErr.Error()}
-			break
-		}
-		m.uploadMu.Lock()
-		m.uploads[id] = &attachmentUpload{ID: id, InstanceID: params.InstanceID, ProjectID: params.ProjectID, ConversationID: params.ConversationID, MessageID: params.MessageID, MimeType: params.MimeType, FileName: fileName, Path: finalPath, TemporaryPath: temporaryPath, ExpectedSize: params.Size, CreatedAt: time.Now()}
-		m.uploadMu.Unlock()
-		response.Result = map[string]any{"attachmentId": id}
+		response.Result, response.Error = m.beginAttachment(params, root)
 	case "attachment.chunk":
 		var params struct{ AttachmentID, Data string }
 		if json.Unmarshal(request.Params, &params) != nil {
@@ -1132,6 +1087,61 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 		response.Error = &protocol.ControlError{Code: "method_not_found", Message: request.Method}
 	}
 	return response
+}
+
+type attachmentBeginParams struct {
+	InstanceID     string `json:"instanceId"`
+	ProjectID      string `json:"projectId"`
+	ConversationID string `json:"conversationId"`
+	MessageID      string `json:"clientMessageId"`
+	MimeType       string `json:"mimeType"`
+	FileName       string `json:"fileName"`
+	Size           int64  `json:"size"`
+}
+
+// beginAttachment stores a new upload under the trusted project root. The
+// owner (Codex instance or backend agent) is bound to the upload so only the
+// same owner's turn.start can consume it.
+func (m *Manager) beginAttachment(params attachmentBeginParams, root string) (any, *protocol.ControlError) {
+	if params.InstanceID == "" || params.MimeType == "" || params.ConversationID == "" || params.MessageID == "" {
+		return nil, &protocol.ControlError{Code: "invalid_params", Message: "target, conversationId, clientMessageId, and mimeType are required"}
+	}
+	if params.Size < 0 || params.Size > maxAttachmentBytes {
+		return nil, &protocol.ControlError{Code: "too_large", Message: "attachment exceeds 48 MiB"}
+	}
+	var err error
+	if err = validateAttachmentSegment(params.ConversationID); err != nil {
+		return nil, &protocol.ControlError{Code: "invalid_params", Message: "invalid conversationId"}
+	}
+	if err = validateAttachmentSegment(params.MessageID); err != nil {
+		return nil, &protocol.ControlError{Code: "invalid_params", Message: "invalid clientMessageId"}
+	}
+	if err = validateAttachmentFileName(params.FileName); err != nil {
+		return nil, &protocol.ControlError{Code: "invalid_params", Message: "invalid fileName"}
+	}
+	id := randomToken(18)
+	fileName := attachmentFileName(params.FileName)
+	directory := filepath.Join(root, remoteAttachmentDirectory, params.ConversationID, params.MessageID)
+	if err = os.MkdirAll(directory, 0o700); err != nil {
+		return nil, &protocol.ControlError{Code: "attachment_store_error", Message: err.Error()}
+	}
+	m.cleanupExpiredAttachments()
+	cleanupStaleAttachmentFiles(filepath.Join(root, remoteAttachmentDirectory))
+	ext := filepath.Ext(fileName)
+	finalPath := filepath.Join(directory, strings.TrimSuffix(fileName, ext)+"-"+id+ext)
+	temporaryPath := filepath.Join(directory, "."+id+".part")
+	file, createErr := os.OpenFile(temporaryPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if createErr != nil {
+		return nil, &protocol.ControlError{Code: "attachment_store_error", Message: createErr.Error()}
+	}
+	if closeErr := file.Close(); closeErr != nil {
+		_ = os.Remove(temporaryPath)
+		return nil, &protocol.ControlError{Code: "attachment_store_error", Message: closeErr.Error()}
+	}
+	m.uploadMu.Lock()
+	m.uploads[id] = &attachmentUpload{ID: id, InstanceID: params.InstanceID, ProjectID: params.ProjectID, ConversationID: params.ConversationID, MessageID: params.MessageID, MimeType: params.MimeType, FileName: fileName, Path: finalPath, TemporaryPath: temporaryPath, ExpectedSize: params.Size, CreatedAt: time.Now()}
+	m.uploadMu.Unlock()
+	return map[string]any{"attachmentId": id}, nil
 }
 
 func isMutatingControlMethod(method string) bool {

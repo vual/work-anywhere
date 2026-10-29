@@ -27,6 +27,7 @@ type record struct {
 	IsCompactSummary          bool            `json:"isCompactSummary"`
 	IsVisibleInTranscriptOnly bool            `json:"isVisibleInTranscriptOnly"`
 	IsAPIErrorMessage         bool            `json:"isApiErrorMessage"`
+	APIBlockIndex             *int            `json:"apiBlockIndex"`
 	CWD                       string          `json:"cwd"`
 	SessionID                 string          `json:"sessionId"`
 	Timestamp                 string          `json:"timestamp"`
@@ -180,8 +181,15 @@ func (t *transcript) observeAssistant(r *record) {
 		return
 	}
 	for index, block := range decodeContent(r.Message.Content) {
+		// Live stream deltas address blocks by API message ID and block index,
+		// so the persisted item uses the same identity.
 		id := r.UUID
-		if index > 0 {
+		switch {
+		case r.Message.ID != "" && r.APIBlockIndex != nil:
+			id = assistantItemID(r.Message.ID, *r.APIBlockIndex+index)
+		case r.Message.ID != "":
+			id = assistantItemID(r.Message.ID, index)
+		case index > 0:
 			id = fmt.Sprintf("%s:%d", r.UUID, index)
 		}
 		switch block.Type {
@@ -217,7 +225,8 @@ func (t *transcript) applyToolResult(block contentBlock) {
 	}
 	item := &t.items[index]
 	item.Status = "completed"
-	if block.IsError {
+	// A declined plan is a revision request, not a failed plan.
+	if block.IsError && item.Kind != "plan" {
 		item.Status = "failed"
 	}
 	if item.Kind != "commandExecution" {
@@ -256,6 +265,13 @@ func toolItem(id, turnID, name string, rawInput json.RawMessage) provider.Timeli
 		item.Kind = "fileChange"
 		item.Blocks = []provider.TimelineBlock{{Kind: "diff", Text: fileChangeText(name, input)}}
 		return item
+	case "ExitPlanMode":
+		// The tool_use ID is the plan item ID used by plan confirmation.
+		if plan := str("plan"); strings.TrimSpace(plan) != "" {
+			item.Kind = "plan"
+			item.Blocks = []provider.TimelineBlock{{Kind: "plan", Text: plan}}
+			return item
+		}
 	}
 	kind, summaryKind, value := "dynamicToolCall", "dynamicToolCall", name
 	switch {

@@ -2,7 +2,7 @@
 
 ## Goal and scope
 
-Desktop 模块让官方 ChatGPT Codex Desktop 继续作为桌面显示层，同时把官方 Codex App Server 的会话能力暴露给本机控制客户端和出站 Relay connector。当前实现面向 Windows x64；Codex 通过 App Server 投影提供完整会话能力，本机 Claude Code 会话通过只读 `provider.Backend` 提供浏览能力。
+Desktop 模块让官方 ChatGPT Codex Desktop 继续作为桌面显示层，同时把官方 Codex App Server 的会话能力暴露给本机控制客户端和出站 Relay connector。当前实现面向 Windows x64；Codex 通过 App Server 投影提供完整会话能力，本机 Claude Code 通过 `provider.Backend` 提供浏览与交互能力。
 
 ## Current architecture and data flow
 
@@ -24,7 +24,7 @@ Bridge shim ── WAI1 Named Pipe ──► daemon ── stdio JSONL ──►
 - `daemon run` 启动当前 Windows 用户唯一的 daemon。
 - 已知控制命令进入 CLI；其他参数透明执行真实 `codex.exe`。
 - daemon 是它托管的 App Server 的唯一真实 stdio 客户端。Desktop Bridge 和本机控制客户端是被多路复用的 frontend。
-- daemon 启动时按配置注册非 Codex 的 `provider.Backend`（当前为只读 [Claude Code provider](../claude-code-provider/design.md)），它直接读取 Claude Code 的本机转录目录，不经过 Bridge。Mobile 请求按 `agentId` 路由到 Codex 实例或后端。
+- daemon 启动时按配置注册非 Codex 的 `provider.Backend`（当前为 [Claude Code provider](../claude-code-provider/design.md)），它读取 Claude Code 的本机转录目录，并为发送的会话启动隐藏的 headless `claude.exe` 子进程（加入 daemon job object），不经过 Bridge。Mobile 请求按 `agentId` 路由到 Codex 实例或后端。
 
 ## Interfaces
 
@@ -52,7 +52,7 @@ daemon 内存中持有运行时进程、连接、ID 映射、初始化缓存、�
 - 每个稳定逻辑实例最多一个由 daemon 托管的 App Server。
 - runtime 可升级，但 runtime 路径和版本不参与逻辑实例 ID。
 - Desktop 模块不实现自建桌面聊天 UI。
-- Desktop 不实现 Mobile UI 和离线消息队列；Claude Code 后端当前只读，发送、审批和中断等写路径尚未实现。
+- Desktop 不实现 Mobile UI 和离线消息队列；Claude Code 后端不支持运行中排队和 steer，也不接管电脑端正在使用的会话。
 
 ## Code ownership
 

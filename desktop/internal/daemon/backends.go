@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"time"
 
@@ -15,13 +16,14 @@ const claudeCodeSettingKey = "claudeCode"
 // claudeCodeSettings is the persisted Claude Code backend configuration.
 // A missing setting enables the backend when the transcript store exists.
 type claudeCodeSettings struct {
-	Enabled   *bool  `json:"enabled,omitempty"`
-	ConfigDir string `json:"configDir,omitempty"`
+	Enabled    *bool  `json:"enabled,omitempty"`
+	ConfigDir  string `json:"configDir,omitempty"`
+	Executable string `json:"executable,omitempty"`
 }
 
-// backendVersion is the daemon-side revision/sequence projection for one
-// backend conversation. Backends only report "changed"; the daemon owns the
-// counters Mobile uses for subscription cursors.
+// backendVersion is the daemon-side projection for one backend conversation.
+// sequence orders every event Mobile receives (including deltas); revision
+// changes only on turn and action transitions, which is what writes guard.
 type backendVersion struct {
 	revision int64
 	sequence int64
@@ -41,7 +43,11 @@ func (m *Manager) startBackends() {
 	if err != nil || (settings.Enabled == nil && !claudecode.Available(configDir)) {
 		return
 	}
-	backend, err := claudecode.New(claudecode.Options{ConfigDir: configDir})
+	options := claudecode.Options{ConfigDir: configDir, Executable: settings.Executable}
+	if m.job != nil {
+		options.Attach = m.job.Add
+	}
+	backend, err := claudecode.New(options)
 	if err == nil {
 		err = m.registerBackend(backend)
 	}
@@ -58,7 +64,7 @@ func (m *Manager) registerBackend(backend provider.Backend) error {
 	}
 	m.backends[agentID] = backend
 	m.backendMu.Unlock()
-	return backend.Start(m.ctx, func(conversationID string) { m.backendChanged(agentID, conversationID) })
+	return backend.Start(m.ctx, func(event provider.Event) { m.backendEvent(agentID, event) })
 }
 
 func (m *Manager) closeBackends() {
@@ -71,13 +77,18 @@ func (m *Manager) closeBackends() {
 	}
 }
 
-func (m *Manager) backendAgents() []mobileAgentSummary {
+func (m *Manager) backendList() []provider.Backend {
 	m.backendMu.Lock()
+	defer m.backendMu.Unlock()
 	backends := make([]provider.Backend, 0, len(m.backends))
 	for _, backend := range m.backends {
 		backends = append(backends, backend)
 	}
-	m.backendMu.Unlock()
+	return backends
+}
+
+func (m *Manager) backendAgents() []mobileAgentSummary {
+	backends := m.backendList()
 	result := make([]mobileAgentSummary, 0, len(backends))
 	for _, backend := range backends {
 		result = append(result, backend.Agent())
@@ -108,36 +119,76 @@ func (m *Manager) backendVersionOf(agentID, conversationID string) backendVersio
 	return backendVersion{}
 }
 
-// backendChanged turns a backend change report into a daemon event. Remote
-// forwarding converts it into a payload-free Mobile invalidation.
-func (m *Manager) backendChanged(agentID, conversationID string) {
-	sequence := int64(0)
-	if conversationID != "" {
-		m.backendMu.Lock()
-		if m.backendVersions == nil {
-			m.backendVersions = make(map[string]*backendVersion)
-		}
-		key := agentID + "\x00" + conversationID
-		version := m.backendVersions[key]
-		if version == nil {
-			version = &backendVersion{}
-			m.backendVersions[key] = version
-		}
+func (m *Manager) advanceBackendVersion(agentID, conversationID string, revision bool) backendVersion {
+	m.backendMu.Lock()
+	defer m.backendMu.Unlock()
+	if m.backendVersions == nil {
+		m.backendVersions = make(map[string]*backendVersion)
+	}
+	key := agentID + "\x00" + conversationID
+	version := m.backendVersions[key]
+	if version == nil {
+		version = &backendVersion{}
+		m.backendVersions[key] = version
+	}
+	version.sequence++
+	if revision {
 		version.revision++
-		version.sequence++
-		sequence = version.sequence
-		m.backendMu.Unlock()
 	}
-	event := "provider.conversation.updated"
-	if conversationID == "" {
-		event = "provider.conversations.changed"
+	return *version
+}
+
+// backendEventNames maps backend events onto the event names the remote
+// connector already classifies: delta names are batched as
+// conversation.delta, action requests raise an action-required hint and
+// terminal turn events a turn-completed hint.
+var backendEventNames = map[provider.EventKind]string{
+	provider.EventChanged:         "provider.conversation.updated",
+	provider.EventActionRequested: "action.requested",
+	provider.EventActionResolved:  "action.resolved",
+	provider.EventTurnStarted:     "provider.turn/started",
+	provider.EventTurnCompleted:   "provider.turn/completed",
+	provider.EventTurnFailed:      "provider.turn/failed",
+	provider.EventTurnInterrupted: "provider.turn/interrupted",
+}
+
+var backendDeltaNames = map[string]string{
+	provider.DeltaAssistantText: "provider.item/agentMessage/delta",
+	provider.DeltaReasoning:     "provider.item/reasoning/textDelta",
+}
+
+func (m *Manager) backendEvent(agentID string, event provider.Event) {
+	if event.ConversationID == "" {
+		m.publish(protocol.Event{Type: "event", SyncEpoch: m.syncEpoch, Event: "provider.conversations.changed", InstanceID: agentID})
+		return
 	}
-	m.publish(protocol.Event{Type: "event", Sequence: sequence, SyncEpoch: m.syncEpoch, Event: event, InstanceID: agentID, ConversationID: conversationID})
+	name := backendEventNames[event.Kind]
+	payload := map[string]any{"threadId": event.ConversationID}
+	if event.TurnID != "" {
+		payload["turnId"] = event.TurnID
+	}
+	if event.Kind == provider.EventDelta {
+		name = backendDeltaNames[event.DeltaKind]
+		if name == "" || event.TurnID == "" || event.ItemID == "" || event.Delta == "" {
+			return
+		}
+		payload = map[string]any{"params": map[string]any{"threadId": event.ConversationID, "turnId": event.TurnID, "itemId": event.ItemID, "delta": event.Delta}}
+	}
+	if name == "" {
+		return
+	}
+	revision := event.Kind != provider.EventChanged && event.Kind != provider.EventDelta
+	version := m.advanceBackendVersion(agentID, event.ConversationID, revision)
+	m.publish(protocol.Event{Type: "event", Sequence: version.sequence, SyncEpoch: m.syncEpoch, Event: name, InstanceID: agentID, ConversationID: event.ConversationID, Payload: payload})
+}
+
+func unsupported(method string) error {
+	return &mobileContractError{code: "unsupported_capability", message: method + " is not supported for this agent"}
 }
 
 // backendControl serves Mobile contract methods for a provider.Backend. It
-// returns false when the method is not a conversation method, leaving it to
-// the shared daemon switch.
+// returns false when the method is not an agent method, leaving it to the
+// shared daemon switch.
 func (m *Manager) backendControl(backend provider.Backend, request protocol.ControlRequest, response *protocol.ControlResponse) bool {
 	agentID := backend.Agent().ID
 	var result any
@@ -161,29 +212,7 @@ func (m *Manager) backendControl(backend provider.Backend, request protocol.Cont
 		}
 		result, err = m.backendTimelinePage(backend, agentID, params.ThreadID, params.Cursor, params.Limit)
 	case "conversation.content.read":
-		var params struct {
-			ThreadID   string `json:"threadId"`
-			ContentRef string `json:"contentRef"`
-			Offset     int    `json:"offset"`
-		}
-		if json.Unmarshal(request.Params, &params) != nil || params.ThreadID == "" || params.ContentRef == "" || params.Offset < 0 {
-			err = &mobileContractError{code: "invalid_params", message: "threadId, contentRef and a non-negative offset are required"}
-			break
-		}
-		var ref mobileContentRef
-		if ref, err = m.resolveContentRef(params.ContentRef, agentID, params.ThreadID, time.Now()); err != nil {
-			break
-		}
-		var text string
-		if text, err = backend.TimelineBlock(m.ctx, ref.ThreadID, ref.TurnID, ref.ItemID, ref.BlockIndex); err != nil {
-			break
-		}
-		chunk, next, hasMore, chunkErr := utf8ContentChunk(text, params.Offset)
-		if chunkErr != nil {
-			err = &mobileContractError{code: "invalid_params", message: chunkErr.Error()}
-			break
-		}
-		result = map[string]any{"text": chunk, "nextOffset": next, "hasMore": hasMore, "totalBytes": len(text)}
+		result, err = m.backendContentRead(backend, agentID, request.Params)
 	case "conversation.content.resolve":
 		var params struct {
 			ThreadID   string `json:"threadId"`
@@ -207,20 +236,120 @@ func (m *Manager) backendControl(backend provider.Backend, request protocol.Cont
 		}
 		_ = json.Unmarshal(request.Params, &params)
 		version := m.backendVersionOf(agentID, params.ThreadID)
+		status := "idle"
+		if metadata, readErr := backend.ReadConversation(m.ctx, params.ThreadID); readErr == nil {
+			status = metadata.Status
+		}
 		// Backend events carry no replayable payload, so any gap is resolved
 		// by a fresh snapshot rather than an event replay.
-		result = map[string]any{"threadId": params.ThreadID, "status": "idle", "revision": version.revision, "sequence": version.sequence, "syncEpoch": m.syncEpoch, "events": []protocol.Event{}, "snapshot": params.Cursor != version.sequence}
+		result = map[string]any{"threadId": params.ThreadID, "status": status, "revision": version.revision, "sequence": version.sequence, "syncEpoch": m.syncEpoch, "events": []protocol.Event{}, "snapshot": params.Cursor != version.sequence}
+	case "conversation.create":
+		var params struct {
+			ProjectID string `json:"projectId"`
+		}
+		if json.Unmarshal(request.Params, &params) != nil || params.ProjectID == "" {
+			err = &mobileContractError{code: "invalid_params", message: "projectId is required"}
+			break
+		}
+		var metadata mobileConversationMetadata
+		if metadata, err = backend.CreateConversation(m.ctx, params.ProjectID); err == nil {
+			result = map[string]any{"id": metadata.ID, "projectId": metadata.ProjectID}
+		}
+	case "turn.start":
+		result, err = m.backendTurnStart(backend, agentID, request.Params)
+	case "turn.interrupt":
+		var params struct {
+			ThreadID string `json:"threadId"`
+		}
+		if json.Unmarshal(request.Params, &params) != nil || params.ThreadID == "" {
+			err = &mobileContractError{code: "invalid_params", message: "threadId is required"}
+			break
+		}
+		if err = backend.InterruptTurn(m.ctx, params.ThreadID); err == nil {
+			result = map[string]any{}
+		}
 	case "action.list":
-		result = []mobileAction{}
+		result = backend.Actions()
+	case "action.resolve":
+		var params struct {
+			ID     json.RawMessage `json:"id"`
+			Result json.RawMessage `json:"result"`
+		}
+		var id string
+		if json.Unmarshal(request.Params, &params) != nil || json.Unmarshal(params.ID, &id) != nil || id == "" {
+			err = &mobileContractError{code: "invalid_params", message: "id and result are required"}
+			break
+		}
+		if err = backend.ResolveAction(m.ctx, id, params.Result); err == nil {
+			result = map[string]any{"resolved": true}
+		}
+	case "plan.respond":
+		var params struct {
+			ThreadID         string `json:"threadId"`
+			PlanItemID       string `json:"planItemId"`
+			ExpectedRevision *int64 `json:"expectedRevision"`
+			Decision         string `json:"decision"`
+			Text             string `json:"text"`
+		}
+		if json.Unmarshal(request.Params, &params) != nil || params.ThreadID == "" || params.PlanItemID == "" {
+			err = &mobileContractError{code: "invalid_params", message: "threadId and planItemId are required"}
+			break
+		}
+		if err = m.checkBackendRevision(agentID, params.ThreadID, params.ExpectedRevision); err != nil {
+			break
+		}
+		if err = backend.RespondPlan(m.ctx, params.ThreadID, params.PlanItemID, params.Decision, strings.TrimSpace(params.Text)); err == nil {
+			result = map[string]any{"started": true}
+		}
+	case "conversation.settings.update":
+		var params struct {
+			ThreadID         string                     `json:"threadId"`
+			ExpectedRevision *int64                     `json:"expectedRevision"`
+			Settings         mobileConversationSettings `json:"settings"`
+		}
+		if json.Unmarshal(request.Params, &params) != nil || params.ThreadID == "" {
+			err = &mobileContractError{code: "invalid_params", message: "threadId and settings are required"}
+			break
+		}
+		if err = m.checkBackendRevision(agentID, params.ThreadID, params.ExpectedRevision); err != nil {
+			break
+		}
+		result, err = backend.UpdateSettings(m.ctx, params.ThreadID, params.Settings)
 	case "catalog.models":
-		result = mobileModelCatalog{Items: []mobileModelCatalogItem{}}
+		result, err = backend.Models(m.ctx)
 	case "catalog.permissionProfiles":
-		result = mobilePermissionCatalog{Items: []mobilePermissionMode{}}
-	case "conversation.create", "turn.start", "turn.interrupt", "action.resolve", "plan.respond", "conversation.settings.update", "attachment.begin":
-		err = &mobileContractError{code: "unsupported_capability", message: request.Method + " is not supported for this agent"}
+		var modes []provider.PermissionMode
+		if modes, err = backend.PermissionModes(m.ctx); err == nil {
+			catalog := mobilePermissionCatalog{Items: make([]mobilePermissionMode, 0, len(modes))}
+			for _, mode := range modes {
+				catalog.Items = append(catalog.Items, mobilePermissionMode{ID: mode.ID, Available: mode.Available, Reason: mode.Reason, Dangerous: mode.Dangerous})
+			}
+			result = catalog
+		}
+	case "attachment.begin":
+		var params attachmentBeginParams
+		if json.Unmarshal(request.Params, &params) != nil {
+			err = &mobileContractError{code: "invalid_params", message: "invalid attachment params"}
+			break
+		}
+		root, ok := backend.ProjectRoot(params.ProjectID, params.ConversationID)
+		if !ok {
+			err = &mobileContractError{code: "project_not_resolved", message: "conversation has no project directory"}
+			break
+		}
+		if root, err = existingDirectory(root); err != nil {
+			err = &mobileContractError{code: "project_not_resolved", message: err.Error()}
+			break
+		}
+		params.InstanceID = agentID
+		var controlErr *protocol.ControlError
+		if result, controlErr = m.beginAttachment(params, root); controlErr != nil {
+			response.Error = controlErr
+			return true
+		}
 	default:
 		if strings.HasPrefix(request.Method, "conversation.queue.") {
-			err = &mobileContractError{code: "unsupported_capability", message: request.Method + " is not supported for this agent"}
+			err = unsupported(request.Method)
 			break
 		}
 		return false
@@ -231,6 +360,98 @@ func (m *Manager) backendControl(backend provider.Backend, request protocol.Cont
 		response.Result = result
 	}
 	return true
+}
+
+func (m *Manager) checkBackendRevision(agentID, conversationID string, expected *int64) error {
+	if expected == nil {
+		return nil
+	}
+	if current := m.backendVersionOf(agentID, conversationID).revision; current != *expected {
+		return &mobileContractError{code: "revision_conflict", message: "conversation changed; reload before retrying"}
+	}
+	return nil
+}
+
+func (m *Manager) backendTurnStart(backend provider.Backend, agentID string, raw json.RawMessage) (any, error) {
+	var params struct {
+		ThreadID         string                      `json:"threadId"`
+		Text             string                      `json:"text"`
+		AttachmentIDs    []string                    `json:"attachmentIds"`
+		ClientMessageID  string                      `json:"clientMessageId"`
+		ExpectedRevision *int64                      `json:"expectedRevision"`
+		Settings         *mobileConversationSettings `json:"settings"`
+	}
+	if json.Unmarshal(raw, &params) != nil || params.ThreadID == "" {
+		return nil, &mobileContractError{code: "invalid_params", message: "threadId is required"}
+	}
+	if strings.TrimSpace(params.Text) == "" && len(params.AttachmentIDs) == 0 {
+		return nil, &mobileContractError{code: "invalid_params", message: "text or attachments are required"}
+	}
+	if err := m.checkBackendRevision(agentID, params.ThreadID, params.ExpectedRevision); err != nil {
+		return nil, err
+	}
+	images, err := m.backendImages(agentID, params.ThreadID, params.AttachmentIDs)
+	if err != nil {
+		return nil, err
+	}
+	turnID, err := backend.StartTurn(m.ctx, provider.TurnRequest{ConversationID: params.ThreadID, ClientMessageID: params.ClientMessageID, Text: params.Text, Images: images, Settings: params.Settings})
+	if err != nil {
+		return nil, err
+	}
+	m.releaseAttachments(params.AttachmentIDs)
+	return map[string]any{"turn": map[string]any{"id": turnID}}, nil
+}
+
+// backendImages loads committed image uploads that belong to this agent and
+// conversation. Only images are accepted, matching the Codex path.
+func (m *Manager) backendImages(agentID, conversationID string, ids []string) ([]provider.Image, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	m.imageEncode <- struct{}{}
+	defer func() { <-m.imageEncode }()
+	images := make([]provider.Image, 0, len(ids))
+	for _, id := range ids {
+		m.uploadMu.Lock()
+		attachment := m.attachments[id]
+		m.uploadMu.Unlock()
+		if attachment == nil || attachment.InstanceID != agentID || attachment.ConversationID != conversationID {
+			return nil, &mobileContractError{code: "invalid_params", message: "attachment " + id + " is not available for this conversation"}
+		}
+		if !strings.HasPrefix(attachment.MimeType, "image/") {
+			return nil, &mobileContractError{code: "unsupported_attachment_type", message: "attachment " + id + " is not an image"}
+		}
+		data, err := os.ReadFile(attachment.Path)
+		if err != nil {
+			return nil, &mobileContractError{code: "attachment_store_error", message: err.Error()}
+		}
+		images = append(images, provider.Image{MimeType: attachment.MimeType, Data: data})
+	}
+	return images, nil
+}
+
+func (m *Manager) backendContentRead(backend provider.Backend, agentID string, raw json.RawMessage) (any, error) {
+	var params struct {
+		ThreadID   string `json:"threadId"`
+		ContentRef string `json:"contentRef"`
+		Offset     int    `json:"offset"`
+	}
+	if json.Unmarshal(raw, &params) != nil || params.ThreadID == "" || params.ContentRef == "" || params.Offset < 0 {
+		return nil, &mobileContractError{code: "invalid_params", message: "threadId, contentRef and a non-negative offset are required"}
+	}
+	ref, err := m.resolveContentRef(params.ContentRef, agentID, params.ThreadID, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	text, err := backend.TimelineBlock(m.ctx, ref.ThreadID, ref.TurnID, ref.ItemID, ref.BlockIndex)
+	if err != nil {
+		return nil, err
+	}
+	chunk, next, hasMore, chunkErr := utf8ContentChunk(text, params.Offset)
+	if chunkErr != nil {
+		return nil, &mobileContractError{code: "invalid_params", message: chunkErr.Error()}
+	}
+	return map[string]any{"text": chunk, "nextOffset": next, "hasMore": hasMore, "totalBytes": len(text)}, nil
 }
 
 func (m *Manager) backendProjectList(backend provider.Backend, raw json.RawMessage) (mobilePage[mobileProjectSummary], error) {
@@ -305,12 +526,16 @@ func (m *Manager) backendConversationRead(backend provider.Backend, agentID stri
 	}
 	snapshot := mobileConversationSnapshot{
 		Conversation: metadata,
-		Settings:     mobileConversationSettings{Mode: "default"},
+		Settings:     backend.Settings(request.ThreadID),
 		Revision:     version.revision,
 		Sequence:     version.sequence,
 		SyncEpoch:    m.syncEpoch,
 		Timeline:     page,
 		Queue:        mobileQueuePage{Items: []mobileQueuedSubmission{}},
+	}
+	if confirmation := backend.PlanConfirmation(request.ThreadID); confirmation != nil {
+		confirmation.Revision = version.revision
+		snapshot.PlanConfirmation = confirmation
 	}
 	return snapshot, nil
 }

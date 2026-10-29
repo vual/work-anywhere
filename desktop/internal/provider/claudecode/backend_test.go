@@ -63,7 +63,7 @@ func TestProjectsAndConversationsFromTranscripts(t *testing.T) {
 	if projects[0].Name != "demo-project" || projects[0].ID != ProjectID(`C:\work\demo-project`) || projects[0].AgentID != backend.Agent().ID {
 		t.Fatalf("project = %#v", projects[0])
 	}
-	if root, ok := backend.ProjectRoot(projects[0].ID); !ok || root != `C:\work\demo-project` {
+	if root, ok := backend.ProjectRoot(projects[0].ID, ""); !ok || root != `C:\work\demo-project` {
 		t.Fatalf("project root = %q, %v", root, ok)
 	}
 	page, err := backend.ListConversations(ctx, provider.ConversationQuery{ProjectID: projects[0].ID})
@@ -163,9 +163,12 @@ func TestRefreshReportsChangesAndLiveSessions(t *testing.T) {
 	backend, path, processes := newFixtureBackend(t)
 	var mu sync.Mutex
 	notified := map[string]int{}
-	backend.notify = func(id string) {
+	backend.notify = func(event provider.Event) {
+		if event.Kind != provider.EventChanged {
+			return
+		}
 		mu.Lock()
-		notified[id]++
+		notified[event.ConversationID]++
 		mu.Unlock()
 	}
 	snapshot := func() map[string]int {

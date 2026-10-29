@@ -16,7 +16,7 @@
 
 Mobile 请求使用独立 contract discriminator：`{"contract":"mobile-control-v1"}`。响应回显相同 contract；未知非空值返回 `unsupported_contract`，未带 contract 的本机 CLI/管理页保持既有 raw control 语义。
 
-daemon 将控制方法路由到实例 supervisor。Mobile 请求的 `agentId` 若属于已注册的 `provider.Backend`（当前为只读 [Claude Code provider](../claude-code-provider/design.md)），会话方法改由 `backendControl` 处理，其余方法和未知 agent 仍走 Codex 实例路径。事件订阅使用有界队列，慢订阅者会被断开，客户端应使用 conversation cursor 补齐状态。
+daemon 将控制方法路由到实例 supervisor。Mobile 请求的 `agentId` 若属于已注册的 `provider.Backend`（当前为 [Claude Code provider](../claude-code-provider/design.md)），agent 方法（项目、会话、Turn、action、计划、设置、catalog、`attachment.begin`）改由 `backendControl` 处理；附件分块/提交、系统和 Remote 方法以及未知 agent 仍走共享或 Codex 路径。事件订阅使用有界队列，慢订阅者会被断开，客户端应使用 conversation cursor 补齐状态。
 
 ## Interfaces
 
@@ -69,7 +69,7 @@ Mobile control 响应序列化后上限为 512 KiB。时间线超预算时以同
 
 CLI 对应提供 daemon、instance、conversation、turn、action、catalog、traffic、通用 `call`、`ui`、`self-test`、install/uninstall 和 version 命令。CLI 通过本机受保护管理 Pipe 调用，不自行启动第二个 App Server。
 
-非 Codex agent 在 `agent.list` 中携带 `capabilities`（`history`、`liveStream`、`textInput`、`imageInput`、`approval`、`question`、`interrupt`、`steer`、`queue`、`plan`、`createConversation`、`modelSelection`、`reasoningSelection`、`permissionMode`、`desktopMirror`）；Codex agent 当前省略该字段，按全部支持处理。后端不支持的写方法返回 `unsupported_capability`。`ConversationSummary` 和快照 metadata 可带 `externallyActive=true`，表示会话正被电脑端其他进程使用，只能读取。后端会话变化以 `provider.conversation.updated`（带 conversationId）或 `provider.conversations.changed` 事件进入事件总线，Remote 将其转为无 payload 的 `conversation.invalidated`；后端会话的 revision/sequence 由 daemon 维护，订阅不回放事件，cursor 不等于当前 sequence 时返回 `snapshot=true`。
+非 Codex agent 在 `agent.list` 中携带 `capabilities`（`history`、`liveStream`、`textInput`、`imageInput`、`approval`、`question`、`interrupt`、`steer`、`queue`、`plan`、`createConversation`、`modelSelection`、`reasoningSelection`、`permissionMode`、`desktopMirror`）；Codex agent 当前省略该字段，按全部支持处理。后端不支持的方法返回 `unsupported_capability`；后端特有错误码包括 `conversation_busy_external`（会话正被电脑端其他进程使用）、`runtime_unavailable`（找不到可用 CLI）和 `stale_plan`。`ConversationSummary` 和快照 metadata 可带 `externallyActive=true`，Mobile 只读展示。Mobile `action` 可带可选 `detail`（`toolName`、`description`、`command`、`filePath`、`reason`，均为有界单行值），Codex action 当前不提供。后端事件映射为：`provider.conversation.updated`/`provider.conversations.changed`（失效）、`provider.item/agentMessage/delta` 与 `provider.item/reasoning/textDelta`（payload `{params:{threadId,turnId,itemId,delta}}`，由 Remote 批处理为 `conversation.delta`）、`action.requested`/`action.resolved`、`provider.turn/started|completed|failed|interrupted`。daemon 为后端会话维护 sequence（所有事件递增）和 revision（仅 Turn 与 action 变化递增，`turn.start`、`plan.respond`、`conversation.settings.update` 的 `expectedRevision` 与之比较）；订阅不回放事件，cursor 不等于当前 sequence 时返回 `snapshot=true`。
 
 ### 会话读取兼容与写入版本
 
@@ -107,7 +107,7 @@ Timeline 优先调用 `thread/items/list`。仅官方 JSON-RPC `-32601` 方法�
 
 - `internal/daemon/daemon.go`（控制路由）
 - `internal/daemon/mobile_contract.go`（Mobile DTO、时间线分页和大内容引用）
-- `internal/daemon/backends.go`（非 Codex 后端注册、路由、版本与事件）
+- `internal/daemon/backends.go`（非 Codex 后端注册、路由、版本、事件与图片附件读取）
 - `internal/provider/provider.go`（共享 Mobile DTO 与 `Backend` 接口）
 - `internal/daemon/admin.go`（HTTP/WebSocket 与授权）
 - `internal/cli/cli.go`

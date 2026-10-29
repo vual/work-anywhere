@@ -39,50 +39,19 @@ type mobileProjectSummary = provider.ProjectSummary
 
 type mobileConversationSummary = provider.ConversationSummary
 
-type mobileActionOption struct {
-	Label       string `json:"label"`
-	Description string `json:"description,omitempty"`
-}
+type mobileActionOption = provider.ActionOption
 
-type mobileActionQuestion struct {
-	Header   string               `json:"header"`
-	ID       string               `json:"id"`
-	Question string               `json:"question"`
-	IsOther  bool                 `json:"isOther,omitempty"`
-	IsSecret bool                 `json:"isSecret,omitempty"`
-	Options  []mobileActionOption `json:"options"`
-}
+type mobileActionQuestion = provider.ActionQuestion
 
-type mobileAction struct {
-	ID             json.RawMessage        `json:"id"`
-	Kind           string                 `json:"kind"`
-	Method         string                 `json:"method"`
-	ConversationID string                 `json:"conversationId,omitempty"`
-	TurnID         string                 `json:"turnId,omitempty"`
-	CreatedAt      time.Time              `json:"createdAt"`
-	Questions      []mobileActionQuestion `json:"questions,omitempty"`
-}
+type mobileAction = provider.Action
 
 type mobilePage[T any] = provider.Page[T]
 
-type mobileReasoningEffort struct {
-	ID          string `json:"id"`
-	Description string `json:"description,omitempty"`
-}
+type mobileReasoningEffort = provider.ReasoningEffort
 
-type mobileModelCatalogItem struct {
-	ID                     string                  `json:"id"`
-	Name                   string                  `json:"name"`
-	Description            string                  `json:"description,omitempty"`
-	Default                bool                    `json:"default"`
-	Selectable             bool                    `json:"selectable"`
-	DefaultReasoningEffort string                  `json:"defaultReasoningEffort"`
-	ReasoningEfforts       []mobileReasoningEffort `json:"reasoningEfforts"`
-}
+type mobileModelCatalogItem = provider.ModelCatalogItem
 
-type mobileModelCatalog struct {
-	Items []mobileModelCatalogItem `json:"items"`
-}
+type mobileModelCatalog = provider.ModelCatalog
 
 type mobilePermissionMode struct {
 	ID          string `json:"id"`
@@ -99,12 +68,7 @@ type mobilePermissionCatalog struct {
 	Items []mobilePermissionMode `json:"items"`
 }
 
-type mobileConversationSettings struct {
-	Mode             string `json:"mode"`
-	ModelID          string `json:"modelId"`
-	ReasoningEffort  string `json:"reasoningEffort"`
-	PermissionModeID string `json:"permissionModeId"`
-}
+type mobileConversationSettings = provider.ConversationSettings
 
 func normalizeMobileModelCatalog(raw json.RawMessage) (mobileModelCatalog, error) {
 	var source struct {
@@ -814,11 +778,7 @@ type mobileTimelineItem = provider.TimelineItem
 
 type mobileTimelinePage = provider.TimelinePage
 
-type mobilePlanConfirmation struct {
-	PlanItemID string `json:"planItemId"`
-	TurnID     string `json:"turnId"`
-	Revision   int64  `json:"revision"`
-}
+type mobilePlanConfirmation = provider.PlanConfirmation
 
 type mobileConversationSnapshot struct {
 	Capabilities struct {

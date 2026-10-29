@@ -6,7 +6,9 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"time"
 )
 
 // Capabilities tells Mobile which conversation features an agent supports so
@@ -112,11 +114,130 @@ type ConversationQuery struct {
 	Limit     int
 }
 
-// Notifier reports that a conversation changed. An empty conversation ID
-// means the conversation or project list changed.
-type Notifier func(conversationID string)
+type ActionOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+}
 
-// Backend serves one agent through the Mobile contract.
+type ActionQuestion struct {
+	Header   string         `json:"header"`
+	ID       string         `json:"id"`
+	Question string         `json:"question"`
+	IsOther  bool           `json:"isOther,omitempty"`
+	IsSecret bool           `json:"isSecret,omitempty"`
+	Options  []ActionOption `json:"options"`
+}
+
+// ActionDetail describes what an approval would allow. Fields are optional
+// one-line or bounded values; providers that cannot describe a request omit it.
+type ActionDetail struct {
+	ToolName    string `json:"toolName,omitempty"`
+	Description string `json:"description,omitempty"`
+	Command     string `json:"command,omitempty"`
+	FilePath    string `json:"filePath,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+}
+
+type Action struct {
+	ID             json.RawMessage  `json:"id"`
+	Kind           string           `json:"kind"`
+	Method         string           `json:"method"`
+	ConversationID string           `json:"conversationId,omitempty"`
+	TurnID         string           `json:"turnId,omitempty"`
+	CreatedAt      time.Time        `json:"createdAt"`
+	Questions      []ActionQuestion `json:"questions,omitempty"`
+	Detail         *ActionDetail    `json:"detail,omitempty"`
+}
+
+type ReasoningEffort struct {
+	ID          string `json:"id"`
+	Description string `json:"description,omitempty"`
+}
+
+type ModelCatalogItem struct {
+	ID                     string            `json:"id"`
+	Name                   string            `json:"name"`
+	Description            string            `json:"description,omitempty"`
+	Default                bool              `json:"default"`
+	Selectable             bool              `json:"selectable"`
+	DefaultReasoningEffort string            `json:"defaultReasoningEffort"`
+	ReasoningEfforts       []ReasoningEffort `json:"reasoningEfforts"`
+}
+
+type ModelCatalog struct {
+	Items []ModelCatalogItem `json:"items"`
+}
+
+// PermissionMode is one of the Mobile permission presets (default,
+// autoReview, readOnly, fullAccess) with its availability for an agent.
+type PermissionMode struct {
+	ID        string
+	Available bool
+	Reason    string
+	Dangerous bool
+}
+
+type ConversationSettings struct {
+	Mode             string `json:"mode"`
+	ModelID          string `json:"modelId"`
+	ReasoningEffort  string `json:"reasoningEffort"`
+	PermissionModeID string `json:"permissionModeId"`
+}
+
+type PlanConfirmation struct {
+	PlanItemID string `json:"planItemId"`
+	TurnID     string `json:"turnId"`
+	Revision   int64  `json:"revision"`
+}
+
+type Image struct {
+	MimeType string
+	Data     []byte
+}
+
+type TurnRequest struct {
+	ConversationID  string
+	ClientMessageID string
+	Text            string
+	Images          []Image
+	// Settings, when set, replaces the conversation settings before the turn.
+	Settings *ConversationSettings
+}
+
+type EventKind int
+
+const (
+	// EventChanged invalidates a conversation, or the conversation list when
+	// ConversationID is empty.
+	EventChanged EventKind = iota
+	EventDelta
+	EventActionRequested
+	EventActionResolved
+	EventTurnStarted
+	EventTurnCompleted
+	EventTurnFailed
+	EventTurnInterrupted
+)
+
+// Delta kinds match the Mobile conversation.delta kinds.
+const (
+	DeltaAssistantText = "assistantText"
+	DeltaReasoning     = "reasoning"
+)
+
+type Event struct {
+	Kind           EventKind
+	ConversationID string
+	TurnID         string
+	ItemID         string
+	DeltaKind      string
+	Delta          string
+}
+
+type Notifier func(Event)
+
+// Backend serves one agent through the Mobile contract. Methods an agent
+// does not support return an *Error with code unsupported_capability.
 type Backend interface {
 	Agent() AgentSummary
 	Start(ctx context.Context, notify Notifier) error
@@ -125,6 +246,22 @@ type Backend interface {
 	ReadConversation(ctx context.Context, conversationID string) (ConversationMetadata, error)
 	Timeline(ctx context.Context, conversationID, cursor string, limit int) (TimelinePage, error)
 	TimelineBlock(ctx context.Context, conversationID, turnID, itemID string, blockIndex int) (string, error)
+
+	// ProjectRoot returns the trusted working directory of a project or of
+	// the project that owns a conversation; Mobile never supplies paths.
+	ProjectRoot(projectID, conversationID string) (string, bool)
+	CreateConversation(ctx context.Context, projectID string) (ConversationMetadata, error)
+	StartTurn(ctx context.Context, request TurnRequest) (string, error)
+	InterruptTurn(ctx context.Context, conversationID string) error
+	Actions() []Action
+	ResolveAction(ctx context.Context, id string, result json.RawMessage) error
+	// PlanConfirmation returns the pending plan approval, without revision.
+	PlanConfirmation(conversationID string) *PlanConfirmation
+	RespondPlan(ctx context.Context, conversationID, planItemID, decision, text string) error
+	Settings(conversationID string) ConversationSettings
+	UpdateSettings(ctx context.Context, conversationID string, settings ConversationSettings) (ConversationSettings, error)
+	Models(ctx context.Context) (ModelCatalog, error)
+	PermissionModes(ctx context.Context) ([]PermissionMode, error)
 	Close() error
 }
 

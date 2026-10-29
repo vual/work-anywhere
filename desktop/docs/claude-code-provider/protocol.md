@@ -1,6 +1,6 @@
 # Claude Code headless protocol (recorded)
 
-本文件记录对 Claude Code CLI headless 模式的实测结果，是 [Claude Code provider](design.md) 写路径的协议依据。当前 Desktop 代码**尚未**启动 Claude Code 进程；这里描述的是已验证的 CLI 行为和录制的 fixture，不是已实现能力。stdio 控制协议不是公开稳定接口，实现写路径时必须以版本门控和 fixture 测试守护。
+本文件记录对 Claude Code CLI headless 模式的实测结果，是 [Claude Code provider](design.md) 写路径（`internal/provider/claudecode/session.go`）所依赖的协议。stdio 控制协议不是公开稳定接口，因此实现以 `MinimumVersion` 版本门控，并由录制 fixture 与按同一协议工作的假 CLI 测试守护。
 
 ## Recorded version and fixtures
 
@@ -12,7 +12,7 @@
 
 ```text
 claude.exe -p --input-format stream-json --output-format stream-json --verbose
-           --include-partial-messages --permission-prompts host --permission-prompt-tool stdio
+           --include-partial-messages --replay-user-messages --permission-prompts host --permission-prompt-tool stdio
            (--session-id <uuid> | --resume <sessionId>) [--permission-mode <mode>] [--model <model>]
 ```
 
@@ -20,16 +20,17 @@ claude.exe -p --input-format stream-json --output-format stream-json --verbose
 - 子进程环境必须移除继承的宿主变量（`CLAUDE_CODE_*`、`CLAUDE_AGENT_SDK_*`、`CLAUDECODE`、`CLAUDE_EFFORT`、`CLAUDE_PID` 等），否则 CLI 走宿主鉴权并返回 401 “Not logged in”；同时设置 `CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL=1`。用户 settings 中的 `env`（如 `ANTHROPIC_BASE_URL`、`ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL`）由 CLI 自行加载，模型别名可能被映射为非 Anthropic 名称。
 - npm 安装的 `claude.cmd` 只是调用 `node_modules/@anthropic-ai/claude-code/bin/claude.exe` 的包装；应直接执行 exe，不经 `cmd.exe`。
 - 用户 `permissions.allow` 中的工具不会触发审批请求。
+- `--permission-mode` 接受 `default`（`manual` 的别名）、`acceptEdits`、`auto`、`dontAsk`、`plan`、`bypassPermissions`；后者需同时传 `--allow-dangerously-skip-permissions`。
 
 ## Messages
 
 | 方向 | 消息 | 说明 |
 | --- | --- | --- |
-| → | `{"type":"user","message":{"role":"user","content":[{"type":"text","text":"…"}]}}` | 一轮输入；同一进程可连续发送多轮 |
+| → | `{"type":"user","uuid":"<uuid>","session_id":"…","parent_tool_use_id":null,"message":{"role":"user","content":[{"type":"text","text":"…"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"…"}}]}}` | 一轮输入；同一进程可连续发送多轮。客户端提供的 `uuid` 被原样用作转录中该用户记录的 `uuid`，`--replay-user-messages` 时以 `isReplay:true` 回显 |
 | ← | `system/init` | 每轮开头输出，含 `session_id`、`model`、`permissionMode`、`claude_code_version` |
 | ← | `system/status`、`system/thinking_tokens` | 状态提示，可忽略 |
-| ← | `stream_event`（`message_start`、`content_block_start/delta/stop`、`message_delta`、`message_stop`） | 文本与 thinking 增量 |
-| ← | `assistant` | 完整的 assistant content block（text、thinking、tool_use） |
+| ← | `stream_event`（`message_start`、`content_block_start/delta/stop`、`message_delta`、`message_stop`） | 文本与 thinking 增量；携带 `api_message_id` 与 `event.index`，子 agent 事件的 `parent_tool_use_id` 非空 |
+| ← | `assistant` | 完整的 assistant content block（text、thinking、tool_use）；`message.id` 等于流式 `api_message_id`，`uuid` 等于转录记录 `uuid`，转录记录的 `apiBlockIndex` 等于流式 `event.index` |
 | ← | `user` | `tool_result`，附带结构化 `tool_use_result` |
 | ← | `result` | 一轮结束：`subtype`、`is_error`、`result`、`stop_reason`、`permission_denials` |
 

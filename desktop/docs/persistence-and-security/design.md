@@ -40,7 +40,7 @@ Desktop 只持久化重新连接所需的小型配置，并对运行内存、临
 - 附件目录段拒绝路径分隔符、`.`、`..` 和控制字符；commit 校验声明大小后才原子改名。
 - 项目目录临时附件受该项目的 Windows 文件权限保护，不承诺静态加密。
 - 完整 traffic capture 由用户显式开启并视为高敏诊断数据。
-- Claude Code 后端只读当前用户 Claude Code 配置目录中的转录和活跃会话登记，不写入、不复制转录；会话索引与解析缓存只在内存中，配置只新增可选 `claudeCode`（`enabled`、`configDir`）设置，见 [Claude Code provider](../claude-code-provider/design.md)。
+- Claude Code 后端只读当前用户 Claude Code 配置目录中的转录和活跃会话登记，不复制转录；转录只由 daemon 启动的 `claude.exe` 自身写入。子进程环境移除宿主注入的 `CLAUDE_CODE_*` 等变量，daemon 不读取或转发凭据。会话索引、解析缓存、待处理审批和会话设置只在内存中；配置只新增可选 `claudeCode`（`enabled`、`configDir`、`executable`）设置，见 [Claude Code provider](../claude-code-provider/design.md)。
 
 ## Invariants and non-goals
 
