@@ -11,7 +11,7 @@ work-anywhere.exe <command>         # local control CLI
 
 The bridge preserves Codex App Server JSONL bytes over a per-user ACL-protected Named Pipe. The daemon owns one official App Server process per stable logical Codex profile, multiplexes desktop/control requests, and keeps the process alive when the desktop window closes.
 
-The normal path uses the official stdio transport. The bridge recognizes `app-server` even when ChatGPT prepends global Codex options such as `-c key=value`. `--standalone-ws` is retained only for diagnostics against Codex's experimental WebSocket transport; it is not used by the daemon architecture.
+The supervised path only handles recognized long-running stdio invocations. Startup policy checks (`app-server --print-startup-config`, including `--startup-sign-out`), help/version, schema generation, daemon/proxy, non-stdio transports and unknown syntax pass through unchanged to the official CLI without starting the WAW daemon. The bridge recognizes `app-server` even when ChatGPT prepends global Codex options such as `-c key=value`. `--standalone-ws` is retained only for diagnostics against Codex's experimental WebSocket transport; it is not used by the daemon architecture.
 
 The daemon also contains an optional outbound Relay connector. It performs device enrollment, explicit QR-URI pairing, Noise end-to-end encryption, remote scope enforcement, paginated Mobile conversation synchronization, event forwarding, and generic push hints without exposing the local Pipe or administration listener.
 
@@ -44,6 +44,7 @@ The installer is written to `dist\windows-amd64\work-anywhere-setup-0.1.0.exe`. 
 ```powershell
 $env:WORK_ANYWHERE_CODEX_EXE = 'C:\path\to\official\resources\codex.exe'
 .\dist\windows-amd64\work-anywhere.exe self-test
+.\dist\windows-amd64\work-anywhere.exe self-test --protocol
 .\dist\windows-amd64\work-anywhere.exe daemon start
 .\dist\windows-amd64\work-anywhere.exe status
 .\dist\windows-amd64\work-anywhere.exe ui
@@ -90,7 +91,9 @@ remote reconnect
 traffic on|off <instance-id>
 call <control-method> [json-params]
 ui
-self-test
+self-test [--protocol]
 ```
 
 The previous C# WebSocket bridge remains in `codex-stdio-ws-bridge` as a rollback implementation and is not changed by the Go build.
+
+`self-test` is a basic discovery check, not a protocol check (`protocolVerified: false`). Opt into `self-test --protocol` to validate the real startup entrypoint with closed stdin and the current account/network configuration, then perform an isolated initialize/initialized/read-only handshake. It never requests a model response or signs out. Failures produce `ok: false` and a nonzero exit code. The current protocol fixture and comparison commands are documented in [compatibility design](docs/build-install-and-compatibility/design.md).

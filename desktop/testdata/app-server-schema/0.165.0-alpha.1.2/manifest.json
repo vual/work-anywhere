@@ -1,0 +1,10 @@
+{
+  "appVersion": "26.1023.6621.0",
+  "cliVersion": "codex-cli 0.165.0-alpha.1.2",
+  "platform": "windows-amd64",
+  "executableSHA256": "0c09e45bc76433756eb2d492f6db0ce6f269967e6618f4a6ae73e2fa239694b8",
+  "exports": {
+    "stable": {"experimental": false, "command": "codex.exe app-server generate-json-schema --out stable"},
+    "experimental": {"experimental": true, "command": "codex.exe app-server generate-json-schema --experimental --out experimental"}
+  }
+}

@@ -1609,9 +1609,17 @@ func (m *Manager) conversationSnapshotOnce(instance *Instance, agentID string, p
 	var history struct {
 		Thread struct {
 			Path *string `json:"path"`
+			mobileProviderConversation
 		} `json:"thread"`
 	}
 	_ = json.Unmarshal(raw, &history)
+	if metadata.ProjectID == "" && (history.Thread.CWD != "" || len(history.Thread.Environments) > 0) {
+		projects, projectErr := fetchMobileProjects(m.ctx, instance)
+		if projectErr != nil {
+			return mobileConversationSnapshot{}, projectErr
+		}
+		metadata.ProjectID = mobileConversationProjectID(history.Thread.mobileProviderConversation, projects)
+	}
 	unpersisted := history.Thread.Path == nil || metadataOnlyRollout(*history.Thread.Path)
 	allowEmpty := !metadata.Running && instance.emptyCreatedThread(request.ThreadID) && unpersisted
 	page, err := m.readTimelinePage(instance, agentID, request.ThreadID, "", request.Limit)
@@ -2027,6 +2035,15 @@ func normalizeThreadStatus(raw json.RawMessage) (string, bool) {
 		return text, strings.Contains(lower, "active") || strings.Contains(lower, "running") || strings.Contains(lower, "waiting")
 	}
 	compact := strings.ToLower(string(raw))
+	var tagged struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(raw, &tagged) == nil {
+		switch tagged.Type {
+		case "idle", "notLoaded", "systemError":
+			return tagged.Type, false
+		}
+	}
 	switch {
 	case strings.Contains(compact, "waitingonapproval"):
 		return "waitingOnApproval", true

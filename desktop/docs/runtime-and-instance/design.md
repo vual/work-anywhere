@@ -40,7 +40,7 @@ Electron user-data 的发现顺序：
 4. 父 ChatGPT 命令行的 `--user-data-dir`。
 5. 默认 `%LOCALAPPDATA%\OpenAI\Codex`，缺失时回退到 `CODEX_HOME\electron`。
 
-Bridge 将真实路径、版本、SHA256、resources、发现来源、参数、cwd 和原始环境交给 daemon。环境仅通过受保护 Pipe 在内存中传输；启动子 Codex 时会把 `CODEX_CLI_PATH` 替换为真实 Codex，防止递归调用 Bridge。
+Bridge 将真实路径、版本、SHA256、resources、发现来源、参数、cwd 和原始环境交给 daemon。环境仅通过受保护 Pipe 在内存中传输；启动子 Codex 时统一把 `CODEX_CLI_PATH` 替换为真实 Codex；存在 `CODEX_APP_RUNTIME_CLI_PATH` 时也替换为同一路径，防止递归调用 Bridge。其余环境原样继承，不补造 Windows Core/sandbox 包身份。一次性命令和受管进程共享发现顺序；不以缓存修改时间证明其与当前 Desktop 同版。
 
 ## State and persistence
 

@@ -6,7 +6,7 @@ daemon 为每个逻辑 Codex 实例托管一个官方 App Server，使 Desktop B
 
 ## Current architecture and data flow
 
-Bridge 注册实例后，daemon 获取实例 lease，按该 Bridge 的参数、cwd 和环境启动真实 `codex.exe app-server --listen stdio://`。stdin/stdout 由实例 supervisor 独占；所有 Desktop/control 请求经 supervisor 多路复用。
+Bridge 注册实例后，daemon 获取实例 lease，按该 Bridge 的参数、cwd 和环境启动真实 `codex.exe app-server`（默认 stdio，保留显式 stdio 参数）。supervisor 拒绝一次性、未知命令和非 stdio 启动形态。stdin/stdout 由实例 supervisor 独占；所有 Desktop/control 请求经 supervisor 多路复用。
 
 实例状态模型：
 
@@ -26,6 +26,12 @@ stopped → starting → waiting_initialize → ready
 ## Interfaces
 
 supervisor 接收 Bridge 的 WAI1 frames 和 daemon 控制请求，向 App Server 读写 JSONL。进程退出会产生状态和控制事件；显式实例重启、升级切换、异常恢复和 daemon 退出可结束子进程。
+
+## Initialization and exit diagnostics
+
+每代进程分别维护 initialize 成功缓存与 initialized 已发送状态。首次、并发 frontend 及自动恢复路径每代只写一次 initialized；initialize error 原样返回等待者，不进入 ready、不作为重连成功缓存。
+
+stderr 每行和整个内存尾部均有 64 KiB 上限。非零退出的 `lastError` 保留退出错误及有界 stderr 尾部，`lastExitCode` 单独暴露真实退出码；stdout 读取失败诊断优先。新代次清空旧诊断，旧代次输出不能覆盖当前状态。结构化 `appserver.exited` 只记录实例、代次、阶段和退出码，不持久化 stderr、参数或认证内容。
 
 ## State and persistence
 

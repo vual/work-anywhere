@@ -91,7 +91,7 @@ work-anywhere.exe <command>        本机控制 CLI
 其他 Codex 参数                    透传给真实 codex.exe
 ```
 
-正式链路使用官方 App Server 的 stdio JSONL。官方 Desktop 在 `app-server` 前附加 `-c key=value` 等全局参数时，Bridge 仍能正确识别并保留这些参数。Bridge 与 daemon 之间使用带版本和长度前缀的 WAI1 Named Pipe 协议；daemon 负责 JSON-RPC ID 隔离、初始化虚拟化、审批仲裁、App Server 生命周期和本机控制 API。
+正式长驻链路使用官方 App Server 的 stdio JSONL。`app-server --print-startup-config`（含 `--startup-sign-out`）、帮助、schema、daemon/proxy 和非 stdio transport 原样透传官方 CLI，不接入 WAW daemon；未知命令形态也透传，由官方校验。官方 Desktop 在 `app-server` 前附加 `-c key=value` 等全局参数时，Bridge 仍能正确识别并保留这些参数。Bridge 与 daemon 之间使用带版本和长度前缀的 WAI1 Named Pipe 协议；daemon 负责 JSON-RPC ID 隔离、初始化虚拟化、审批仲裁、App Server 生命周期和本机控制 API。
 
 ## 仓库结构
 
@@ -176,13 +176,15 @@ cd D:\CodeSpace\work-anywhere\desktop
 cd D:\CodeSpace\work-anywhere\desktop
 .\dist\windows-amd64\work-anywhere.exe version
 .\dist\windows-amd64\work-anywhere.exe self-test
+.\dist\windows-amd64\work-anywhere.exe self-test --protocol
 ```
 
-`self-test` 应显示 `"ok": true`，并输出实际找到的官方 Codex 路径、版本、SHA256、`CODEX_HOME` 和 user-data。若找不到官方 Codex，可在当前环境显式指定：
+`self-test` 是基础发现检查，输出 `protocolVerified: false`；`self-test --protocol` 额外通过真实 WAW 入口验证一次性启动配置，并在临时 `CODEX_HOME` 中验证 initialize、initialized 和只读查询，不请求模型、不退出登录。策略检查会使用当前账号及网络配置；失败时返回非零退出码。普通 `self-test` 应显示 `"ok": true`，并输出实际找到的官方 Codex 路径、版本、SHA256、`CODEX_HOME` 和 user-data。若找不到官方 Codex，可在当前环境显式指定：
 
 ```powershell
 $env:WORK_ANYWHERE_CODEX_EXE = 'C:\path\to\ChatGPT\resources\codex.exe'
 .\dist\windows-amd64\work-anywhere.exe self-test
+.\dist\windows-amd64\work-anywhere.exe self-test --protocol
 ```
 
 ### 3. 接入 ChatGPT Desktop
@@ -355,6 +357,7 @@ cd D:\CodeSpace\work-anywhere\desktop
 .\.tools\go-sdk\go\bin\go.exe vet ./...
 .\scripts\build.ps1
 .\dist\windows-amd64\work-anywhere.exe self-test
+.\dist\windows-amd64\work-anywhere.exe self-test --protocol
 ```
 
 项目开发规则见 [`AGENTS.md`](AGENTS.md)。Desktop 当前设计和功能文档索引见 [`desktop/docs/README.md`](desktop/docs/README.md)，Mobile 生产应用方案见 [`mobile/docs/README.md`](mobile/docs/README.md)。功能实现发生变化时，必须同步更新所有相关设计文档；设计文档只保留当前最新状态，不作为变更日志。

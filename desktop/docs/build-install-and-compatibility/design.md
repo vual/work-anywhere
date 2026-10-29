@@ -20,6 +20,7 @@ Windows 分发安装包由 `scripts/build-installer.ps1` 调用 Inno Setup 6 生
 
 ```powershell
 work-anywhere.exe self-test
+work-anywhere.exe self-test --protocol
 work-anywhere.exe install
 work-anywhere.exe uninstall
 ```
@@ -43,7 +44,19 @@ scripts/build-installer.ps1 -Version 0.1.0 -SkipBuild
 - JSON-RPC ID 使用 `json.RawMessage`，支持字符串和数字。
 - 未知字段由 raw payload 保留；未知 request/notification 不因 schema 未识别而关闭代理。
 - 只对 initialize、ID 路由、Turn、action 和 catalog 等需要控制的消息做最小解析。
-- 官方 schema fixture 同时保留 `testdata/app-server-schema/0.151.0-alpha.7.2/` 和当前验证的 `testdata/app-server-schema/0.159.2/`，用于协议回归参考，不在运行时强制校验每条消息。
+- 官方 schema fixture 保留 `0.151.0-alpha.7.2`、`0.159.2`，以及目标 runtime `0.165.0-alpha.1.2` 的 stable/experimental 两套导出。版本、哈希和开关见 [manifest](../../testdata/app-server-schema/0.165.0-alpha.1.2/manifest.json)。fixture 只用于回归，不在运行时强制校验消息。当前启动流程与协议适配边界见 [协议基线](protocol-baseline.md)。
+
+`self-test` 只检查发现与实例身份，明确返回 `protocolVerified: false`。`self-test --protocol` 先通过正在执行的 WAW EXE 运行 `app-server --print-startup-config`（closed stdin，30 秒，stdout 最大 4 MiB，stderr 最大 64 KiB），校验完整 JSON 含 `appServerVersion` 与 `configRequirements.requirements`。该步骤使用当前账号/组织与网络配置，不自动 sign-out、不伪造策略；失败返回阶段诊断及非零退出码。通过后在临时 CODEX_HOME 启动官方 App Server，15 秒内完成 initialize、initialized、permissionProfile/list 只读查询。自检子树受临时 Job Object 约束，超时和结束时清理，不连接或替换用户 daemon，不发起模型请求。
+
+协议比较使用 Python 3 标准库；必须比较相同导出模式，不能把 experimental 开关差异算作版本变化：
+
+```powershell
+python scripts/compare-schemas.py testdata/app-server-schema/0.159.2 testdata/app-server-schema/0.165.0-alpha.1.2/stable
+python scripts/compare-schemas.py testdata/app-server-schema/0.151.0-alpha.7.2 testdata/app-server-schema/0.165.0-alpha.1.2/experimental
+python scripts/test_compare_schemas.py
+```
+
+比较结果为 JSON，包含方法、文件、字段增删、required 及枚举变化；忽略描述文本与集合顺序。更新 fixture 时使用目标官方二进制重新执行 manifest 内两条导出命令，并记录实际 SHA256。
 
 Mobile 的接口可用性按会话和进程代次判断，不以 schema 中的方法存在或版本号代替真实调用。原生与兼容历史共享归一化器，空会话、队列降级和恢复语义以 [本机控制设计](../local-control/design.md) 为准。对应实现和回归测试为 [`mobile_history.go`](../../internal/daemon/mobile_history.go)、[`mobile_history_test.go`](../../internal/daemon/mobile_history_test.go)。
 
@@ -89,7 +102,9 @@ Mobile 的接口可用性按会话和进程代次判断，不以 schema 中的�
 - 从 `desktop/` 执行 `scripts/build.ps1`，确认测试通过并生成 Windows x64 EXE/SHA256。
 - `work-anywhere.exe version` 与 PE file/product version 一致。
 - `self-test` 使用当前安装的官方 Codex 成功。
-- 至少使用旧 fixture 与当前 0.159.2 runtime 验证 initialize、未知字段/通知、慢连接隔离、请求清理和 fallback。
+- 使用旧 fixture 与当前 0.165.0-alpha.1.2 fixture 验证 initialize 成功/失败、initialized 每代一次、未知字段/通知、基础设施请求分类、慢连接隔离、请求清理和 fallback；真实 runtime 用 `self-test --protocol` 验证。基于 fixture 的通过不表示真机 E2E 已通过。
+- 执行 `go test -race ./internal/daemon ./internal/app ./internal/codex`（需支持 Go race 的 C 编译器），验证初始化/请求/退出并发；执行上述 Python 比较工具测试。
+- 发布前完整重启 Desktop，验证策略检查后进入 Bridge，并验证手机历史、文字/图片、队列、流式、审批/问题和中断。替换 EXE 前确认无活跃 Turn，正常停止 daemon 并备份旧 EXE；不能强制中断活跃会话以完成安装。
 - install/uninstall 测试备份、恢复及多 Desktop 实例重启后的路径。
 - 在 Inno Setup 6 环境构建安装包，验证 per-user 安装目录、安装后 `CODEX_CLI_PATH`、完成页重启提示和卸载恢复。
 

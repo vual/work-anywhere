@@ -14,6 +14,10 @@ Desktop 只持久化重新连接所需的小型配置，并对运行内存、临
 
 升级启动时删除旧数据目录中的 `work-anywhere.db`、`work-anywhere.db-wal`、`work-anywhere.db-shm` 和 `master.dpapi`。删除失败只记录告警并在下次启动重试；新版本不读取或迁移旧身份、配对、设置和消息投影。
 
+## Process diagnostic boundary
+
+App Server stderr 仅在当前代次的有界内存尾部保存（64 KiB），可通过受保护的本机 instance 状态用于排错，可能包含官方错误详情；不作为结构化日志持久化。退出码单独保留。默认进程退出日志仅保存阶段、代次、实例和退出码，不保存原始环境、启动配置 JSON、token 或工具结果。`self-test --protocol` 只输出阶段/结果，不输出官方策略内容；隔离握手的临时 CODEX_HOME 在退出时清理。
+
 ## State and persistence
 
 运行状态只在内存中存在：
@@ -64,6 +68,8 @@ Desktop 只持久化重新连接所需的小型配置，并对运行内存、临
 - 每会话回放窗口、全局 payload 预算、旧 cursor snapshot 与非活跃 projection LRU 测试。
 - 附件路径、大小、分块失败、24 小时清理、成功受理删除和图片编码单并发测试。
 - traffic capture 默认关闭，并验证显式启用响应包含敏感数据警告。
+
+`appserver.exited` 结构化日志记录 instance、generation、stage、exitCode、runtimeVersion 和 runtimeSHA256，不记录完整环境、认证 payload 或 stderr 正文。有界 stderr 诊断仅保存在当前实例状态中，随进程代次重置。
 
 ## Documentation update triggers
 

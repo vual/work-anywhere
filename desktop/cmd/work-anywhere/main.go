@@ -26,11 +26,11 @@ func main() {
 		Commit:  commit,
 		Date:    date,
 	}); err != nil {
-		fmt.Fprintln(os.Stderr, "work-anywhere:", err)
 		var exit interface{ ExitCode() int }
 		if errors.As(err, &exit) {
 			os.Exit(exit.ExitCode())
 		}
+		fmt.Fprintln(os.Stderr, "work-anywhere:", err)
 		os.Exit(1)
 	}
 }

@@ -26,21 +26,21 @@ Turn 通知驱动会话状态：`idle`、`running`、`waiting_action`、`complet
 
 ## Initialize virtualization
 
-- 第一个 Desktop `initialize` 发送给真实 App Server，缓存参数和响应；对应 `initialized` 正常转发。
+- 第一个 Desktop `initialize` 发送给真实 App Server，只缓存成功响应；首次 `initialized` 每代只转发一次，之后进入 ready。失败原样返回所有等待者，清除初始化成功缓存并允许重试。自动恢复同样检查 error。
 - 后续 Desktop 重连的 `initialize` 使用缓存 response 本地回答，`initialized` 被 daemon 吸收。
 - capability 参数不同且实例空闲时重启 App Server；运行中则保存最新参数，在安全边界后重启。
 - 初始化兼容判断只比较 `params.capabilities`；缺失、`null` 和空对象视为相同，client name/version 变化不会触发重启。
-- 多个 frontend 同时等待首次 initialize 时合并到同一次真实 initialize，并分别恢复各自 ID。
+- 多个 frontend 同时等待首次 initialize 时仅合并相同 capabilities，并分别恢复各自 ID。不兼容并发请求返回明确错误；忙碌时保存能力切换请求但不返回旧缓存成功，等待安全边界后重启。未知 capabilities、extensions 与顶层 trace 保留。
 
 ## Pending actions
 
-App Server 发出的 server request 保留原 method、params 和 request ID，并原样发往 Desktop frontend。需要用户处理的请求同时规范化为 `PendingAction` 并发往本机控制订阅者；`attestation/generate` 是由官方 Desktop 生成 opaque token 的客户端基础设施请求，只保留在内部请求表中等待 Desktop response，不进入用户 action、待办计数、`waiting_action` 或会话写入门禁。所有未完成 server request 仍参与 runtime/initialize 重启排空，避免响应路由在重启中丢失。Desktop 原始 response 或 `action.resolve` 的第一个有效结果通过锁内状态比较成为唯一结果：
+App Server 的审批、用户提问、MCP elicitation 和未知 server request 作为用户 action 原样转发给 Desktop。`currentTime/read` 由 daemon 返回 `{currentTimeAt: Unix秒}`，不进入待办。`attestation/generate`、`account/chatgptAuthTokens/refresh`、`item/tool/call` 是客户端基础设施请求：只向接收时在线的 Desktop 转发，不进入用户待办计数、waiting_action、会话写入门禁或 Mobile DTO，控制端不可用 `action.resolve` 回答。响应必须来自实际接收请求的 Desktop，首个响应胜出；没有接收者或全部接收者断开时返回 `-32000 desktop_unavailable`，不生成虚假 token 或工具结果。所有未完成 server request 仍参与 runtime/initialize 重启排空，避免响应路由在重启中丢失。Desktop 原始 response 或 `action.resolve` 的第一个有效结果通过锁内状态比较成为唯一结果：
 
 - 首个结果写回 App Server，action 标记 resolved，并广播 `action.resolved`。
 - 后续结果得到 `already_resolved`，不会再次写回 App Server。
 - `serverRequest/resolved`、Turn 完成或中断会清除相关未完成 action。
 
-原始 `PendingAction.params` 只用于 daemon 内部和 Desktop 透明转发。`mobile-control-v1` 的 `action.list` 只返回需要用户处理的请求，并按 `createdAt`、request ID 稳定排序：通用请求标记为 `approval`，`item/tool/requestUserInput` 标记为 `userInput` 并只暴露 questions/options 所需字段，不向 Mobile 透传其他 provider 参数。与 thread 关联的未完成 action 同时投影为 `ConversationSummary.needsAttention=true`。问题回答沿用官方 `answers[questionId].answers` 结构；命令审批继续接受 allow/deny 对应的 decision response。控制端不能用 `action.resolve` 响应 `attestation/generate`，该响应必须来自实际收到请求的 Desktop frontend。
+原始 `PendingAction.params` 只用于 daemon 内部和 Desktop 透明转发。`mobile-control-v1` 的 `action.list` 只返回需要用户处理的请求，并按 `createdAt`、request ID 稳定排序：通用请求标记为 `approval`，`item/tool/requestUserInput` 标记为 `userInput` 并只暴露 questions/options 所需字段，不向 Mobile 透传其他 provider 参数。与 thread 关联的未完成 action 同时投影为 `ConversationSummary.needsAttention=true`。问题回答沿用官方 `answers[questionId].answers` 结构；命令审批继续接受 allow/deny 对应的 decision response。控制端不能回答上述基础设施请求，响应必须来自实际收到请求的 Desktop frontend。
 
 ## Interfaces
 
@@ -54,7 +54,7 @@ App Server 发出的 server request 保留原 method、params 和 request ID，�
 
 ## Security and failure handling
 
-- 控制客户端只有在实例 ready、会话 idle 且没有阻塞用户 action 时才能开始新 Turn；`attestation/generate` 不阻塞其他会话。
+- 控制客户端只有在实例 ready、会话 idle 且没有阻塞用户 action 时才能开始新 Turn；基础设施请求不阻塞其他会话。
 - Desktop 原始请求保持透明，由官方 App Server 决定并发冲突。
 - frontend 断开时移除其未完成 ID 路由；不会把 response 错送给其他连接。
 - 无法识别的 JSON-RPC envelope 返回/记录协议错误，未知业务 method 不作为协议错误。
@@ -65,6 +65,8 @@ App Server 发出的 server request 保留原 method、params 和 request ID，�
 - action 最多向 App Server提交一次有效 resolution。
 - sequence 和 revision 对同一实例/会话单调递增。
 - 当前不保证把任意未来官方 server request 自动转换为专用 UI；除明确分类的基础设施请求外，未知请求仍保守地作为通用阻塞 action 转发。
+
+初始化发起的 Desktop 提前断线时，保留进程级 initialize 请求并转为内部完成：成功后发送一次 initialized 并回答其他等待者，失败则原样返回 error，不使后续重连永久等待。基础设施响应绑定捕获时的进程代次，旧代次响应不得写入重启后的 App Server。
 
 ## Code ownership
 

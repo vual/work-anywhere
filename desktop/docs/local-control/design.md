@@ -55,6 +55,8 @@ Desktop 从 `turn/start`、`thread/settings/update` 和 `thread/settings/updated
 
 Mobile-facing `conversation.list` 的每条 `ConversationSummary` 同时包含 Desktop 从完整项目目录解析的 `projectId + projectName`。即使对应项目不在 Mobile 当前加载的首个项目分页中，进入会话详情也不需要再用有限项目列表反查名称；历史 thread 的项目 ID 缺失或失效时，Desktop 使用 cwd/environment workspace roots 恢复归属。
 
+`conversation.read` 的 provider metadata 若缺少 `projectId` 且仍有 cwd/environments，也读取有界分页的 provider 项目目录，复用会话列表的主目录匹配规则恢复归属；查询失败原样返回错误，不使用进程 cwd 猜测项目。官方 tagged status 的 `idle`、`notLoaded`、`systemError` 保持原状态且不标记为运行中。
+
 `mobile-control-v1` 接受 `agentId` 作为 `instanceId` 的产品化别名，并把 `query` 转为 App Server `searchTerm`。`agent.list` 返回 Codex Agent summary；Mobile-facing `project.list` 不返回 provider 根路径，`conversation.list` 不返回 preview，只返回稳定导航字段，并在归一化时按 thread ID 去重。Mobile contract 下的 `project.list` 会读取 provider 项目和 thread 列表，按每个项目最近一条对话的 `updatedAt` 倒序聚合，只返回至少有一条对话的项目；并列时间按项目 ID 倒序，分页 cursor 锚定这两个字段。聚合时优先使用 thread 的 `projectId`；字段缺失、为空或指向未知项目时，以 thread `cwd`（必要时使用 environment cwd/workspace roots）匹配 provider 项目的主目录。Codex 当前的 Project DTO 没有单独的主目录标记，Desktop 将 `roots` 中第一项非空路径视为主目录，后续 roots 仅作为附加工作目录，不参与项目归属匹配。返回给 Mobile 的 `ProjectSummary.updatedAt` 是该项目最近对话的时间，而不是 provider 项目元数据时间。项目过滤的正常路径使用 App Server `thread/list(projectId)`；若结果为空，Desktop 会根据同一 Project ID 解析根目录并以 `thread/list(cwd)` 回退，以兼容项目迁移前仍只保存旧项目关联或 session cwd 的历史线程。`conversation.read` 使用 `thread/read(includeTurns=false)` 读取 metadata，再用 `thread/items/list(sortDirection=desc)` 返回最近 20 项（最大 50）的稳定 `ConversationSnapshot`，同时用 `thread/queue/list` 返回当前 queue；归一化器解包官方 `ThreadItemEntry` 的 `{item,turnId}` 结构，并兼容旧的扁平 fixture。`conversation.timeline.list` 原样续传 App Server opaque cursor 读取更早页。Plan item 的原始 `text` 被归一化为单个 `kind=plan` block；真正超过 5 个源文件行时，普通 Timeline response 只返回原始 Markdown 前五行，并返回绑定 agent/thread/turn/item/block 的随机 `contentRef` 与 UTF-8 字节数。`conversation.content.read` 以稳定定位重新遍历该 turn 的 provider item 页，并按最多 128 KiB 返回正文；引用过期后，Mobile 可用相同定位调用 `conversation.content.resolve` 重新签发引用，item 已删除时返回 `content_not_found`。引用只保存定位，不缓存正文。
 
 Mobile contract 下的 `conversation.list` 额外返回 `needsAttention`，其值来自与该 thread 关联的未完成用户 action；无法归属 thread 的 action 不猜测列表目标。Mobile `action.list` 按创建时间稳定返回且不透传原始 params：普通命令/权限请求归一化为 `kind=approval` 并保留 id、method、conversation/turn id 和 created time；官方 `item/tool/requestUserInput` 归一化为 `kind=userInput`，额外返回每题的 header、id、question、`isOther`、`isSecret` 以及 label/description options。`attestation/generate` 不进入 Mobile DTO、待办计数或 action 事件，由官方 Desktop 透明响应。`action.resolve` 对用户 action 执行 first-valid-wins；问题答案使用官方 `{answers:{questionId:{answers:[value]}}}` 结构，普通审批继续兼容 `{decision:"accept"|"decline"}`。
@@ -82,6 +84,12 @@ Timeline 优先调用 `thread/items/list`。仅官方 JSON-RPC `-32601` 方法�
 快照在读取前后比较业务 revision，最多共读取三次；仍有业务变化时返回 `snapshot_unstable`。发送、设置和队列控制写入按 thread 串行；启动 Turn 时在实例锁内检查版本、busy/action 并建立 pending 标记，provider 错误、取消或超时清理标记，成功响应或通知转为 active。官方 Desktop 请求继续由 App Server 仲裁，不承诺跨所有 frontend 的官方 CAS。
 
 业务 revision 与订阅 sequence 的区别由 [JSON-RPC 会话设计](../json-rpc-and-actions/design.md) 定义，持久化恢复由 [存储设计](../persistence-and-security/design.md) 定义。日志只新增 request/Agent/thread 标识和状态，不记录 prompt。
+
+## Compatibility diagnostics
+
+`self-test` 是基础 runtime/instance 发现检查；`self-test --protocol` 在本机执行官方一次性策略检查和临时 CODEX_HOME 握手，不使用用户 daemon、不发起模型请求。`instance.get/list` 新增可选 `lastExitCode`，保留 `lastError` 的有界进程诊断。WAI1、mobile-control-v1 DTO 和 Relay protobuf 不变。
+
+基础设施请求的分类与接收者约束由 [JSON-RPC 设计](../json-rpc-and-actions/design.md#pending-actions) 定义；Mobile 的 action、needsAttention 与写入门禁只考虑用户 action。`partial_answer` 与未知消息阶段按正常文字归一化，Turn 完成仅由 Turn 生命周期判断；imageGeneration 无 result 字段仍显示现有摘要，不新增图片读取能力。
 
 ## State and persistence
 

@@ -19,7 +19,7 @@
 | Relay 出站连接器 | [`remote-relay-connector/design.md`](remote-relay-connector/design.md) | 本机控制、平台 secrets、Relay wire/E2EE | `internal/remote`, `internal/daemon` |
 | JSON 配置、内存状态、日志与附件 | [`persistence-and-security/design.md`](persistence-and-security/design.md) | 平台支持、控制面、JSON-RPC | `internal/config`, `internal/platform/secrets`, `internal/logging` |
 | 管理页、托盘与进程生命周期 | [`administration-and-lifecycle/design.md`](administration-and-lifecycle/design.md) | 平台支持、App Server 托管、控制面 | `internal/daemon/admin.go`, `internal/platform/tray`, `internal/platform/process` |
-| 构建、安装和官方版本兼容 | [`build-install-and-compatibility/design.md`](build-install-and-compatibility/design.md) | 平台支持、运行时发现、Bridge IPC | `scripts`, `packaging`, `internal/platform/installation`, `testdata` |
+| 构建、安装和官方版本兼容 | [`build-install-and-compatibility/design.md`](build-install-and-compatibility/design.md)（[启动与协议基线](build-install-and-compatibility/protocol-baseline.md)） | 平台支持、运行时发现、Bridge IPC | `scripts`, `packaging`, `internal/platform/installation`, `testdata` |
 | Windows 安装包 | [`windows-installer/design.md`](windows-installer/design.md) | 构建安装、平台支持、生命周期 | `scripts/build-installer.ps1`, `packaging/windows/installer.iss`, `internal/platform/installation` |
 
 ## Directory rules

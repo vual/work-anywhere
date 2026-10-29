@@ -3,42 +3,77 @@ package codex
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
 
 func TestAppServerArgumentClassification(t *testing.T) {
-	if !IsPlainAppServer([]string{"app-server", "--listen", "ws://127.0.0.1:1"}) {
-		t.Fatal("app-server was not classified")
+	tests := []struct {
+		args    []string
+		managed bool
+	}{
+		{[]string{"app-server"}, true},
+		{[]string{"-c", "features.code_mode_host=true", "app-server", "--analytics-default-enabled", "-c", "features.prefer_mxc=true"}, true},
+		{[]string{"--config=x=true", "-cy=true", "app-server", "--listen=stdio://"}, true},
+		{[]string{"app-server", "--stdio", "--strict-config"}, true},
+		{[]string{"app-server", "--code-mode-host", "wss://example.test", "--cloud-skills-snapshot=x"}, true},
+		{[]string{"app-server", "--standalone-ws"}, true},
+		{[]string{"-c", "app-server"}, false},
+		{[]string{"exec", "app-server"}, false},
+		{[]string{"--unknown", "app-server"}, false},
+		{[]string{"--help", "app-server"}, false},
+		{[]string{"app-server", "--future-option"}, false},
+		{[]string{"app-server", "--listen", "ws://127.0.0.1:1"}, false},
+		{[]string{"app-server", "--listen=off"}, false},
+		{[]string{"app-server", "--listen=unix://"}, false},
+		{[]string{"app-server", "--listen"}, false},
+		{[]string{"app-server", "--config"}, false},
+		{[]string{"app-server", "--strict-config=true"}, false},
 	}
-	if !IsPlainAppServer([]string{"-c", "features.code_mode_host=true", "app-server", "--analytics-default-enabled"}) {
-		t.Fatal("app-server after global options was not classified")
+	for _, mode := range []string{"--print-startup-config", "--startup-sign-out", "--help", "-h", "--version", "proxy", "daemon", "help", "generate-ts", "generate-json-schema"} {
+		tests = append(tests, struct {
+			args    []string
+			managed bool
+		}{[]string{"-c", "x=true", "app-server", "--analytics-default-enabled", mode}, false})
 	}
-	if IsPlainAppServer([]string{"app-server", "generate-json-schema", "--out", "x"}) {
-		t.Fatal("schema generator must pass through")
+	tests = append(tests, struct {
+		args    []string
+		managed bool
+	}{[]string{"app-server", "--print-startup-config", "--startup-client-info", `{"name":"codex_desktop","version":"26.1023.6621"}`, "--startup-sign-out"}, false})
+	for _, test := range tests {
+		t.Run(strings.Join(test.args, " "), func(t *testing.T) {
+			if got := IsPlainAppServer(test.args); got != test.managed {
+				t.Fatalf("managed=%v want %v", got, test.managed)
+			}
+			if !reflect.DeepEqual(AppServerArgs(test.args), test.args) {
+				t.Fatal("arguments were rewritten")
+			}
+		})
 	}
-	if IsPlainAppServer([]string{"-c", "features.code_mode_host=true", "app-server", "daemon"}) {
-		t.Fatal("app-server daemon must pass through")
+}
+
+func TestChildEnvironment(t *testing.T) {
+	base := []string{"Path=original", "CODEX_CLI_PATH=bridge", "codex_cli_path=duplicate", "CODEX_APP_RUNTIME_CLI_PATH=bridge", "CODEX_HOME=profile", "CODEX_WINDOWS_REGISTERED_CORE=identity"}
+	got := ChildEnvironment(base, "real")
+	want := []string{"Path=original", "CODEX_HOME=profile", "CODEX_WINDOWS_REGISTERED_CORE=identity", "CODEX_APP_RUNTIME_CLI_PATH=real", "CODEX_CLI_PATH=real"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("environment: %#v", got)
 	}
-	args := AppServerArgs([]string{"app-server", "--listen", "ws://127.0.0.1:1", "--enable", "x"})
-	want := []string{"app-server", "--enable", "x", "--listen", "stdio://"}
-	if len(args) != len(want) {
-		t.Fatalf("unexpected args: %#v", args)
+	if !reflect.DeepEqual(ChildEnvironment(nil, "real"), []string{"CODEX_CLI_PATH=real"}) {
+		t.Fatal("invented runtime override")
 	}
-	for index := range want {
-		if args[index] != want[index] {
-			t.Fatalf("unexpected args: %#v", args)
-		}
+	if base[1] != "CODEX_CLI_PATH=bridge" {
+		t.Fatal("mutated parent environment")
 	}
-	args = AppServerArgs([]string{"-c", "features.code_mode_host=true", "app-server", "--listen=ws://127.0.0.1:1", "--analytics-default-enabled"})
-	want = []string{"-c", "features.code_mode_host=true", "app-server", "--analytics-default-enabled", "--listen", "stdio://"}
-	if len(args) != len(want) {
-		t.Fatalf("unexpected global-option args: %#v", args)
-	}
-	for index := range want {
-		if args[index] != want[index] {
-			t.Fatalf("unexpected global-option args: %#v", args)
-		}
+}
+
+func TestDiagnosticTransportPreservesOptionValues(t *testing.T) {
+	args := []string{"-c", "app-server", "app-server", "-c", "--listen", "--cloud-skills-snapshot", "--stdio", "--listen=stdio://", "--analytics-default-enabled"}
+	want := []string{"-c", "app-server", "app-server", "-c", "--listen", "--cloud-skills-snapshot", "--stdio", "--analytics-default-enabled", "--listen", "ws://127.0.0.1:1234"}
+	if got := DiagnosticWebSocketArgs(args, "ws://127.0.0.1:1234"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("diagnostic args: %q", got)
 	}
 }
 

@@ -91,7 +91,7 @@ work-anywhere.exe <command>        Local control CLI
 other Codex arguments              Passed through to the real codex.exe
 ```
 
-The production path uses the official App Server stdio JSONL transport. If Desktop prepends global options such as `-c key=value` before the `app-server` subcommand, the Bridge still recognizes and preserves them. Bridge and daemon communicate through the versioned, length-prefixed WAI1 Named Pipe protocol. The daemon owns JSON-RPC ID isolation, initialize virtualization, approval arbitration, App Server lifecycle, and the local control API.
+The supervised long-running path uses the official App Server stdio JSONL transport. One-shot startup policy checks (`app-server --print-startup-config`, including `--startup-sign-out`), help, schema commands, daemon/proxy, explicit non-stdio transports, and unknown command shapes pass directly to the official CLI. They do not start the WAW daemon. If Desktop prepends global options such as `-c key=value` before the `app-server` subcommand, the Bridge still recognizes and preserves them. Bridge and daemon communicate through the versioned, length-prefixed WAI1 Named Pipe protocol. The daemon owns JSON-RPC ID isolation, initialize virtualization, approval arbitration, App Server lifecycle, and the local control API.
 
 ## Repository layout
 
@@ -176,6 +176,7 @@ The installer is written to `desktop\dist\windows-amd64\work-anywhere-setup-0.1.
 cd D:\CodeSpace\work-anywhere\desktop
 .\dist\windows-amd64\work-anywhere.exe version
 .\dist\windows-amd64\work-anywhere.exe self-test
+.\dist\windows-amd64\work-anywhere.exe self-test --protocol
 ```
 
 `self-test` should report `"ok": true` and show the discovered official Codex path, version, SHA256, `CODEX_HOME`, and user-data directory. If the official executable cannot be found, override it for the current environment:
@@ -183,6 +184,7 @@ cd D:\CodeSpace\work-anywhere\desktop
 ```powershell
 $env:WORK_ANYWHERE_CODEX_EXE = 'C:\path\to\ChatGPT\resources\codex.exe'
 .\dist\windows-amd64\work-anywhere.exe self-test
+.\dist\windows-amd64\work-anywhere.exe self-test --protocol
 ```
 
 ### 3. Integrate with ChatGPT Desktop
@@ -355,6 +357,7 @@ cd D:\CodeSpace\work-anywhere\desktop
 .\.tools\go-sdk\go\bin\go.exe vet ./...
 .\scripts\build.ps1
 .\dist\windows-amd64\work-anywhere.exe self-test
+.\dist\windows-amd64\work-anywhere.exe self-test --protocol
 ```
 
 See [`AGENTS.md`](AGENTS.md) for repository development rules, [`desktop/docs/README.md`](desktop/docs/README.md) for current Desktop design documentation, and [`mobile/docs/README.md`](mobile/docs/README.md) for the production Mobile plan. Functional changes must update every affected design document in the same change. Design documents describe only the current state and are not changelogs.
@@ -369,3 +372,5 @@ See [`AGENTS.md`](AGENTS.md) for repository development rules, [`desktop/docs/RE
 - `CODEX_CLI_PATH` is the currently available Desktop integration point, but it is not guaranteed to remain compatible forever.
 - Experimental WebSocket transport is available only through `app-server --standalone-ws` diagnostics. The production daemon path always uses stdio.
 - `desktop/codex-stdio-ws-bridge` is the previous C# rollback implementation and is not part of the current Go build.
+
+`self-test` performs discovery checks only (`protocolVerified: false`). `self-test --protocol` also runs the official startup policy check through the WAW entrypoint using the current account/network configuration, then verifies initialize, initialized, and a read-only query in a temporary `CODEX_HOME`. It makes no model requests, never signs out, and exits nonzero on failure.

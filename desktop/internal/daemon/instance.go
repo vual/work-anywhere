@@ -33,6 +33,7 @@ type requestOrigin struct {
 }
 
 type pendingAction struct {
+	desktopIDs     map[string]bool
 	ID             json.RawMessage `json:"id"`
 	Method         string          `json:"method"`
 	Params         json.RawMessage `json:"params,omitempty"`
@@ -43,7 +44,15 @@ type pendingAction struct {
 }
 
 func requiresUserAction(action *pendingAction) bool {
-	return action != nil && action.Method != "attestation/generate"
+	if action == nil {
+		return false
+	}
+	switch action.Method {
+	case "attestation/generate", "account/chatgptAuthTokens/refresh", "item/tool/call", "currentTime/read":
+		return false
+	default:
+		return true
+	}
 }
 
 func actionBlocksThread(action *pendingAction, threadID string) bool {
@@ -96,6 +105,7 @@ type Instance struct {
 	manager *Manager
 
 	mu                       sync.Mutex
+	initializeMu             sync.Mutex
 	serverWriteMu            sync.Mutex
 	settingsPersistMu        sync.Mutex
 	controlWrites            map[string]*sync.Mutex
@@ -111,6 +121,8 @@ type Instance struct {
 	state                    string
 	lastError                string
 	outputError              string
+	stderrTail               string
+	lastExitCode             *int
 	activeTurns              map[string]string
 	desktops                 map[string]*clientConn
 	requests                 map[string]requestOrigin
@@ -130,6 +142,7 @@ type Instance struct {
 	cachedInitialized        []byte
 	pendingInitialize        []byte
 	initializeInFlight       bool
+	initializedSent          bool
 	initializeWaiters        []initializeWaiter
 	autoRestartAttempted     bool
 	uncertainWrite           bool
@@ -147,6 +160,7 @@ type InstanceSnapshot struct {
 	ActiveTurn         bool                        `json:"activeTurn"`
 	PendingActions     int                         `json:"pendingActions"`
 	LastError          string                      `json:"lastError,omitempty"`
+	LastExitCode       *int                        `json:"lastExitCode,omitempty"`
 }
 
 func NewInstance(manager *Manager, hello protocol.Hello) *Instance {
@@ -449,10 +463,31 @@ func (i *Instance) RemoveDesktop(id string) {
 	delete(i.desktops, id)
 	for requestID, origin := range i.requests {
 		if origin.desktopID == id {
-			delete(i.requests, requestID)
+			if origin.method == "initialize" {
+				// The upstream handshake belongs to the process, even if its
+				// initiating frontend disconnects before the response arrives.
+				origin.internal, origin.desktopID = true, ""
+				i.requests[requestID] = origin
+			} else {
+				delete(i.requests, requestID)
+			}
+		}
+	}
+	generation := i.generation
+	var unavailable []json.RawMessage
+	for key, action := range i.actions {
+		if !requiresUserAction(action) {
+			delete(action.desktopIDs, id)
+			if len(action.desktopIDs) == 0 {
+				unavailable = append(unavailable, action.ID)
+				delete(i.actions, key)
+			}
 		}
 	}
 	i.mu.Unlock()
+	for _, requestID := range unavailable {
+		_ = i.writeServerForGeneration(desktopUnavailable(requestID), &generation)
+	}
 }
 
 func (i *Instance) Start() error { return i.startGeneration(nil) }
@@ -468,7 +503,15 @@ func (i *Instance) startGeneration(expected *uint64) error {
 		return nil
 	}
 	i.uncertainWrite = false
-	i.state, i.lastError, i.outputError = "starting", "", ""
+	i.state, i.lastError, i.outputError, i.stderrTail = "starting", "", "", ""
+	i.lastExitCode = nil
+	i.initializedSent = false
+	args := codex.AppServerArgs(i.args)
+	if !codex.IsPlainAppServer(args) {
+		i.state, i.lastError = "error", "only a long-running stdio app-server can be supervised"
+		i.mu.Unlock()
+		return errors.New("only a long-running stdio app-server can be supervised")
+	}
 	if i.lease == nil {
 		lease, already, err := identity.AcquireLease(identity.InstanceMutexName(i.descriptor.ID))
 		if err != nil {
@@ -486,7 +529,6 @@ func (i *Instance) startGeneration(expected *uint64) error {
 		i.lease = lease
 	}
 	runtime := i.runtime
-	args := codex.AppServerArgs(i.args)
 	cwd := i.cwd
 	environment := append([]string(nil), i.environment...)
 	i.generation++
@@ -590,6 +632,8 @@ func (i *Instance) stopProcess(release bool) {
 	i.createdThreads = make(map[string]bool)
 	i.legacyTimeline = make(map[string]uint64)
 	i.cachedInitializeResponse = nil
+	i.initializedSent = false
+	i.initializeInFlight = false
 	i.cmd, i.stdin = nil, nil
 	if release && i.lease != nil {
 		_ = i.lease.Close()
@@ -615,19 +659,11 @@ func (i *Instance) HandleDesktop(conn *clientConn, raw []byte) error {
 		return i.writeServer(raw)
 	}
 	if message.IsResponse() {
-		return i.resolveServerRequest(message, raw)
+		return i.resolveServerRequest(conn.id, message, raw)
 	}
 	if message.IsNotification() {
 		if message.Method == "initialized" {
-			i.mu.Lock()
-			if len(i.cachedInitialized) == 0 {
-				i.cachedInitialized = append([]byte(nil), raw...)
-			}
-			alreadyInitialized := len(i.cachedInitializeResponse) > 0
-			i.mu.Unlock()
-			if alreadyInitialized {
-				return nil
-			}
+			return i.sendInitialized(raw)
 		}
 		return i.writeServer(raw)
 	}
@@ -642,10 +678,16 @@ func (i *Instance) HandleDesktop(conn *clientConn, raw []byte) error {
 	}
 
 	if message.Method == "initialize" {
+		i.initializeMu.Lock()
+		defer i.initializeMu.Unlock()
 		i.mu.Lock()
 		cached := append([]byte(nil), i.cachedInitializeResponse...)
 		cachedRequest := append([]byte(nil), i.cachedInitializeRequest...)
 		if len(cached) == 0 && i.initializeInFlight {
+			if !sameInitializeCapabilities(cachedRequest, raw) {
+				i.mu.Unlock()
+				return initializeConflict(conn, message.ID)
+			}
 			i.initializeWaiters = append(i.initializeWaiters, initializeWaiter{DesktopID: conn.id, OriginalID: append(json.RawMessage(nil), message.ID...)})
 			i.mu.Unlock()
 			return nil
@@ -665,6 +707,7 @@ func (i *Instance) HandleDesktop(conn *clientConn, raw []byte) error {
 					i.pendingInitialize = append([]byte(nil), raw...)
 					i.state = "upgrade_pending"
 					i.mu.Unlock()
+					return initializeConflict(conn, message.ID)
 				} else {
 					i.mu.Lock()
 					i.cachedInitializeRequest, i.cachedInitializeResponse = nil, nil
@@ -706,6 +749,15 @@ func (i *Instance) HandleDesktop(conn *clientConn, raw []byte) error {
 	}
 	if err := i.writeServer(append(rewritten, '\n')); err != nil {
 		i.removeRequest(proxyKey)
+		if message.Method == "initialize" {
+			i.mu.Lock()
+			i.initializeInFlight = false
+			i.cachedInitializeRequest = nil
+			waiters := i.initializeWaiters
+			i.initializeWaiters = nil
+			i.mu.Unlock()
+			i.answerInitializeFailure(waiters, "initialize write failed")
+		}
 		return err
 	}
 	return nil
@@ -735,7 +787,7 @@ func (i *Instance) logRequestFailure(key, method, reason string, started time.Ti
 	}
 }
 
-func (i *Instance) resolveServerRequest(message jsonrpc.Message, raw []byte) error {
+func (i *Instance) resolveServerRequest(desktopID string, message jsonrpc.Message, raw []byte) error {
 	key := string(message.ID)
 	i.mu.Lock()
 	action := i.actions[key]
@@ -743,11 +795,16 @@ func (i *Instance) resolveServerRequest(message jsonrpc.Message, raw []byte) err
 		i.mu.Unlock()
 		return nil
 	}
+	if !requiresUserAction(action) && !action.desktopIDs[desktopID] {
+		i.mu.Unlock()
+		return errors.New("infrastructure response must come from a receiving Desktop")
+	}
 	action.Resolved = true
 	delete(i.actions, key)
+	generation := i.generation
 	i.updateActivityStateLocked()
 	i.mu.Unlock()
-	if err := i.writeServer(raw); err != nil {
+	if err := i.writeServerForGeneration(raw, &generation); err != nil {
 		return err
 	}
 	if requiresUserAction(action) {
@@ -757,6 +814,10 @@ func (i *Instance) resolveServerRequest(message jsonrpc.Message, raw []byte) err
 }
 
 func (i *Instance) writeServer(raw []byte) error {
+	return i.writeServerForGeneration(raw, nil)
+}
+
+func (i *Instance) writeServerForGeneration(raw []byte, expected *uint64) error {
 	if len(ensureNewline(raw)) > ipc.DefaultMaxFrame {
 		return &mobileContractError{code: "too_large", message: "serialized App Server request exceeds 64 MiB"}
 	}
@@ -770,6 +831,10 @@ func (i *Instance) writeServer(raw []byte) error {
 	defer i.serverWriteMu.Unlock()
 	// Recheck the handle after waiting for concurrent process shutdown.
 	i.mu.Lock()
+	if expected != nil && *expected != i.generation {
+		i.mu.Unlock()
+		return errors.New("App Server generation changed")
+	}
 	stdin = i.stdin
 	i.mu.Unlock()
 	if stdin == nil {
@@ -820,6 +885,10 @@ func (i *Instance) readServerStderr(generation uint64, stream io.Reader) {
 			i.mu.Lock()
 			if generation == i.generation && i.outputError == "" {
 				i.lastError = message
+				i.stderrTail += message + "\n"
+				if len(i.stderrTail) > maxDiagnostic {
+					i.stderrTail = i.stderrTail[len(i.stderrTail)-maxDiagnostic:]
+				}
 			}
 			i.mu.Unlock()
 		}
@@ -882,19 +951,7 @@ func (i *Instance) handleServerFrame(generation uint64, raw []byte) {
 				}
 				return
 			}
-			i.mu.Lock()
-			i.state = "ready"
-			i.cachedInitializeResponse = append([]byte(nil), raw...)
-			i.initializeInFlight = false
-			waiters := append([]initializeWaiter(nil), i.initializeWaiters...)
-			i.initializeWaiters = nil
-			initialized := append([]byte(nil), i.cachedInitialized...)
-			i.mu.Unlock()
-			i.answerInitializeWaiters(raw, waiters)
-			if len(initialized) == 0 {
-				initialized = []byte(`{"jsonrpc":"2.0","method":"initialized","params":{}}` + "\n")
-			}
-			_ = i.writeServer(initialized)
+			i.completeInitialize(generation, raw, true)
 			return
 		}
 		restored, rewriteErr := jsonrpc.RewriteRawID(bytes.TrimSpace(raw), origin.originalID)
@@ -903,19 +960,16 @@ func (i *Instance) handleServerFrame(generation uint64, raw []byte) {
 		}
 		restored = append(restored, '\n')
 		if origin.method == "initialize" {
-			i.mu.Lock()
-			i.cachedInitializeResponse = append([]byte(nil), restored...)
-			i.initializeInFlight = false
-			waiters := append([]initializeWaiter(nil), i.initializeWaiters...)
-			i.initializeWaiters = nil
-			i.state = "ready"
-			i.mu.Unlock()
-			i.answerInitializeWaiters(restored, waiters)
+			i.completeInitialize(generation, restored, false)
 		}
 		i.sendDesktop(origin.desktopID, restored)
 		return
 	}
 	if message.IsRequest() {
+		if message.Method == "currentTime/read" {
+			_ = i.writeServerForGeneration(mustJSON(map[string]any{"id": message.ID, "result": map[string]any{"currentTimeAt": time.Now().Unix()}}), &generation)
+			return
+		}
 		action := &pendingAction{
 			ID: append(json.RawMessage(nil), message.ID...), Method: message.Method,
 			Params:         append(json.RawMessage(nil), message.Params...),
@@ -924,12 +978,38 @@ func (i *Instance) handleServerFrame(generation uint64, raw []byte) {
 			CreatedAt:      time.Now().UTC(),
 		}
 		i.mu.Lock()
+		if generation != i.generation {
+			i.mu.Unlock()
+			return
+		}
+		if !requiresUserAction(action) {
+			action.desktopIDs = make(map[string]bool)
+			for id, desktop := range i.desktops {
+				if !desktop.closed.Load() {
+					action.desktopIDs[id] = true
+				}
+			}
+		}
+		if !requiresUserAction(action) && len(action.desktopIDs) == 0 {
+			i.mu.Unlock()
+			_ = i.writeServerForGeneration(desktopUnavailable(message.ID), &generation)
+			return
+		}
 		i.actions[string(message.ID)] = action
+		recipients := make([]string, 0, len(action.desktopIDs))
+		for id := range action.desktopIDs {
+			recipients = append(recipients, id)
+		}
 		i.updateActivityStateLocked()
 		i.mu.Unlock()
-		i.broadcast(raw)
 		if requiresUserAction(action) {
+			i.broadcast(raw)
 			i.broadcastEvent("action.created", action)
+		} else {
+			// Use the captured recipient set, not desktops joining after the request.
+			for _, id := range recipients {
+				i.sendDesktop(id, raw)
+			}
 		}
 		return
 	}
@@ -1139,12 +1219,21 @@ func (i *Instance) waitServer(generation uint64, cmd *exec.Cmd) {
 	i.legacyTimeline = make(map[string]uint64)
 	i.actions = make(map[string]*pendingAction)
 	i.cachedInitializeResponse = nil
+	i.initializedSent = false
 	i.initializeInFlight = false
 	i.state = "error"
+	i.lastExitCode = &code
+	runtime := i.runtime
 	if err != nil {
 		i.lastError = err.Error()
+		if i.outputError == "" && strings.TrimSpace(i.stderrTail) != "" {
+			i.lastError += ": " + strings.TrimSpace(i.stderrTail)
+		}
 	}
 	i.mu.Unlock()
+	if i.manager.log != nil {
+		i.manager.log.Event("appserver.exited", map[string]any{"instanceId": i.descriptor.ID, "generation": generation, "stage": "process_exit", "exitCode": code, "runtimeVersion": runtime.Version, "runtimeSHA256": runtime.SHA256})
+	}
 	for id, origin := range origins {
 		i.notifyRequestFailure(id, origin, "App Server exited: "+errorText(err))
 	}
@@ -1382,7 +1471,7 @@ func (i *Instance) Snapshot() InstanceSnapshot {
 		ID: i.descriptor.ID, Name: i.descriptor.Name, CodexHome: i.descriptor.CodexHome,
 		UserDataDir: i.descriptor.UserDataDir, State: i.state, Runtime: i.runtime,
 		PendingRuntime: i.pendingRuntime, DesktopConnections: len(i.desktops), ActiveTurn: len(i.activeTurns) > 0,
-		PendingActions: i.pendingUserActionCountLocked(), LastError: i.lastError,
+		PendingActions: i.pendingUserActionCountLocked(), LastError: i.lastError, LastExitCode: i.lastExitCode,
 	}
 }
 
@@ -1589,15 +1678,7 @@ func (i *Instance) ResolveAction(id, result json.RawMessage) error {
 }
 
 func environmentList(values []string, realExecutable string) []string {
-	result := make([]string, 0, len(values)+1)
-	for _, item := range values {
-		key, _, ok := strings.Cut(item, "=")
-		if ok && strings.EqualFold(key, "CODEX_CLI_PATH") {
-			continue
-		}
-		result = append(result, item)
-	}
-	return append(result, "CODEX_CLI_PATH="+realExecutable)
+	return codex.ChildEnvironment(values, realExecutable)
 }
 
 func ensureNewline(raw []byte) []byte {

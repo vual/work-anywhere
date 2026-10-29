@@ -2,7 +2,7 @@
 
 ## Goal and scope
 
-Bridge 保持 ChatGPT Desktop 看到的接口仍是官方 App Server stdio JSONL，同时把原始消息转送给 daemon。它负责启动协调和安全 fallback，不负责解释业务事件或持久化会话。官方 Desktop 可能在 `app-server` 前追加 Codex 全局选项（例如 `-c key=value`）；Bridge 和 daemon 都按子命令位置识别并保留这些选项。
+Bridge 仅接管已识别的长驻 stdio App Server，保持 ChatGPT Desktop 看到的接口仍是官方 App Server stdio JSONL，同时把原始消息转送给 daemon。它负责启动协调和安全 fallback，不负责解释业务事件或持久化会话。官方 Desktop 可能在 `app-server` 前追加 Codex 全局选项（例如 `-c key=value`）；Bridge 和 daemon 都按子命令位置识别并保留这些选项。
 
 ## Current architecture and data flow
 
@@ -39,6 +39,12 @@ payloadLength uint32 (big endian)
 - `control_request`, `control_response`
 
 单帧 metadata 与 payload 合计最大 64 MiB。JSONL 输入使用有界读取，超过限制时拒绝，避免无界内存增长。Named Pipe 名称包含当前用户 SID，并使用当前 SID ACL。
+
+## Startup command dispatch
+
+Desktop 正式连接前的 `app-server --print-startup-config` 是一次性进程协议：stdin 关闭，stdout 为完整配置 JSON，真实退出码、stderr 必须保留。包括 `--startup-client-info` / `--startup-sign-out` 的组合均透传，不能注册 WAI1、启动 daemon、追加监听参数或伪造组织策略。帮助/版本、schema、daemon/proxy、显式非 stdio 监听和未知参数形态同样透传。
+
+参数分类消费已知选项的取值，识别全局 `-c`/`--config`、enable/disable、内联赋值及 app-server 选项。`app-server` 出现在选项值或其他命令参数中不会触发托管；stdio 使用官方默认值，不重写监听参数。`--standalone-ws` 是显式诊断入口，仅该入口改写为随机 loopback WebSocket。
 
 ## State and persistence
 

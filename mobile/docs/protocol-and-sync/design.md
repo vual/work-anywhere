@@ -236,3 +236,9 @@ Flutter 的工作台、项目分页和会话调用通过本机 `_wawTarget={daem
 Core 串行协调 catalog 变更和探测；当前活动设备复用自己的 client 探测，禁止第二次登录挤掉 Relay 连接。Android host 将导出旧 catalog、执行变更、加密保存及失败恢复作为同一串行事务。
 
 排序的 Pigeon/Flutter 接口仍接收 `List<String>`，Kotlin 编码为 JSON 数组字符串调用 Go `ReorderPairings(idsJSON string) string`。参数必须为全部 catalog ID 的无重复排列，非法输入不修改顺序。生成脚本使用 javap 验证真实 AAR 的 `reorderPairings(String)`；AAR 为忽略的构建产物，Pigeon 生成文件无协议变更。
+
+## Codex infrastructure requests
+
+会话详情的项目归属由 Desktop 在官方 thread/read 缺少 projectId 时根据 provider cwd/environments 与项目主目录恢复；Mobile 无需修改 DTO 或自行猜测目录。官方 idle 状态保持空闲，消息 item 的完成状态不能代替 Turn 生命周期。
+
+客户端基础设施请求与用户审批的分类由 [Desktop JSON-RPC 设计](../../../desktop/docs/json-rpc-and-actions/design.md#pending-actions) 所有。时间读取由 daemon 本地响应，认证刷新、attestation 和动态工具调用由 Desktop 处理；这些请求不进入 Mobile action/needsAttention，也不能由手机 action.resolve 回答。此行为不改变 mobile-control-v1 DTO、Pigeon 或 Relay protobuf。消息阶段 partial_answer 不表示 Turn 结束；图像生成 item 缺少 result 时继续显示摘要。

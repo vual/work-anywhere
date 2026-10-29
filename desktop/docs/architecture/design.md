@@ -35,6 +35,10 @@ Bridge shim ── WAI1 Named Pipe ──► daemon ── stdio JSONL ──►
 - daemon 与 Relay：出站 WSS 内的 Noise E2EE control，Relay 不接触业务明文。
 - Provider 边界：`internal/provider` 定义共享 Mobile DTO、`Capabilities` 和 `Backend` 接口。Codex 仍由 daemon 的 App Server 投影直接产出这些 DTO；Claude Code 后端实现 `Backend`。
 
+## Startup boundary
+
+客户端启动策略检查经一次性官方 CLI 透传完成；通过后才建立受管 stdio Bridge。一次性命令不创建 daemon 实例，不经过初始化虚拟化。分流规则见 [Bridge IPC](../bridge-ipc/design.md)，真实启动检查与 schema 基线见 [构建兼容](../build-install-and-compatibility/design.md)。
+
 ## State and persistence
 
 daemon 内存中持有运行时进程、连接、ID 映射、初始化缓存、活跃 Turn、待处理 action 和有界事件回放。官方 Codex session 是 Codex 会话、Turn 和 Timeline 的唯一权威来源；Claude Code 会话的权威来源是 CLI 自身的转录目录。Desktop 不保存消息数据库；Relay、身份、配对和 thread 设置写入 `%USERPROFILE%\.work-anywhere\config.json`，运行状态在 daemon 重启后从 App Server 重新读取。

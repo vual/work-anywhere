@@ -43,7 +43,10 @@ func Run(ctx context.Context, args []string, build appinfo.BuildInfo) error {
 		return uninstallBridge()
 	}
 	if args[0] == "self-test" {
-		return selfTest()
+		if len(args) > 2 || (len(args) == 2 && args[1] != "--protocol") {
+			return errors.New("usage: self-test [--protocol]")
+		}
+		return selfTest(ctx, len(args) == 2)
 	}
 	if args[0] == "version" {
 		fmt.Printf("work-anywhere %s (%s, %s)\n", build.Version, build.Commit, build.Date)

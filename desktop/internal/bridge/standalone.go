@@ -10,7 +10,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"strings"
 	"sync"
 	"time"
 
@@ -21,16 +20,7 @@ import (
 )
 
 func standaloneArguments(args []string) ([]string, bool) {
-	filtered := make([]string, 0, len(args))
-	found := false
-	for _, arg := range args {
-		if arg == "--standalone-ws" {
-			found = true
-			continue
-		}
-		filtered = append(filtered, arg)
-	}
-	return filtered, found
+	return codex.StandaloneArguments(args)
 }
 
 func runStandaloneWebSocket(ctx context.Context, args []string) error {
@@ -44,12 +34,8 @@ func runStandaloneWebSocket(ctx context.Context, args []string) error {
 	}
 	endpoint := "ws://" + listener.Addr().String()
 	_ = listener.Close()
-	serverArgs := codex.AppServerArgs(args)
-	for index := 0; index < len(serverArgs); index++ {
-		if serverArgs[index] == "--listen" && index+1 < len(serverArgs) {
-			serverArgs[index+1] = endpoint
-		}
-	}
+	// Explicit diagnostic mode; unlike normal dispatch this owns the transport.
+	serverArgs := codex.DiagnosticWebSocketArgs(args, endpoint)
 	cmd := exec.CommandContext(ctx, runtime.RealExecutable, serverArgs...)
 	cmd.Env = standaloneEnvironment(runtime.RealExecutable)
 	cmd.Stdout = os.Stderr
@@ -140,13 +126,5 @@ func runStandaloneWebSocket(ctx context.Context, args []string) error {
 }
 
 func standaloneEnvironment(realExecutable string) []string {
-	result := make([]string, 0, len(os.Environ())+1)
-	for _, item := range os.Environ() {
-		key, _, ok := strings.Cut(item, "=")
-		if ok && strings.EqualFold(key, "CODEX_CLI_PATH") {
-			continue
-		}
-		result = append(result, item)
-	}
-	return append(result, "CODEX_CLI_PATH="+realExecutable)
+	return codex.ChildEnvironment(os.Environ(), realExecutable)
 }
