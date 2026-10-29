@@ -369,7 +369,9 @@ func humanPrompt(r *record) (string, bool) {
 		}
 	}
 	text := strings.TrimSpace(strings.Join(parts, "\n"))
-	if strings.HasPrefix(text, "<local-command-") || strings.HasPrefix(text, "<system-reminder>") {
+	// The CLI records interruptions as synthetic user text; they are not
+	// prompts and must not start a turn.
+	if strings.HasPrefix(text, "<local-command-") || strings.HasPrefix(text, "<system-reminder>") || strings.HasPrefix(text, "[Request interrupted by user") {
 		return "", false
 	}
 	if match := commandNamePattern.FindStringSubmatch(text); match != nil {

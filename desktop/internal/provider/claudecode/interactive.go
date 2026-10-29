@@ -31,6 +31,19 @@ func (b *Backend) CreateConversation(_ context.Context, projectID string) (provi
 	if info, err := os.Stat(cwd); err != nil || !info.IsDir() {
 		return provider.ConversationMetadata{}, provider.NewError("project_not_resolved", "project directory is not accessible")
 	}
+	b.expireCreatedLocked(time.Now())
+	for len(b.created) >= maxCreated {
+		oldest := ""
+		for id, created := range b.created {
+			if b.processes[id] == nil && (oldest == "" || created.createdAt < b.created[oldest].createdAt) {
+				oldest = id
+			}
+		}
+		if oldest == "" {
+			return provider.ConversationMetadata{}, provider.NewError("too_many_conversations", "too many new conversations are waiting for a first message")
+		}
+		delete(b.created, oldest)
+	}
 	id := newUUID()
 	now := time.Now().Unix()
 	b.created[id] = &createdConversation{projectID: projectID, cwd: cwd, createdAt: now}
@@ -45,6 +58,9 @@ func (b *Backend) StartTurn(ctx context.Context, request provider.TurnRequest) (
 		if err := validSettings(*request.Settings); err != nil {
 			return "", err
 		}
+	}
+	if err := validImages(request.Images); err != nil {
+		return "", err
 	}
 	b.ensureRuntime(ctx)
 	b.mu.Lock()
@@ -143,6 +159,32 @@ func (b *Backend) InterruptTurn(_ context.Context, conversationID string) error 
 		}
 	}()
 	return nil
+}
+
+func (b *Backend) ActiveTurns() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	active := 0
+	for _, process := range b.processes {
+		if process.turnActive {
+			active++
+		}
+	}
+	return active
+}
+
+func (b *Backend) InterruptAll(ctx context.Context) {
+	b.mu.Lock()
+	ids := make([]string, 0, len(b.processes))
+	for id, process := range b.processes {
+		if process.turnActive {
+			ids = append(ids, id)
+		}
+	}
+	b.mu.Unlock()
+	for _, id := range ids {
+		_ = b.InterruptTurn(ctx, id)
+	}
 }
 
 // Actions lists pending approvals and questions, oldest first. Plan approvals
@@ -302,6 +344,9 @@ func normalizedSettings(settings provider.ConversationSettings) provider.Convers
 	}
 	if settings.ModelID == "" {
 		settings.ModelID = defaultModelID
+	}
+	if settings.ReasoningEffort == "" {
+		settings.ReasoningEffort = defaultEffortID
 	}
 	if settings.PermissionModeID == "" {
 		settings.PermissionModeID = "default"

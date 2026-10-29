@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -327,7 +328,7 @@ func TestProcessExitFailsTurn(t *testing.T) {
 	h.start(t, "crash")
 	h.waitFor(t, provider.EventTurnFailed)
 	h.backend.mu.Lock()
-	remaining := len(h.backend.processes) + len(h.backend.ownPIDs)
+	remaining := len(h.backend.processes)
 	h.backend.mu.Unlock()
 	if remaining != 0 {
 		t.Fatal("exited process still registered")
@@ -354,25 +355,113 @@ func TestExternallyActiveConversationIsReadOnly(t *testing.T) {
 	}
 }
 
+// A session the backend runs is never reported as external, even when the
+// registry names a different PID (for example a configured wrapper).
 func TestOwnProcessIsNotExternal(t *testing.T) {
 	h := newInteractiveHarness(t)
 	h.start(t, "hello")
 	h.waitFor(t, provider.EventTurnCompleted)
-	h.backend.mu.Lock()
-	var pid int
-	for value := range h.backend.ownPIDs {
-		pid = value
-	}
-	h.backend.mu.Unlock()
 	sessions := filepath.Join(h.backend.configDir, "sessions")
 	_ = os.MkdirAll(sessions, 0o700)
-	_ = os.WriteFile(filepath.Join(sessions, "own.json"), []byte(`{"pid":`+jsonNumberString(pid)+`,"sessionId":"`+interactiveSession+`"}`), 0o600)
+	_ = os.WriteFile(filepath.Join(sessions, "9999.json"), []byte(`{"pid":9999,"sessionId":"`+interactiveSession+`"}`), 0o600)
 	h.processes.mu.Lock()
-	h.processes.alive[pid] = true
+	h.processes.alive[9999] = true
 	h.processes.mu.Unlock()
 	_ = h.backend.refresh()
 	if metadata, _ := h.backend.ReadConversation(context.Background(), interactiveSession); metadata.ExternallyActive {
-		t.Fatal("daemon-owned process reported as external")
+		t.Fatal("daemon-owned session reported as external")
+	}
+	// Once the backend no longer runs the session, the live registry entry
+	// belongs to someone else.
+	h.backend.stopIdleProcesses(time.Now().Add(time.Hour))
+	waitUntil(t, func() bool {
+		h.backend.mu.Lock()
+		defer h.backend.mu.Unlock()
+		return len(h.backend.processes) == 0
+	})
+	_ = h.backend.refresh()
+	if metadata, _ := h.backend.ReadConversation(context.Background(), interactiveSession); !metadata.ExternallyActive {
+		t.Fatal("external owner not detected after the backend stopped its process")
+	}
+}
+
+func TestPollingDoesNotInvalidateOwnStreamingTurn(t *testing.T) {
+	h := newInteractiveHarness(t)
+	h.start(t, "slow")
+	h.waitFor(t, provider.EventDelta)
+	appendLine(t, filepath.Join(h.projects, interactiveSession+".jsonl"), `{"type":"system","subtype":"turn_duration","sessionId":"`+interactiveSession+`"}`)
+	drain(h.events)
+	if err := h.backend.refresh(); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range drain(h.events) {
+		if event.Kind == provider.EventChanged {
+			t.Fatalf("polling invalidated a streaming turn: %#v", event)
+		}
+	}
+	if h.backend.ActiveTurns() != 1 {
+		t.Fatalf("active turns = %d", h.backend.ActiveTurns())
+	}
+	h.backend.InterruptAll(context.Background())
+	h.waitFor(t, provider.EventTurnInterrupted)
+	if h.backend.ActiveTurns() != 0 {
+		t.Fatal("turn still active after InterruptAll")
+	}
+	// After the turn the appended lines are reported again.
+	appendLine(t, filepath.Join(h.projects, interactiveSession+".jsonl"), `{"type":"system","subtype":"turn_duration","sessionId":"`+interactiveSession+`"}`)
+	drain(h.events)
+	_ = h.backend.refresh()
+	found := false
+	for _, event := range drain(h.events) {
+		found = found || (event.Kind == provider.EventChanged && event.ConversationID == interactiveSession)
+	}
+	if !found {
+		t.Fatal("idle conversation change not reported")
+	}
+}
+
+func TestImagesOutsideClaudeLimitsAreRejected(t *testing.T) {
+	h := newInteractiveHarness(t)
+	for _, test := range []struct {
+		image provider.Image
+		code  string
+	}{
+		{provider.Image{MimeType: "image/heic", Data: []byte("x")}, "unsupported_attachment_type"},
+		{provider.Image{MimeType: "image/png", Data: make([]byte, maxImageBytes+1)}, "too_large"},
+	} {
+		_, err := h.backend.StartTurn(context.Background(), provider.TurnRequest{ConversationID: interactiveSession, Images: []provider.Image{test.image}})
+		if code, _ := provider.ErrorCode(err); code != test.code {
+			t.Fatalf("%s: error = %v", test.image.MimeType, err)
+		}
+	}
+	h.backend.mu.Lock()
+	started := len(h.backend.processes)
+	h.backend.mu.Unlock()
+	if started != 0 {
+		t.Fatal("rejected images started a process")
+	}
+}
+
+func TestCreatedConversationsExpireAndAreCapped(t *testing.T) {
+	h := newInteractiveHarness(t)
+	first, err := h.backend.CreateConversation(context.Background(), h.projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.backend.stopIdleProcesses(time.Now().Add(createdTTL + time.Minute))
+	if _, ok := h.backend.ProjectRoot("", first.ID); ok {
+		t.Fatal("expired draft still resolves a project root")
+	}
+	for range maxCreated + 1 {
+		if _, err = h.backend.CreateConversation(context.Background(), h.projectID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h.backend.mu.Lock()
+	count := len(h.backend.created)
+	h.backend.mu.Unlock()
+	if count != maxCreated {
+		t.Fatalf("created = %d, want %d", count, maxCreated)
 	}
 }
 
@@ -470,6 +559,17 @@ func TestSessionArgsAndHelpers(t *testing.T) {
 	if got := turnIDForClientMessage("not-hex"); !sessionIDPattern.MatchString(got) || got != turnIDForClientMessage("not-hex") {
 		t.Fatalf("derived id = %q", got)
 	}
+	if args := sessionArgs("id", true, defaultSettings()); slices.Contains(args, "--effort") || !slices.Contains(args, "--resume") {
+		t.Fatalf("default effort args = %v", args)
+	}
+	if runtime.GOOS == "windows" {
+		if got := unwrapShim(`C:\npm\claude.cmd`); got != filepath.Join(`C:\npm`, "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe") {
+			t.Fatalf("unwrapShim = %q", got)
+		}
+	}
+	if got := unwrapShim(`C:\bin\claude.exe`); got != `C:\bin\claude.exe` {
+		t.Fatalf("native path rewritten to %q", got)
+	}
 	if compareVersions("2.1.310", MinimumVersion) <= 0 || compareVersions("2.0.999", MinimumVersion) >= 0 || compareVersions(MinimumVersion, MinimumVersion) != 0 {
 		t.Fatal("version comparison")
 	}
@@ -488,6 +588,36 @@ func TestModelCatalogShowsMappedModels(t *testing.T) {
 	catalog := modelCatalog(configDir)
 	if len(catalog.Items) != 4 || !catalog.Items[0].Default || catalog.Items[1].ID != "opus" || catalog.Items[1].Description != "custom-opus" {
 		t.Fatalf("catalog = %#v", catalog)
+	}
+	// Mobile replaces an empty default effort with the first listed one, so
+	// every model must default to the CLI-configured effort explicitly.
+	for _, item := range catalog.Items {
+		if item.DefaultReasoningEffort != defaultEffortID || item.ReasoningEfforts[0].ID != defaultEffortID {
+			t.Fatalf("model %s default effort = %q", item.ID, item.DefaultReasoningEffort)
+		}
+	}
+}
+
+func drain(events chan provider.Event) []provider.Event {
+	result := make([]provider.Event, 0)
+	for {
+		select {
+		case event := <-events:
+			result = append(result, event)
+		default:
+			return result
+		}
+	}
+}
+
+func waitUntil(t *testing.T, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !condition() {
+		if time.Now().After(deadline) {
+			t.Fatal("condition not reached")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

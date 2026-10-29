@@ -87,6 +87,14 @@ func (m *Manager) backendList() []provider.Backend {
 	return backends
 }
 
+func (m *Manager) backendActiveTurns() int {
+	active := 0
+	for _, backend := range m.backendList() {
+		active += backend.ActiveTurns()
+	}
+	return active
+}
+
 func (m *Manager) backendAgents() []mobileAgentSummary {
 	backends := m.backendList()
 	result := make([]mobileAgentSummary, 0, len(backends))
@@ -96,18 +104,19 @@ func (m *Manager) backendAgents() []mobileAgentSummary {
 	return result
 }
 
-// backendTarget resolves the Mobile agentId to a non-Codex backend.
-func (m *Manager) backendTarget(raw json.RawMessage) (provider.Backend, bool) {
+// backendTarget resolves the Mobile agentId to a non-Codex backend. The
+// registry key is the agent ID, so callers need not query the backend.
+func (m *Manager) backendTarget(raw json.RawMessage) (provider.Backend, string, bool) {
 	var target struct {
 		AgentID string `json:"agentId"`
 	}
 	if json.Unmarshal(raw, &target) != nil || target.AgentID == "" {
-		return nil, false
+		return nil, "", false
 	}
 	m.backendMu.Lock()
 	defer m.backendMu.Unlock()
 	backend, ok := m.backends[target.AgentID]
-	return backend, ok
+	return backend, target.AgentID, ok
 }
 
 func (m *Manager) backendVersionOf(agentID, conversationID string) backendVersion {
@@ -189,8 +198,7 @@ func unsupported(method string) error {
 // backendControl serves Mobile contract methods for a provider.Backend. It
 // returns false when the method is not an agent method, leaving it to the
 // shared daemon switch.
-func (m *Manager) backendControl(backend provider.Backend, request protocol.ControlRequest, response *protocol.ControlResponse) bool {
-	agentID := backend.Agent().ID
+func (m *Manager) backendControl(backend provider.Backend, agentID string, request protocol.ControlRequest, response *protocol.ControlResponse) bool {
 	var result any
 	var err error
 	switch request.Method {

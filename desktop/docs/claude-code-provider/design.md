@@ -18,7 +18,7 @@ Mobile ──Relay(E2EE)──► daemon.control()
 
 - daemon 启动时由 `startBackends` 创建后端：配置 `claudeCode.enabled=false` 时跳过；未配置时仅在 `<configDir>/projects` 存在时启用。`configDir` 依次取配置 `claudeCode.configDir`、`CLAUDE_CONFIG_DIR`、`~/.claude`。后端在后台解析 CLI（见下文），解析完成前 agent 只声明 `history`/`desktopMirror` 能力。
 - `control()` 对 Mobile contract 请求先按 `agentId` 查后端；命中时由 `backendControl` 处理 agent 方法，未知 agent 仍走 Codex 路径（`invalid_target`）。
-- **读路径**：后端每 2 秒轮询，增量扫描转录（按文件偏移续读完整行，尾部半行留到下次）并重读活跃会话登记；时间线首次读取时解析整份转录并缓存（最多 8 份，LRU）。
+- **读路径**：后端每 2 秒轮询，增量扫描转录（按文件偏移续读完整行，尾部半行留到下次）并重读活跃会话登记；时间线首次读取时解析整份转录并缓存（最多 8 份，LRU）。扫描在条目副本上进行、解析持有单份转录自己的锁，完成后才在后端锁内替换，因此 CLI 输出读取和 Mobile 请求不会被文件 I/O 阻塞。轮询只为会话本身变化发失效；列表级失效仅在会话增删、标题或首个提问变化、电脑端占用变化以及 Turn 开始/结束时发送。daemon 自有进程正在流式输出的会话不发轮询失效（stdout 事件已覆盖），以免打断 delta 序号连续性。
 - **写路径**：首个 `turn.start` 为会话启动一个 `claude.exe` 子进程（已有转录用 `--resume`，新会话用 `--session-id`），之后同一进程连续服务多轮；无 Turn、无待处理请求超过 10 分钟后关闭 stdin 回收，下次发送再 `--resume`。进程隐藏窗口并加入 daemon 的 job object，daemon 退出时一并终止。CLI 输出逐行解析：
   - `stream_event` 的 `text_delta`/`thinking_delta` → `assistantText`/`reasoning` delta；
   - `assistant`/`user` 消息 → 会话失效（Mobile 读取权威快照）；
@@ -44,18 +44,18 @@ Mobile ──Relay(E2EE)──► daemon.control()
 | `conversation.timeline.list` | 最新优先；cursor 为本页最旧条目 ID；ID 不存在返回 `invalid_params` |
 | `conversation.content.read/resolve` | 复用 daemon contentRef 和 512 KiB 响应预算 |
 | `conversation.subscribe` | 无事件回放；cursor 与当前 sequence 不同即 `snapshot=true` |
-| `conversation.create` | 只接受索引中的 `projectId`，生成新会话 UUID 并记住项目目录；首个 Turn 才启动进程。未知项目或目录不可访问返回 `project_not_resolved` |
+| `conversation.create` | 只接受索引中的 `projectId`，生成新会话 UUID 并记住项目目录；首个 Turn 才启动进程。未发送过的新会话 24 小时后失效，最多保留 256 个（满时淘汰最旧的，全部有进程时返回 `too_many_conversations`）。未知项目或目录不可访问返回 `project_not_resolved` |
 | `turn.start` | 校验 `expectedRevision`；可带 `settings`（先保存再发送）和已提交的图片附件；返回 `{turn:{id}}` |
 | `turn.interrupt` | 发送 `interrupt` 控制请求；10 秒内未结束则终止进程 |
 | `action.list` / `action.resolve` | 见交互映射；第二次解析返回 `already_resolved` |
 | `plan.respond` | `implement` 批准计划，`revise` 把 `text` 作为修订意见返回模型；不另起新 Turn |
 | `conversation.settings.update` | 校验后保存；空闲进程停止，下一 Turn 以新参数启动；运行中的 Turn 保持启动参数 |
-| `catalog.models` | `default`（CLI 配置模型）及 `opus`/`sonnet`/`haiku` 别名；别名被 `ANTHROPIC_DEFAULT_*_MODEL`（环境或用户 settings）映射时作为 description 显示；effort 为 low/medium/high/xhigh/max |
+| `catalog.models` | `default`（CLI 配置模型）及 `opus`/`sonnet`/`haiku` 别名；别名被 `ANTHROPIC_DEFAULT_*_MODEL`（环境或用户 settings）映射时作为 description 显示；effort 为 `auto`（默认，沿用用户 Claude Code 配置，Mobile 显示为“智能”）与 low/medium/high/xhigh/max。每个模型的 `defaultReasoningEffort` 必须是 `auto`：Mobile 会把空默认值替换为列表第一项 |
 | `catalog.permissionProfiles` | `default`、`autoReview` 可用；`fullAccess` 可用且 `dangerous=true`；`readOnly` 不可用（Claude Code 无等价模式） |
-| `attachment.begin` | 目录取自后端可信项目根；上传绑定到该 agent，只能被同一会话的 `turn.start` 使用，仅接受 `image/*` |
+| `attachment.begin` | 目录取自后端可信项目根；上传绑定到该 agent，只能被同一会话的 `turn.start` 使用，仅接受 `image/*`；`turn.start` 在启动进程前按 Claude API 限制校验图片：仅 JPEG/PNG/GIF/WebP（否则 `unsupported_attachment_type`），单张不超过 5 MiB（否则 `too_large`） |
 | `conversation.queue.*` | `unsupported_capability` |
 
-设置到 CLI 参数：协作模式 `plan` → `--permission-mode plan`；否则 `default`→`default`、`autoReview`→`auto`、`fullAccess`→`bypassPermissions` + `--allow-dangerously-skip-permissions`；`modelId` 非 `default` 时传 `--model`，非空 effort 传 `--effort`。
+设置到 CLI 参数：协作模式 `plan` → `--permission-mode plan`；否则 `default`→`default`、`autoReview`→`auto`、`fullAccess`→`bypassPermissions` + `--allow-dangerously-skip-permissions`；`modelId` 非 `default` 时传 `--model`，effort 非空且非 `auto` 时传 `--effort`。
 
 ### 交互映射
 
@@ -87,12 +87,13 @@ Mobile ──Relay(E2EE)──► daemon.control()
 
 ## Security and failure handling
 
-- **CLI 解析**：配置的 `claudeCode.executable` 优先；否则在 PATH 中找 `claude.exe`，或把 npm 的 `claude.cmd` 包装解析为包内 `bin/claude.exe`，最后尝试 `~/.local/bin/claude.exe`。只执行原生 exe，不经 `cmd.exe`；版本低于 [`MinimumVersion`](protocol.md) 不使用。找不到时写方法返回 `runtime_unavailable`，读路径不受影响。
+- **CLI 解析**：配置的 `claudeCode.executable` 优先（配置为 npm `claude.cmd` 时先尝试包内 `bin/claude.exe`）；否则在 PATH 中找 `claude.exe`，或把 npm 的 `claude.cmd` 包装解析为包内 `bin/claude.exe`，最后尝试 `~/.local/bin/claude.exe`。只执行原生 exe，不经 `cmd.exe`；版本低于 [`MinimumVersion`](protocol.md) 不使用。找不到时写方法返回 `runtime_unavailable`，读路径不受影响。
 - **子进程环境**：移除继承的 `CLAUDE_CODE_*`、`CLAUDE_AGENT_SDK_*`、`CLAUDECODE` 等宿主变量，设置 `CLAUDE_CODE_ENABLE_ASK_USER_QUESTION_TOOL=1`；用户自己的 `ANTHROPIC_*` 配置和 Claude settings 照常生效，daemon 不读取或转发凭据。
 - **目录与会话**：会话 ID 必须是索引中的 UUID 文件名或 daemon 创建的 UUID；工作目录只来自转录索引或基于已索引项目创建的会话，Mobile 不能传路径；启动前确认目录存在。
-- **电脑端占用**：活跃登记中进程仍存活（Windows 上核对 `procStart` 防 PID 复用）且不是 daemon 自己的子进程时，会话为 `externallyActive`，`turn.start` 返回 `conversation_busy_external`。登记文件遗留但进程已退出时不锁定。daemon 无法阻止用户在 daemon 进程运行期间另开终端 `--resume` 同一会话。
+- **电脑端占用**：活跃登记中进程仍存活（Windows 上核对 `procStart` 防 PID 复用），且后端当前没有为该会话运行进程时，会话为 `externallyActive`，`turn.start` 返回 `conversation_busy_external`。按会话而不是 PID 排除自有进程，配置的包装程序 PID 与登记 PID 不同也不会误判；代价是后端进程运行期间另一进程打开同一会话不会被标记。登记文件遗留但进程已退出时不锁定。daemon 无法阻止用户在 daemon 进程运行期间另开终端 `--resume` 同一会话。
 - **并发**：同一会话已有活跃 Turn 或待处理请求时返回 `conversation_busy`；请求解析先移除再回复，保证 first-valid-wins。写操作的 `expectedRevision` 不匹配返回 `revision_conflict`。
 - **进程失败**：进程退出时，活跃 Turn 以失败（或中断）结束，待处理请求全部失效；下一次发送重新启动进程。
+- **daemon 退出**：`system.shutdown` 的活跃 Turn 计数和托盘退出确认都包含 Claude Code Turn；确认中断后对每个活跃 Turn 发送 `interrupt`，与 Codex 共用最多 10 秒的等待，再终止进程。
 - **权限**：`fullAccess` 映射到 Claude Code 的 bypass 模式并在 catalog 中标记 `dangerous`；`readOnly` 不可选，避免把非只读模式伪装为只读。
 - 读取错误返回 `provider_error`，不影响 Codex 路径；大内容遵循与 Codex 相同的 contentRef 和响应上限。
 

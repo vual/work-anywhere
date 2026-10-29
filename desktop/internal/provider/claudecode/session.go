@@ -131,7 +131,6 @@ func (b *Backend) startProcessLocked(id, cwd string, resume bool, settings provi
 	}
 	process := &sessionProcess{backend: b, id: id, cwd: cwd, settings: settings, cmd: cmd, stdin: stdin, done: make(chan struct{}), lastUsed: time.Now(), requests: make(map[string]*pendingRequest)}
 	b.processes[id] = process
-	b.ownPIDs[cmd.Process.Pid] = true
 	go process.read(stdout)
 	// The initialize request declares this host as the approval surface;
 	// without it the CLI denies every prompt and hides question tools.
@@ -281,6 +280,8 @@ func (p *sessionProcess) finishTurn(message streamLine) {
 	}
 	b.emit(provider.Event{Kind: kind, ConversationID: p.id, TurnID: turnID})
 	b.emit(provider.Event{Kind: provider.EventChanged, ConversationID: p.id})
+	// The list running indicator changes with the turn state.
+	b.emit(provider.Event{Kind: provider.EventChanged})
 }
 
 // exit runs once the process has ended. An active turn fails and pending
@@ -291,9 +292,6 @@ func (p *sessionProcess) exit() {
 	p.exited = true
 	if b.processes[p.id] == p {
 		delete(b.processes, p.id)
-	}
-	if p.cmd.Process != nil {
-		delete(b.ownPIDs, p.cmd.Process.Pid)
 	}
 	turnID, active, interrupted := p.turnID, p.turnActive, p.interrupting
 	p.turnActive = false

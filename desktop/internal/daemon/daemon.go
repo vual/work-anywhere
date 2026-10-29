@@ -443,7 +443,7 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 		return response
 	}
 	if request.Contract == protocol.MobileControlContract {
-		if backend, ok := m.backendTarget(request.Params); ok && m.backendControl(backend, request, &response) {
+		if backend, agentID, ok := m.backendTarget(request.Params); ok && m.backendControl(backend, agentID, request, &response) {
 			return response
 		}
 	}
@@ -1067,7 +1067,7 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 		m.remote.Reconnect()
 		response.Result = map[string]any{"reconnecting": true}
 	case "system.shutdown":
-		active := 0
+		active := m.backendActiveTurns()
 		for _, item := range m.instanceSnapshots() {
 			if item.ActiveTurn {
 				active++
@@ -1477,9 +1477,12 @@ func (m *Manager) gracefulShutdown(interrupt bool) {
 				go instance.InterruptActive()
 			}
 		}
+		for _, backend := range m.backendList() {
+			backend.InterruptAll(m.ctx)
+		}
 		deadline := time.Now().Add(10 * time.Second)
 		for time.Now().Before(deadline) {
-			active := false
+			active := m.backendActiveTurns() > 0
 			for _, instance := range instances {
 				if instance.Snapshot().ActiveTurn {
 					active = true

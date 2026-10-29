@@ -36,7 +36,7 @@ var versionPattern = regexp.MustCompile(`(\d+)\.(\d+)\.(\d+)`)
 func ResolveRuntime(ctx context.Context, configured string) (Runtime, error) {
 	candidates := make([]string, 0, 4)
 	if configured != "" {
-		candidates = append(candidates, configured)
+		candidates = append(candidates, unwrapShim(configured), configured)
 	} else {
 		candidates = append(candidates, pathCandidates()...)
 		if home, err := os.UserHomeDir(); err == nil {
@@ -65,6 +65,15 @@ func ResolveRuntime(ctx context.Context, configured string) (Runtime, error) {
 		return Runtime{Executable: candidate, Version: version}, nil
 	}
 	return Runtime{}, lastErr
+}
+
+// unwrapShim maps the npm claude.cmd wrapper to the packaged native
+// executable so the daemon runs and tracks claude.exe itself.
+func unwrapShim(path string) string {
+	if runtime.GOOS != "windows" || !strings.EqualFold(filepath.Ext(path), ".cmd") {
+		return path
+	}
+	return filepath.Join(filepath.Dir(path), "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe")
 }
 
 func pathCandidates() []string {
@@ -164,13 +173,19 @@ func sessionArgs(conversationID string, resume bool, settings provider.Conversat
 	if settings.ModelID != "" && settings.ModelID != defaultModelID {
 		args = append(args, "--model", settings.ModelID)
 	}
-	if settings.ReasoningEffort != "" {
+	if settings.ReasoningEffort != "" && settings.ReasoningEffort != defaultEffortID {
 		args = append(args, "--effort", settings.ReasoningEffort)
 	}
 	return args
 }
 
-const defaultModelID = "default"
+const (
+	defaultModelID = "default"
+	// defaultEffortID leaves the effort to the user's Claude Code
+	// configuration. It must be the catalog default: Mobile replaces an
+	// empty default with the first listed effort.
+	defaultEffortID = "auto"
+)
 
 // Mobile permission presets mapped onto Claude Code permission modes. The
 // collaboration mode "plan" selects Claude Code's plan mode regardless of
@@ -190,7 +205,7 @@ func cliPermissionMode(settings provider.ConversationSettings) string {
 }
 
 func defaultSettings() provider.ConversationSettings {
-	return provider.ConversationSettings{Mode: "default", ModelID: defaultModelID, PermissionModeID: "default"}
+	return provider.ConversationSettings{Mode: "default", ModelID: defaultModelID, ReasoningEffort: defaultEffortID, PermissionModeID: "default"}
 }
 
 func permissionModes() []provider.PermissionMode {
@@ -202,16 +217,16 @@ func permissionModes() []provider.PermissionMode {
 	}
 }
 
-var reasoningEfforts = []provider.ReasoningEffort{{ID: "low"}, {ID: "medium"}, {ID: "high"}, {ID: "xhigh"}, {ID: "max"}}
+var reasoningEfforts = []provider.ReasoningEffort{{ID: defaultEffortID, Description: "Claude Code configured effort"}, {ID: "low"}, {ID: "medium"}, {ID: "high"}, {ID: "xhigh"}, {ID: "max"}}
 
 // modelCatalog lists the CLI default and the model aliases. Aliases may be
 // remapped by ANTHROPIC_DEFAULT_*_MODEL in the process environment or in the
 // user's Claude Code settings; the mapped model is shown as the description.
 func modelCatalog(configDir string) provider.ModelCatalog {
 	mapped := modelOverrides(configDir)
-	items := []provider.ModelCatalogItem{{ID: defaultModelID, Name: "Default", Description: "Claude Code configured model", Default: true, Selectable: true, ReasoningEfforts: reasoningEfforts}}
+	items := []provider.ModelCatalogItem{{ID: defaultModelID, Name: "Default", Description: "Claude Code configured model", Default: true, Selectable: true, DefaultReasoningEffort: defaultEffortID, ReasoningEfforts: reasoningEfforts}}
 	for _, alias := range []struct{ id, name, env string }{{"opus", "Opus", "ANTHROPIC_DEFAULT_OPUS_MODEL"}, {"sonnet", "Sonnet", "ANTHROPIC_DEFAULT_SONNET_MODEL"}, {"haiku", "Haiku", "ANTHROPIC_DEFAULT_HAIKU_MODEL"}} {
-		items = append(items, provider.ModelCatalogItem{ID: alias.id, Name: alias.name, Description: mapped[alias.env], Selectable: true, ReasoningEfforts: reasoningEfforts})
+		items = append(items, provider.ModelCatalogItem{ID: alias.id, Name: alias.name, Description: mapped[alias.env], Selectable: true, DefaultReasoningEffort: defaultEffortID, ReasoningEfforts: reasoningEfforts})
 	}
 	return provider.ModelCatalog{Items: items}
 }
@@ -234,6 +249,23 @@ func modelOverrides(configDir string) map[string]string {
 		}
 	}
 	return result
+}
+
+// Claude API image input limits; larger or other images fail the model call.
+const maxImageBytes = 5 << 20
+
+var supportedImageTypes = map[string]bool{"image/jpeg": true, "image/png": true, "image/gif": true, "image/webp": true}
+
+func validImages(images []provider.Image) error {
+	for _, image := range images {
+		if !supportedImageTypes[strings.ToLower(image.MimeType)] {
+			return provider.NewError("unsupported_attachment_type", "Claude Code accepts JPEG, PNG, GIF and WebP images")
+		}
+		if len(image.Data) > maxImageBytes {
+			return provider.NewError("too_large", "Claude Code images must be at most 5 MiB")
+		}
+	}
+	return nil
 }
 
 func validSettings(settings provider.ConversationSettings) error {

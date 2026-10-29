@@ -253,6 +253,10 @@ type Backend interface {
 	CreateConversation(ctx context.Context, projectID string) (ConversationMetadata, error)
 	StartTurn(ctx context.Context, request TurnRequest) (string, error)
 	InterruptTurn(ctx context.Context, conversationID string) error
+	// ActiveTurns counts running turns; InterruptAll asks each to stop. The
+	// daemon uses them to guard and drain shutdown.
+	ActiveTurns() int
+	InterruptAll(ctx context.Context)
 	Actions() []Action
 	ResolveAction(ctx context.Context, id string, result json.RawMessage) error
 	// PlanConfirmation returns the pending plan approval, without revision.

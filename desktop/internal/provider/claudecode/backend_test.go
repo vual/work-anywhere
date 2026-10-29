@@ -189,6 +189,14 @@ func TestRefreshReportsChangesAndLiveSessions(t *testing.T) {
 		t.Fatalf("unchanged refresh notified %#v", got)
 	}
 
+	// Growth that does not change list contents invalidates only the
+	// conversation.
+	appendLine(t, path, `{"type":"system","subtype":"turn_duration","sessionId":"`+fixtureSession+`"}`)
+	_ = backend.refresh()
+	if got := snapshot(); got[fixtureSession] != 1 || got[""] != 0 {
+		t.Fatalf("plain append notified %#v", got)
+	}
+
 	appendLine(t, path, `{"type":"custom-title","customTitle":"Renamed","sessionId":"`+fixtureSession+`"}`)
 	_ = backend.refresh()
 	if got := snapshot(); got[fixtureSession] != 1 || got[""] != 1 {
@@ -275,6 +283,8 @@ func TestHumanPromptFiltering(t *testing.T) {
 		{`"<local-command-stdout>done</local-command-stdout>"`, "", false},
 		{`[{"type":"tool_result","tool_use_id":"x","content":"y"}]`, "", false},
 		{`"<command-name>/clear</command-name>"`, "/clear", true},
+		{`"[Request interrupted by user]"`, "", false},
+		{`[{"type":"text","text":"[Request interrupted by user for tool use]"}]`, "", false},
 	}
 	for _, test := range cases {
 		r := &record{Type: "user", Message: &messageRecord{Role: "user", Content: []byte(test.content)}}

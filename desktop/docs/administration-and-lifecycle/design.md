@@ -36,7 +36,7 @@ daemon PID、启动时间、管理端口、一次性 token、session、托盘状
 - HTTP 仅绑定 loopback，不能作为 Relay 的公网监听端口。
 - 一次性 token 被消费后不可重复换取 session；token 不放在 URL query 中。
 - 正常退出时若无活跃 Turn，关闭 App Server并释放 Job Object。
-- 有活跃 Turn 时托盘显示原生确认框；确认后发送 interrupt，最多等待十秒，再结束 Job Object；取消则 daemon 继续运行。
+- 有活跃 Turn（包括 [Claude Code provider](../claude-code-provider/design.md) 的 Turn；托盘实例列表也列出该 agent）时托盘显示原生确认框；确认后发送 interrupt，最多等待十秒，再结束 Job Object；取消则 daemon 继续运行。
 - `force-stop` 是异常恢复手段，可能中断正在执行的 Turn。
 
 ## Invariants and non-goals

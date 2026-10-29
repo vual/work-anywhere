@@ -13,13 +13,15 @@ import (
 )
 
 type fakeBackend struct {
-	notify   provider.Notifier
-	long     string
-	root     string
-	turns    []provider.TurnRequest
-	resolved map[string]json.RawMessage
-	plans    []string
-	settings provider.ConversationSettings
+	notify      provider.Notifier
+	long        string
+	root        string
+	turns       []provider.TurnRequest
+	resolved    map[string]json.RawMessage
+	plans       []string
+	settings    provider.ConversationSettings
+	active      int
+	interrupted bool
 }
 
 func (*fakeBackend) Agent() provider.AgentSummary {
@@ -80,6 +82,13 @@ func (f *fakeBackend) StartTurn(_ context.Context, request provider.TurnRequest)
 }
 
 func (*fakeBackend) InterruptTurn(context.Context, string) error { return nil }
+
+func (f *fakeBackend) ActiveTurns() int { return f.active }
+
+func (f *fakeBackend) InterruptAll(context.Context) {
+	f.interrupted = true
+	f.active = 0
+}
 
 func (*fakeBackend) Actions() []provider.Action {
 	return []provider.Action{{ID: json.RawMessage(`"cc-1"`), Kind: "approval", Method: "claude/canUseTool/Bash", ConversationID: "c1", Detail: &provider.ActionDetail{Command: "go test"}}}
@@ -336,4 +345,24 @@ func TestBackendImageAttachmentsReachTheTurn(t *testing.T) {
 		t.Fatalf("accepted attachment was not released: %v", err)
 	}
 	expectError(t, mobileCall(t, manager, "attachment.begin", map[string]any{"agentId": "fake:agent", "conversationId": "unknown", "clientMessageId": "m2", "mimeType": "image/png", "fileName": "b.png", "size": 1}), "project_not_resolved")
+}
+
+func TestShutdownAccountsForBackendTurns(t *testing.T) {
+	manager, backend := newBackendTestManager(t)
+	backend.active = 1
+	raw, _ := json.Marshal(map[string]any{})
+	response := manager.control(protocol.ControlRequest{Type: "request", ID: "1", Method: "system.shutdown", Params: raw})
+	if response.Error == nil || response.Error.Code != "active_turns" {
+		t.Fatalf("shutdown = %#v", response)
+	}
+	tray := manager.TrayInstances()
+	if len(tray) != 1 || tray[0].ID != "fake:agent" || !tray[0].ActiveTurn {
+		t.Fatalf("tray = %#v", tray)
+	}
+	cancelled := false
+	manager.cancel = func() { cancelled = true }
+	manager.gracefulShutdown(true)
+	if !backend.interrupted || !cancelled {
+		t.Fatalf("interrupted = %v, cancelled = %v", backend.interrupted, cancelled)
+	}
 }

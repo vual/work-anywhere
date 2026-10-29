@@ -22,6 +22,11 @@ func (m *Manager) TrayInstances() []tray.InstanceStatus {
 			ActiveTurn:     snapshot.ActiveTurn,
 		})
 	}
+	// Backend agents appear too so tray exit warns about their running turns.
+	for _, backend := range m.backendList() {
+		agent := backend.Agent()
+		result = append(result, tray.InstanceStatus{ID: agent.ID, Name: agent.Name, State: agent.Status, ActiveTurn: backend.ActiveTurns() > 0})
+	}
 	return result
 }
 

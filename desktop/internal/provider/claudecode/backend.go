@@ -34,6 +34,8 @@ const (
 	maxListLimit         = 100
 	maxCachedTranscripts = 8
 	maxClientMessages    = 1024
+	createdTTL           = 24 * time.Hour
+	maxCreated           = 256
 )
 
 var sessionIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -64,6 +66,7 @@ type fileEntry struct {
 }
 
 type cachedTranscript struct {
+	mu       sync.Mutex
 	path     string
 	scan     scanState
 	value    *transcript
@@ -95,6 +98,7 @@ type Backend struct {
 	resolve     func(context.Context) (Runtime, error)
 	attach      func(*exec.Cmd) error
 
+	refreshMu      sync.Mutex
 	mu             sync.Mutex
 	files          map[string]*fileEntry
 	transcripts    map[string]*cachedTranscript
@@ -102,7 +106,6 @@ type Backend struct {
 	created        map[string]*createdConversation
 	settings       map[string]provider.ConversationSettings
 	processes      map[string]*sessionProcess
-	ownPIDs        map[int]bool
 	clientMessages map[string]string
 	runtime        Runtime
 	runtimeError   string
@@ -152,7 +155,6 @@ func New(options Options) (*Backend, error) {
 		created:        make(map[string]*createdConversation),
 		settings:       make(map[string]provider.ConversationSettings),
 		processes:      make(map[string]*sessionProcess),
-		ownPIDs:        make(map[int]bool),
 		clientMessages: make(map[string]string),
 	}
 	if b.name == "" {
@@ -264,6 +266,7 @@ func (b *Backend) watch(ctx context.Context) {
 
 func (b *Backend) stopIdleProcesses(now time.Time) {
 	b.mu.Lock()
+	b.expireCreatedLocked(now)
 	idle := make([]*sessionProcess, 0)
 	for id, process := range b.processes {
 		if !process.turnActive && len(process.requests) == 0 && now.Sub(process.lastUsed) >= b.idleTimeout {
@@ -277,14 +280,42 @@ func (b *Backend) stopIdleProcesses(now time.Time) {
 	}
 }
 
+// expireCreatedLocked forgets conversations created from Mobile that never
+// started a turn, so abandoned drafts do not keep project roots resolvable.
+func (b *Backend) expireCreatedLocked(now time.Time) {
+	for id, created := range b.created {
+		if b.processes[id] == nil && now.Sub(time.Unix(created.createdAt, 0)) >= createdTTL {
+			delete(b.created, id)
+		}
+	}
+}
+
 // refresh rescans the transcript and live-session stores and reports every
-// change through the notifier. It is the only writer of the summary index.
+// change through the notifier. refreshMu makes it the single writer of the
+// summary index; file I/O happens outside b.mu so session readers and
+// requests are never blocked behind a scan.
 func (b *Backend) refresh() error {
+	b.refreshMu.Lock()
+	defer b.refreshMu.Unlock()
 	changed, listChanged, err := b.refreshIndex()
-	for id := range b.refreshLive() {
+	liveChanged := b.refreshLive()
+	if len(liveChanged) > 0 {
+		listChanged = true
+	}
+	for id := range liveChanged {
 		changed[id] = true
 	}
-	if listChanged || len(changed) > 0 {
+	// A turn streamed by this backend's own process is reported through its
+	// stdout events. Polling invalidations would advance the sequence between
+	// deltas and force Mobile to drop the live text for a snapshot.
+	b.mu.Lock()
+	for id := range changed {
+		if process := b.processes[id]; process != nil && process.turnActive && !liveChanged[id] {
+			delete(changed, id)
+		}
+	}
+	b.mu.Unlock()
+	if listChanged {
 		b.emit(provider.Event{Kind: provider.EventChanged})
 	}
 	for id := range changed {
@@ -293,46 +324,68 @@ func (b *Backend) refresh() error {
 	return err
 }
 
+// refreshIndex scans copies of the index entries without holding b.mu and
+// swaps changed entries in afterwards. listChanged reports changes visible
+// in conversation lists beyond recency: added or removed conversations and
+// changed titles.
 func (b *Backend) refreshIndex() (map[string]bool, bool, error) {
 	changed := make(map[string]bool)
 	paths, err := filepath.Glob(filepath.Join(b.configDir, "projects", "*", "*.jsonl"))
 	if err != nil {
 		return changed, false, err
 	}
-	seen := make(map[string]bool, len(paths))
-	listChanged := false
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	current := make(map[string]*fileEntry, len(b.files))
+	for id, entry := range b.files {
+		current[id] = entry
+	}
+	b.mu.Unlock()
+	seen := make(map[string]bool, len(paths))
+	updates := make(map[string]*fileEntry)
+	listChanged := false
 	for _, path := range paths {
 		id := strings.TrimSuffix(filepath.Base(path), ".jsonl")
 		if !sessionIDPattern.MatchString(id) {
 			continue
 		}
 		seen[id] = true
-		entry := b.files[id]
-		if entry == nil || entry.path != path {
-			entry = &fileEntry{path: path}
-			b.files[id] = entry
-			listChanged = true
+		old := current[id]
+		next := &fileEntry{path: path}
+		if old != nil && old.path == path {
+			*next = *old
 		}
-		before := entry.scan
-		scanErr := scanFile(path, &entry.scan, entry.summary.observe)
+		before := next.scan
+		scanErr := scanFile(path, &next.scan, next.summary.observe)
 		if errors.Is(scanErr, errTranscriptReplaced) {
-			entry.scan, entry.summary = scanState{}, summary{}
-			scanErr = scanFile(path, &entry.scan, entry.summary.observe)
+			next.scan, next.summary = scanState{}, summary{}
+			scanErr = scanFile(path, &next.scan, next.summary.observe)
 		}
 		if scanErr != nil {
 			continue
 		}
-		if entry.scan != before {
-			changed[id] = true
+		if old == nil || old.path != path {
+			updates[id] = next
+			listChanged = true
+			continue
 		}
+		if next.scan != before {
+			updates[id] = next
+			changed[id] = true
+			if next.summary.title() != old.summary.title() || next.summary.HasPrompt != old.summary.HasPrompt {
+				listChanged = true
+			}
+		}
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for id, entry := range updates {
+		b.files[id] = entry
 		if entry.summary.HasPrompt {
 			delete(b.created, id)
 		}
 	}
-	for id := range b.files {
-		if !seen[id] {
+	for id, entry := range current {
+		if !seen[id] && b.files[id] == entry {
 			delete(b.files, id)
 			delete(b.transcripts, id)
 			listChanged = true
@@ -342,15 +395,11 @@ func (b *Backend) refreshIndex() (map[string]bool, bool, error) {
 }
 
 // refreshLive reads the CLI's live-session registry. Each running Claude
-// Code process writes sessions/<pid>.json naming the session it owns;
-// processes started by this backend are not external owners.
+// Code process writes sessions/<pid>.json naming the session it owns.
+// Sessions this backend is running are never external owners, whichever
+// PID the registry records for them (a configured wrapper may differ from
+// the process that registers).
 func (b *Backend) refreshLive() map[string]bool {
-	b.mu.Lock()
-	own := make(map[int]bool, len(b.ownPIDs))
-	for pid := range b.ownPIDs {
-		own[pid] = true
-	}
-	b.mu.Unlock()
 	live := make(map[string]bool)
 	paths, _ := filepath.Glob(filepath.Join(b.configDir, "sessions", "*.json"))
 	for _, path := range paths {
@@ -359,7 +408,7 @@ func (b *Backend) refreshLive() map[string]bool {
 			continue
 		}
 		var session registryEntry
-		if json.Unmarshal(data, &session) != nil || session.SessionID == "" || own[session.PID] {
+		if json.Unmarshal(data, &session) != nil || session.SessionID == "" {
 			continue
 		}
 		if b.alive(session.PID, session.ProcStart) {
@@ -368,6 +417,11 @@ func (b *Backend) refreshLive() map[string]bool {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	for id := range live {
+		if b.processes[id] != nil {
+			delete(live, id)
+		}
+	}
 	changed := make(map[string]bool)
 	for id := range live {
 		if !b.live[id] {
@@ -603,13 +657,15 @@ func (b *Backend) TimelineBlock(_ context.Context, conversationID, turnID, itemI
 }
 
 // timelineItems returns a snapshot of the parsed transcript, extending the
-// cached parse with any lines appended since the last read.
+// cached parse with any lines appended since the last read. Parsing holds
+// only the transcript's own lock.
 func (b *Backend) timelineItems(conversationID string) ([]provider.TimelineItem, error) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	entry := b.files[conversationID]
 	if entry == nil {
-		if b.created[conversationID] != nil {
+		created := b.created[conversationID] != nil
+		b.mu.Unlock()
+		if created {
 			return nil, nil
 		}
 		return nil, provider.NewError("not_found", "conversation not found")
@@ -619,18 +675,30 @@ func (b *Backend) timelineItems(conversationID string) ([]provider.TimelineItem,
 		cached = &cachedTranscript{path: entry.path, value: newTranscript()}
 		b.transcripts[conversationID] = cached
 	}
-	err := scanFile(entry.path, &cached.scan, cached.value.observe)
-	if errors.Is(err, errTranscriptReplaced) {
-		cached.scan, cached.value = scanState{}, newTranscript()
-		err = scanFile(entry.path, &cached.scan, cached.value.observe)
-	}
-	if err != nil {
-		delete(b.transcripts, conversationID)
-		return nil, provider.NewError("provider_error", "read transcript: "+err.Error())
-	}
 	cached.lastUsed = time.Now()
 	b.evictTranscriptsLocked()
-	return append([]provider.TimelineItem(nil), cached.value.items...), nil
+	b.mu.Unlock()
+
+	cached.mu.Lock()
+	err := scanFile(cached.path, &cached.scan, cached.value.observe)
+	if errors.Is(err, errTranscriptReplaced) {
+		cached.scan, cached.value = scanState{}, newTranscript()
+		err = scanFile(cached.path, &cached.scan, cached.value.observe)
+	}
+	var items []provider.TimelineItem
+	if err == nil {
+		items = append([]provider.TimelineItem(nil), cached.value.items...)
+	}
+	cached.mu.Unlock()
+	if err != nil {
+		b.mu.Lock()
+		if b.transcripts[conversationID] == cached {
+			delete(b.transcripts, conversationID)
+		}
+		b.mu.Unlock()
+		return nil, provider.NewError("provider_error", "read transcript: "+err.Error())
+	}
+	return items, nil
 }
 
 func (b *Backend) evictTranscriptsLocked() {
