@@ -420,7 +420,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get fullAccessBody =>
-      'This lets Codex run commands without approval outside the workspace sandbox. Only continue if you trust this task.';
+      'Full access lets the agent run commands and change files without approval and outside the workspace. Only continue if you trust this task.';
 
   @override
   String get confirmFullAccess => 'Allow full access';
@@ -665,6 +665,18 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String planResponseFailed(String error) {
     return 'Could not respond to the plan: $error';
+  }
+
+  @override
+  String get openOnComputer => 'Open on computer';
+
+  @override
+  String get conversationOpenOnComputer =>
+      'This conversation is open on the computer, so it is read-only here. Close it there to continue from your phone.';
+
+  @override
+  String agentCannotSend(String agent) {
+    return '$agent can\'t receive messages from your phone right now.';
   }
 }
 

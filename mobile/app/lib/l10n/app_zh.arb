@@ -149,7 +149,7 @@
   "permissionFullAccessDescription": "完全访问计算机（风险较高）",
   "permissionUnavailable": "当前 Desktop 策略不允许使用",
   "fullAccessTitle": "允许完全访问计算机？",
-  "fullAccessBody": "Codex 将可在工作区沙盒外运行命令且无需批准。仅在你信任此任务时继续。",
+  "fullAccessBody": "完全访问会让 Agent 无需批准即可运行命令和修改文件，且不受工作区限制。仅在你信任此任务时继续。",
   "confirmFullAccess": "允许完全访问",
   "model": "模型",
   "otherModels": "其他模型",
@@ -232,5 +232,9 @@
   "skip": "跳过",
   "submit": "提交",
   "planResponseFailed": "计划响应失败：{error}",
-  "@planResponseFailed": {"placeholders": {"error": {"type": "String"}}}
+  "@planResponseFailed": {"placeholders": {"error": {"type": "String"}}},
+  "openOnComputer": "电脑端使用中",
+  "conversationOpenOnComputer": "此会话正在电脑上打开，手机端只能查看。在电脑上关闭后即可继续发送。",
+  "agentCannotSend": "{agent} 当前不支持从手机发送消息。",
+  "@agentCannotSend": {"placeholders": {"agent": {"type": "String"}}}
 }

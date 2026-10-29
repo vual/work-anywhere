@@ -32,7 +32,7 @@ func (b *Backend) CreateConversation(_ context.Context, projectID string) (provi
 		return provider.ConversationMetadata{}, provider.NewError("project_not_resolved", "project directory is not accessible")
 	}
 	id := newUUID()
-	now := time.Now().UnixMilli()
+	now := time.Now().Unix()
 	b.created[id] = &createdConversation{projectID: projectID, cwd: cwd, createdAt: now}
 	return provider.ConversationMetadata{ID: id, AgentID: b.agentID, ProjectID: projectID, Title: "New conversation", Status: "idle", CreatedAt: now, UpdatedAt: now}, nil
 }

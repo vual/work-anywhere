@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'localization.dart';
 import 'theme.dart';
 
 class WawBackButton extends StatelessWidget {
@@ -147,5 +148,23 @@ class WawFloatingSurface extends StatelessWidget {
       boxShadow: Theme.of(context).floatingShadow,
     ),
     child: child,
+  );
+}
+
+/// Marks a conversation that is open in another process on the computer.
+class OpenOnComputerIndicator extends StatelessWidget {
+  const OpenOnComputerIndicator({super.key});
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: context.l10n.openOnComputer,
+    child: Tooltip(
+      message: context.l10n.openOnComputer,
+      child: Icon(
+        Icons.computer_rounded,
+        size: 20,
+        color: Theme.of(context).mutedInk,
+      ),
+    ),
   );
 }

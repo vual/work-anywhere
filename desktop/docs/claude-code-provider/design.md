@@ -39,7 +39,7 @@ Mobile ──Relay(E2EE)──► daemon.control()
 | --- | --- |
 | `agent.list` | `{kind:"claude-code", name:"Claude Code"}`；CLI 可用时 `capabilities` 为 history、liveStream、textInput、imageInput、approval、question、interrupt、plan、createConversation、modelSelection、reasoningSelection、permissionMode、desktopMirror，`queue`/`steer` 为 false；附带活跃 Turn 与待处理请求计数 |
 | `project.list` | 以转录中的真实 `cwd` 分组，只含有用户提问的会话；排序与 cursor 同 Codex |
-| `conversation.list` | `projectId`、`query`（标题子串）、`limit`（默认 20，最大 100）、cursor；`updatedAt desc, id desc`；`running`/`status`/`needsAttention` 来自 daemon 自有进程；`externallyActive` 来自活跃登记 |
+| `conversation.list` | `projectId`、`query`（标题子串）、`limit`（默认 20，最大 100）、cursor；`updatedAt desc, id desc`；`running`/`status`/`needsAttention` 来自 daemon 自有进程；`externallyActive` 来自活跃登记；`createdAt`/`updatedAt` 为 Unix 秒（与 Codex 一致） |
 | `conversation.read` | metadata、时间线首页、当前设置、空队列、`capabilities.queue=false`、待确认计划时的 `planConfirmation`、daemon 版本号 |
 | `conversation.timeline.list` | 最新优先；cursor 为本页最旧条目 ID；ID 不存在返回 `invalid_params` |
 | `conversation.content.read/resolve` | 复用 daemon contentRef 和 512 KiB 响应预算 |

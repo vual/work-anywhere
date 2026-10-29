@@ -104,6 +104,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   }
 
   bool get _canSend =>
+      !_composerReadOnly &&
       !_sendBusy &&
       !_selectingImages &&
       !_settingsUpdating &&
@@ -118,6 +119,25 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   String? get _agentId =>
       _controller?.agentId ??
       ref.read(workspaceProvider).value?.selectedAgentId;
+
+  AgentSummary? get _agent {
+    final id = _controller?.state.metadata?['agentId'] as String? ?? _agentId;
+    return ref
+        .read(workspaceProvider)
+        .value
+        ?.agents
+        .where((item) => item.id == id)
+        .firstOrNull;
+  }
+
+  /// The conversation is open in another process on the computer.
+  bool get _externallyActive =>
+      _controller?.state.metadata?['externallyActive'] as bool? ?? false;
+
+  /// Sending is unavailable while the computer owns the conversation or when
+  /// the agent does not accept input from Mobile.
+  bool get _composerReadOnly =>
+      _externallyActive || !(_agent?.capabilities.textInput ?? true);
 
   @override
   void initState() {
@@ -1605,7 +1625,8 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         summary?.projectName ??
         project?.name ??
         context.l10n.project;
-    final agentName = agent?.name ?? workspace?.selectedAgent?.name ?? 'Codex';
+    final agentName =
+        agent?.name ?? workspace?.selectedAgent?.name ?? agentKindName('');
     final running = conversation?['running'] as bool? ?? false;
     final online = _isDraft ? _connectionOnline : state.online;
     final planConfirmation = _showPlanConfirmation(state)
@@ -1804,31 +1825,38 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                 onGuideNow: _guideQueuedSubmission,
                 onCancel: _cancelQueuedSubmission,
               ),
-            _ComposerPanel(
-              key: _composerPanelKey,
-              composer: _composer,
-              images: _images,
-              enabled: online && state.actions.isEmpty && !_settingsUpdating,
-              selectingImages: _selectingImages,
-              running: running,
-              online: online,
-              canSend: _canSend,
-              submitting: _sendBusy,
-              settings: _settings,
-              permissionIcon: _permissionIcon(
-                _settings?.permissionModeId ?? 'default',
+            if (_composerReadOnly)
+              _ReadOnlyComposerNotice(
+                message: _externallyActive
+                    ? context.l10n.conversationOpenOnComputer
+                    : context.l10n.agentCannotSend(agentName),
+              )
+            else
+              _ComposerPanel(
+                key: _composerPanelKey,
+                composer: _composer,
+                images: _images,
+                enabled: online && state.actions.isEmpty && !_settingsUpdating,
+                selectingImages: _selectingImages,
+                running: running,
+                online: online,
+                canSend: _canSend,
+                submitting: _sendBusy,
+                settings: _settings,
+                permissionIcon: _permissionIcon(
+                  _settings?.permissionModeId ?? 'default',
+                ),
+                model: _selectedModel,
+                settingsVisible: !_catalogFailed && _settings != null,
+                settingsEnabled: _canChangeSettings,
+                settingsUpdating: _settingsUpdating,
+                onAdd: _showAddMenu,
+                onPermissions: _showPermissionMenu,
+                onModelAndEffort: _showReasoningMenu,
+                onRemoveImage: _removeImage,
+                onSend: _send,
+                onInterrupt: _interrupt,
               ),
-              model: _selectedModel,
-              settingsVisible: !_catalogFailed && _settings != null,
-              settingsEnabled: _canChangeSettings,
-              settingsUpdating: _settingsUpdating,
-              onAdd: _showAddMenu,
-              onPermissions: _showPermissionMenu,
-              onModelAndEffort: _showReasoningMenu,
-              onRemoveImage: _removeImage,
-              onSend: _send,
-              onInterrupt: _interrupt,
-            ),
           ],
         ],
       ),
@@ -1886,12 +1914,20 @@ class _ActionConfirmation extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Text(
-                        isUserInput
-                            ? questionText ?? context.l10n.agentContinueRequest
-                            : action['method'] as String? ??
-                                  context.l10n.agentContinueRequest,
-                      ),
+                      if (!isUserInput && action['detail'] is Map)
+                        _ActionDetailView(
+                          detail: Map<String, dynamic>.from(
+                            action['detail'] as Map,
+                          ),
+                        )
+                      else
+                        Text(
+                          isUserInput
+                              ? questionText ??
+                                    context.l10n.agentContinueRequest
+                              : action['method'] as String? ??
+                                    context.l10n.agentContinueRequest,
+                        ),
                       if (remainingCount > 0) ...[
                         const SizedBox(height: 6),
                         Text(
@@ -1956,6 +1992,94 @@ class _ActionConfirmation extends StatelessWidget {
                 ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Describes what an approval allows: the request summary plus the command
+/// or file it targets, as reported by the agent.
+class _ActionDetailView extends StatelessWidget {
+  const _ActionDetailView({required this.detail});
+
+  final Map<String, dynamic> detail;
+
+  @override
+  Widget build(BuildContext context) {
+    String? value(String key) {
+      final text = (detail[key] as String?)?.trim();
+      return text == null || text.isEmpty ? null : text;
+    }
+
+    final description = value('description') ?? value('toolName');
+    final command = value('command');
+    final filePath = value('filePath');
+    final muted = Theme.of(context).mutedInk;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (description != null) Text(description),
+        if (command != null) ...[
+          const SizedBox(height: 6),
+          Container(
+            key: const ValueKey('action-detail-command'),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: SelectableText(
+              command,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+            ),
+          ),
+        ],
+        if (filePath != null) ...[
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Icon(Icons.description_outlined, size: 16, color: muted),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  filePath,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: WawCompact.metadata.copyWith(color: muted),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// Replaces the composer when Mobile may only read the conversation.
+class _ReadOnlyComposerNotice extends StatelessWidget {
+  const _ReadOnlyComposerNotice({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = Theme.of(context).mutedInk;
+    return SafeArea(
+      top: false,
+      minimum: const EdgeInsets.fromLTRB(16, 6, 16, 10),
+      child: WawFloatingSurface(
+        key: const ValueKey('read-only-composer-notice'),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Row(
+          children: [
+            Icon(Icons.computer_rounded, size: 20, color: muted),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(message, style: TextStyle(color: muted)),
+            ),
+          ],
         ),
       ),
     );

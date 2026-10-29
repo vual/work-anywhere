@@ -7,14 +7,14 @@ Mobile 是 Work Anywhere 的 iOS/Android 客户端。它不连接 Codex 云端�
 ## V1 product scope
 
 - 一台手机配对多台 Desktop daemon，一台 Desktop 也可授权多台手机。
-- 查看 Daemon/Agent 在线状态、Codex 项目、会话列表、完整时间线和实时增量；V1 优先完成 Codex，其他 Agent 先保留能力模型。
-- 处理 approval/question、发送文字与图片、选择模型/思考等级/权限配置并中断 Turn；运行中的新输入进入 App Server 权威队列，可编辑、立即引导或取消；在项目内新建 Codex 对话。
+- 查看 Daemon/Agent 在线状态、Codex 与 Claude Code 项目、会话列表、完整时间线和实时增量；电脑端正在使用的 Claude Code 会话只读显示。
+- 处理 approval/question、发送文字与图片、选择模型/思考等级/权限配置并中断 Turn；运行中的新输入进入 App Server 权威队列，可编辑、立即引导或取消；在项目内新建 Codex 或 Claude Code 对话（Claude Code 不支持运行中排队）。
 - 发送后立即显示本地文字与图片气泡，并按 `clientMessageId` 与权威时间线合并；实时输出使用有界 `conversation.delta`，sequence/epoch 缺口自动读取快照。
 - 接收只含通用提示的 APNs/FCM 通知；点击后重新建立 E2EE 会话并从 Desktop 同步权威状态。
 - 在前台维持 WSS；退到后台后不依赖长连接或静默推送保证状态同步。
 - 私钥保存在 iOS Keychain 或 Android Keystore 保护的本机密钥包中；V1 不把会话正文写入磁盘。
 
-V1 不提供 Work Anywhere 账号、云端历史、离线命令、后台常驻连接、通知内直接审批、团队共享或 Codex 之外 Provider 的完整适配。Mobile 可在已同步的 Codex 项目内新建 thread；Hermes 的 `Bot`、Claude Code、OpenCode、Pi 等只保留 discovery/capability 边界。
+V1 不提供 Work Anywhere 账号、云端历史、离线命令、后台常驻连接、通知内直接审批、团队共享或 Codex、Claude Code 之外 Provider 的完整适配。Mobile 可在已同步的项目内新建 thread；Hermes 的 `Bot`、OpenCode、Pi 等只保留 discovery/capability 边界。
 
 ## Architecture
 

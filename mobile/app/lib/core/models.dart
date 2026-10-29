@@ -73,25 +73,87 @@ ConnectionPhase connectionPhaseFromString(
   };
 }
 
+/// Conversation features an agent supports. Agents that omit the field
+/// (Codex) support everything the Mobile contract offers.
+class AgentCapabilities {
+  const AgentCapabilities({
+    this.textInput = true,
+    this.imageInput = true,
+    this.approval = true,
+    this.question = true,
+    this.interrupt = true,
+    this.queue = true,
+    this.plan = true,
+    this.createConversation = true,
+    this.modelSelection = true,
+    this.permissionMode = true,
+  });
+
+  static const all = AgentCapabilities();
+
+  final bool textInput;
+  final bool imageInput;
+  final bool approval;
+  final bool question;
+  final bool interrupt;
+  final bool queue;
+  final bool plan;
+  final bool createConversation;
+  final bool modelSelection;
+  final bool permissionMode;
+
+  factory AgentCapabilities.fromJson(Object? value) {
+    if (value is! Map) return all;
+    bool flag(String key) => value[key] as bool? ?? false;
+    return AgentCapabilities(
+      textInput: flag('textInput'),
+      imageInput: flag('imageInput'),
+      approval: flag('approval'),
+      question: flag('question'),
+      interrupt: flag('interrupt'),
+      queue: flag('queue'),
+      plan: flag('plan'),
+      createConversation: flag('createConversation'),
+      modelSelection: flag('modelSelection'),
+      permissionMode: flag('permissionMode'),
+    );
+  }
+}
+
 class AgentSummary {
   const AgentSummary({
     required this.id,
     required this.name,
     required this.kind,
     required this.status,
+    this.capabilities = AgentCapabilities.all,
   });
   final String id;
   final String name;
   final String kind;
   final String status;
+  final AgentCapabilities capabilities;
 
-  factory AgentSummary.fromJson(Map<String, dynamic> json) => AgentSummary(
-    id: json['id'] as String,
-    name: json['name'] as String? ?? 'Codex',
-    kind: json['kind'] as String? ?? 'codex',
-    status: json['status'] as String? ?? 'unknown',
-  );
+  factory AgentSummary.fromJson(Map<String, dynamic> json) {
+    final kind = json['kind'] as String? ?? '';
+    final name = (json['name'] as String?)?.trim();
+    return AgentSummary(
+      id: json['id'] as String,
+      name: name == null || name.isEmpty ? agentKindName(kind) : name,
+      kind: kind,
+      status: json['status'] as String? ?? 'unknown',
+      capabilities: AgentCapabilities.fromJson(json['capabilities']),
+    );
+  }
 }
+
+/// Product name for a known agent kind, used when Desktop sends no name.
+String agentKindName(String kind) => switch (kind) {
+  'codex' => 'Codex',
+  'claude-code' => 'Claude Code',
+  '' => 'Agent',
+  _ => kind,
+};
 
 class ProjectSummary {
   const ProjectSummary({
@@ -124,6 +186,7 @@ class ConversationSummary {
     required this.running,
     required this.updatedAt,
     this.needsAttention = false,
+    this.externallyActive = false,
   });
   final String id;
   final String agentId;
@@ -134,6 +197,10 @@ class ConversationSummary {
   final bool running;
   final int updatedAt;
   final bool needsAttention;
+
+  /// The conversation is open in another process on the computer; Mobile
+  /// shows it read-only.
+  final bool externallyActive;
 
   factory ConversationSummary.fromJson(Map<String, dynamic> json) =>
       ConversationSummary(
@@ -146,6 +213,7 @@ class ConversationSummary {
         running: json['running'] as bool? ?? false,
         updatedAt: json['updatedAt'] as int? ?? 0,
         needsAttention: json['needsAttention'] as bool? ?? false,
+        externallyActive: json['externallyActive'] as bool? ?? false,
       );
 }
 

@@ -92,7 +92,7 @@ Android 页面采用 edge-to-edge，顶部系统状态栏保持透明并叠加�
 
 Daemon 顶栏下一行横向展示该电脑上可发现的 Agent，例如 `Codex 1`、`Codex 2`、`Claude Code`、`Hermes`、`OpenCode`、`Pi`；超出屏幕宽度时左右滑动。默认恢复“该 Daemon 上次选择的 Agent”；已不存在时选择发现列表中的第一个 Agent，不因其他 Agent 处于 ready 状态而自动切换。
 
-Agent selector 每项至少显示 display name 和 provider icon/label；当前项使用明确选中态，未适配项显示“预留”。V1 只完整适配 Codex；未适配 Provider 可以被发现，但选择后进入只读说明页，不展示无法工作的项目或发送入口。Agent 列表与当前 Agent 的项目、对话同步结果分别保留；当前 Agent 内容同步失败时保留整个 selector，只清空当前 Agent 内容并显示重试提示。切换到其他 Agent 时立即更新选择并重新独立加载其项目和对话，前一个 Agent 的迟到结果或失败不得覆盖当前 Agent。切换 Agent 与切换 Daemon 一样清空旧 selection generation 的内容，且每个 Daemon 分别持久化上次 Agent 选择。
+Agent selector 每项至少显示 display name 和 provider icon/label；当前项使用明确选中态；Codex 头像为字母 C，Claude Code 为星形图标，其他 Provider 取名称首字母。V1 完整适配 Codex 和 Claude Code；Agent 的 `capabilities` 缺失时按全部支持处理，`createConversation=false` 时项目页不显示新建对话按钮，`textInput=false` 时会话页用只读说明代替 Composer。Agent 列表与当前 Agent 的项目、对话同步结果分别保留；当前 Agent 内容同步失败时保留整个 selector，只清空当前 Agent 内容并显示重试提示。切换到其他 Agent 时立即更新选择并重新独立加载其项目和对话，前一个 Agent 的迟到结果或失败不得覆盖当前 Agent。切换 Agent 与切换 Daemon 一样清空旧 selection generation 的内容，且每个 Daemon 分别持久化上次 Agent 选择。
 
 ## 首次使用与配对
 
@@ -137,7 +137,7 @@ Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项�
 ### 最近对话
 
 项目/Bot 区域下方展示当前 Agent 最近 20 条对话，跨项目合并且不按项目分组，按最后更新时间倒序。对话使用与项目一致的约 54dp 紧凑扁平文本行，左侧单行标题、右侧相对时间；项目详情中的对话列表沿用相同行高。列表 DTO 不携带 preview，状态优先级为 `等待处理 > 运行中 > 正在停止 > 失败 > 空闲`。
-`needsAttention=true` 时标题右侧显示橙色描边感叹号并提供“需要人工处理”的无障碍文本，取代运行中 loading 和相对时间；工作台顶栏同时优先显示“n 个待处理”。
+`needsAttention=true` 时标题右侧显示橙色描边感叹号并提供“需要人工处理”的无障碍文本，取代运行中 loading 和相对时间；工作台顶栏同时优先显示“n 个待处理”。不需处理且未运行、但 `externallyActive=true` 的对话在相对时间位置显示电脑图标与“电脑端使用中”提示。
 
 运行中的对话在卡片最右侧显示蓝色旋转 loading icon，并提供“运行中”的无障碍文本；它与 Daemon selector 的连接 loading 分属不同语义。点击任意对话进入会话详情。超过 20 条时工作台不继续分页，用户通过底部搜索访问更早对话；项目详情仍可独立分页。
 
@@ -174,7 +174,7 @@ Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项�
 
 ### Composer
 
-仅当 `online + turn.start scope + no blocking action + no plan confirmation + no write in flight` 时可输入和发送；空闲 thread 开始新 Turn，运行中 thread 默认新增 App Server 权威队列消息。运行中的 thread 仍可修改权限、模型和思考等级；这些设置作用于后续 Turn，当前正在执行的 Turn 不宣称被修改。Desktop 的运行/空闲判定只针对当前 thread，同一 Agent 的其他 thread 运行中不应禁用当前会话。Composer 是 SafeArea 内单个悬浮圆角容器：未聚焦时为单行紧凑布局，只显示加号、输入框和发送/停止按钮；输入框聚焦后展开为两行，输入框位于上方，底行依次为加号、手掌权限、右对齐的“模型简称 · 思考等级”和发送按钮。失去焦点后重新收起，权限与模型入口不在紧凑状态显示。运行中且草稿为空时右侧按钮为停止；输入文字或选中图片后切换为向上箭头，将内容加入队列。左右两侧按钮的可见尺寸为 32dp，保留 48dp 触控区域；模型简称在输入框中省略开头的“GPT-”前缀。相册一次或分次最多选择 10 张图片，按选择顺序去重并追加；已选图片在输入框内部以单行缩略图展示，每张可单独移除，超出屏幕宽度后横向滑动。
+仅当 `online + turn.start scope + no blocking action + no plan confirmation + no write in flight` 时可输入和发送；会话 metadata 为 `externallyActive=true`（电脑端其他进程正在使用）或 Agent 不支持文字输入时，Composer 替换为带电脑图标的只读说明，不提供发送入口。空闲 thread 开始新 Turn，运行中 thread 默认新增 App Server 权威队列消息。运行中的 thread 仍可修改权限、模型和思考等级；这些设置作用于后续 Turn，当前正在执行的 Turn 不宣称被修改。Desktop 的运行/空闲判定只针对当前 thread，同一 Agent 的其他 thread 运行中不应禁用当前会话。Composer 是 SafeArea 内单个悬浮圆角容器：未聚焦时为单行紧凑布局，只显示加号、输入框和发送/停止按钮；输入框聚焦后展开为两行，输入框位于上方，底行依次为加号、手掌权限、右对齐的“模型简称 · 思考等级”和发送按钮。失去焦点后重新收起，权限与模型入口不在紧凑状态显示。运行中且草稿为空时右侧按钮为停止；输入文字或选中图片后切换为向上箭头，将内容加入队列。左右两侧按钮的可见尺寸为 32dp，保留 48dp 触控区域；模型简称在输入框中省略开头的“GPT-”前缀。相册一次或分次最多选择 10 张图片，按选择顺序去重并追加；已选图片在输入框内部以单行缩略图展示，每张可单独移除，超出屏幕宽度后横向滑动。
 
 加号打开窄屏自适应 bottom sheet，包含“上传照片”和“计划模式”；计划模式选中时显示 check，Composer 的紧凑状态同时带“计划”标识。手掌按钮打开四种稳定权限：默认权限、自动审核、只读、完全访问权限。Desktop 策略不允许的项禁用并显示原因；完全访问权限选择后必须二次确认风险。点击模型/等级状态先打开所选模型支持的思考等级列表，“模型”行进入带说明和选中标记的模型列表；前三个可选模型优先展示，其余从“其他模型”进入。更换模型时保留仍受支持的等级，否则回落到模型默认等级；已废弃但当前 thread 正在使用的模型只作为不可重新选择的当前值显示。
 
@@ -213,7 +213,7 @@ Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项�
 
 待处理 action 优先附着到对应对话：Desktop 在 `ConversationSummary.needsAttention` 中投影与 thread 关联的未完成用户 action，工作台/项目页在标题右侧显示橙色描边感叹号。进入会话后，Action 以底部非模态面板替换 Composer，优先级固定为 `Action > Plan confirmation > Queue + Composer`；多个 Action 按 Desktop 返回的创建时间顺序逐个展示，并提示剩余数量，处理成功后同步权威状态再展示下一项。工作台顶部存在一个或多个待处理对话时显示紧凑“n 个待处理”入口并优先进入第一条关联对话，不建立独立一级 action 页面。`attestation/generate` 等客户端基础设施请求不属于 Mobile 待办，不显示也不阻塞其他会话输入。
 
-- command/其他 approval：保持兼容的“允许 / 拒绝”操作，不进入问题弹窗。完整命令、文件、网络上下文与 provider 的全部审批选项仍属于尚未完成的 approval DTO，当前界面不能宣称提供永久授权。
+- command/其他 approval：保持兼容的“允许 / 拒绝”操作，不进入问题弹窗。Action 带 `detail` 时面板显示请求描述（缺失时为工具名）、等宽可复制的命令和文件路径，否则回退显示 method；Codex 当前不提供 `detail`。provider 的全部审批选项与永久授权仍属于尚未完成的 approval DTO，当前界面不能宣称提供永久授权。
 - `item/tool/requestUserInput`：仅当它是当前最早 Action 时自动打开模态弹窗，同时保留底部 Action 面板作为关闭弹窗后的再次入口；关闭弹窗不会越过当前 Action 自动打开后续问题。弹窗一次显示本 action 的全部问题；每题展示 header、问题、单选项与说明，并始终允许输入自定义答案。选择选项和自定义输入互斥，所有问题都有非空答案后底部“提交”按钮才启用；`isSecret` 问题使用遮蔽输入。若 provider 返回无法展示的空问题列表，面板只提供拒绝操作并提交协议允许的空 answers，使异常 Action 不会永久阻塞后续待办。
 
 问题提交按 question id 组装 `answers[id].answers=[value]` 并只调用一次 `action.resolve`。普通审批和问题提交期间禁用当前面板入口并显示进度，防止重复响应；成功后刷新会话与工作台，移除提醒；失败保留 Action 面板和用户可再次打开的入口，不自动重发。`already_resolved`、action 失效、Turn 结束或 revoke 最终都以权威同步结果清理。Action 面板限制最大屏幕占比，较长内容在面板内部滚动，操作按钮保持可见；审批按钮可换行以适配动态字体。“回到底部”按钮定位在时间线区域内，自动避让 Action、Plan、Queue 和 Composer 底部区域。

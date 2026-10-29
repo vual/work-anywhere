@@ -468,11 +468,7 @@ class _AgentRail extends ConsumerWidget {
             onSelected: (_) =>
                 ref.read(workspaceProvider.notifier).selectAgent(agent.id),
             label: Text(agent.name),
-            avatar: Text(
-              agent.kind == 'codex'
-                  ? 'C'
-                  : agent.kind.characters.first.toUpperCase(),
-            ),
+            avatar: _AgentAvatar(agent: agent),
             showCheckmark: false,
             selectedColor: Theme.of(context).colorScheme.onSurface,
             labelStyle: TextStyle(
@@ -512,6 +508,21 @@ class _ProjectRow extends StatelessWidget {
   );
 }
 
+class _AgentAvatar extends StatelessWidget {
+  const _AgentAvatar({required this.agent});
+
+  final AgentSummary agent;
+
+  @override
+  Widget build(BuildContext context) => switch (agent.kind) {
+    'codex' => const Text('C'),
+    'claude-code' => const Icon(Icons.auto_awesome_rounded, size: 16),
+    _ => Text(
+      agent.name.isEmpty ? '?' : agent.name.characters.first.toUpperCase(),
+    ),
+  };
+}
+
 class _ConversationRow extends StatelessWidget {
   const _ConversationRow({required this.conversation, this.projectName});
   final ConversationSummary conversation;
@@ -548,6 +559,8 @@ class _ConversationRow extends StatelessWidget {
               ),
             ),
           )
+        : conversation.externallyActive
+        ? const OpenOnComputerIndicator()
         : Text(
             _relativeTime(context, conversation.updatedAt),
             style: WawCompact.metadata.copyWith(

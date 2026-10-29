@@ -81,7 +81,7 @@ type registryEntry struct {
 type createdConversation struct {
 	projectID string
 	cwd       string
-	createdAt int64
+	createdAt int64 // Unix seconds
 }
 
 type Backend struct {
@@ -494,7 +494,7 @@ func (b *Backend) ListConversations(_ context.Context, query provider.Conversati
 }
 
 func (b *Backend) conversationSummaryLocked(id string, entry *fileEntry) provider.ConversationSummary {
-	result := provider.ConversationSummary{ID: id, AgentID: b.agentID, Title: entry.summary.title(), ExternallyActive: b.live[id], CreatedAt: entry.summary.CreatedAt, UpdatedAt: entry.updatedAt()}
+	result := provider.ConversationSummary{ID: id, AgentID: b.agentID, Title: entry.summary.title(), ExternallyActive: b.live[id], CreatedAt: entry.summary.CreatedAt / 1000, UpdatedAt: entry.updatedAt()}
 	if entry.summary.CWD != "" {
 		result.ProjectID = ProjectID(entry.summary.CWD)
 		result.ProjectName = projectName(entry.summary.CWD)
@@ -645,11 +645,12 @@ func (b *Backend) evictTranscriptsLocked() {
 	}
 }
 
+// updatedAt is in Unix seconds, the unit Mobile and the Codex DTOs use.
 func (e *fileEntry) updatedAt() int64 {
 	if !e.scan.modTime.IsZero() {
-		return e.scan.modTime.UnixMilli()
+		return e.scan.modTime.Unix()
 	}
-	return e.summary.LastAt
+	return e.summary.LastAt / 1000
 }
 
 // ProjectID is stable for one working directory.

@@ -811,7 +811,7 @@ abstract class AppLocalizations {
   /// No description provided for @fullAccessBody.
   ///
   /// In zh, this message translates to:
-  /// **'Codex 将可在工作区沙盒外运行命令且无需批准。仅在你信任此任务时继续。'**
+  /// **'完全访问会让 Agent 无需批准即可运行命令和修改文件，且不受工作区限制。仅在你信任此任务时继续。'**
   String get fullAccessBody;
 
   /// No description provided for @confirmFullAccess.
@@ -1239,6 +1239,24 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'计划响应失败：{error}'**
   String planResponseFailed(String error);
+
+  /// No description provided for @openOnComputer.
+  ///
+  /// In zh, this message translates to:
+  /// **'电脑端使用中'**
+  String get openOnComputer;
+
+  /// No description provided for @conversationOpenOnComputer.
+  ///
+  /// In zh, this message translates to:
+  /// **'此会话正在电脑上打开，手机端只能查看。在电脑上关闭后即可继续发送。'**
+  String get conversationOpenOnComputer;
+
+  /// No description provided for @agentCannotSend.
+  ///
+  /// In zh, this message translates to:
+  /// **'{agent} 当前不支持从手机发送消息。'**
+  String agentCannotSend(String agent);
 }
 
 class _AppLocalizationsDelegate

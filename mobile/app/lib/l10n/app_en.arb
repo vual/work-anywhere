@@ -148,7 +148,7 @@
   "permissionFullAccessDescription": "Full access to this computer (higher risk)",
   "permissionUnavailable": "Unavailable under the current Desktop policy",
   "fullAccessTitle": "Allow full computer access?",
-  "fullAccessBody": "This lets Codex run commands without approval outside the workspace sandbox. Only continue if you trust this task.",
+  "fullAccessBody": "Full access lets the agent run commands and change files without approval and outside the workspace. Only continue if you trust this task.",
   "confirmFullAccess": "Allow full access",
   "model": "Model",
   "otherModels": "Other models",
@@ -227,5 +227,9 @@
   "skip": "Skip",
   "submit": "Submit",
   "planResponseFailed": "Could not respond to the plan: {error}",
-  "@planResponseFailed": {"placeholders": {"error": {"type": "String"}}}
+  "@planResponseFailed": {"placeholders": {"error": {"type": "String"}}},
+  "openOnComputer": "Open on computer",
+  "conversationOpenOnComputer": "This conversation is open on the computer, so it is read-only here. Close it there to continue from your phone.",
+  "agentCannotSend": "{agent} can't receive messages from your phone right now.",
+  "@agentCannotSend": {"placeholders": {"agent": {"type": "String"}}}
 }

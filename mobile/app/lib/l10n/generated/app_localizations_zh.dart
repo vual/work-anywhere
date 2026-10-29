@@ -403,7 +403,8 @@ class AppLocalizationsZh extends AppLocalizations {
   String get fullAccessTitle => '允许完全访问计算机？';
 
   @override
-  String get fullAccessBody => 'Codex 将可在工作区沙盒外运行命令且无需批准。仅在你信任此任务时继续。';
+  String get fullAccessBody =>
+      '完全访问会让 Agent 无需批准即可运行命令和修改文件，且不受工作区限制。仅在你信任此任务时继续。';
 
   @override
   String get confirmFullAccess => '允许完全访问';
@@ -640,6 +641,17 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String planResponseFailed(String error) {
     return '计划响应失败：$error';
+  }
+
+  @override
+  String get openOnComputer => '电脑端使用中';
+
+  @override
+  String get conversationOpenOnComputer => '此会话正在电脑上打开，手机端只能查看。在电脑上关闭后即可继续发送。';
+
+  @override
+  String agentCannotSend(String agent) {
+    return '$agent 当前不支持从手机发送消息。';
   }
 }
 

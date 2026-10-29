@@ -178,6 +178,8 @@ class _ProjectScreenState extends ConsumerState<ProjectScreen> {
                             strokeWidth: 2.5,
                           ),
                         )
+                      : item.externallyActive
+                      ? const OpenOnComputerIndicator()
                       : Text(
                           _projectRelativeTime(context, item.updatedAt),
                           style: WawCompact.metadata.copyWith(
@@ -192,17 +194,20 @@ class _ProjectScreenState extends ConsumerState<ProjectScreen> {
               },
             ),
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => context.push(
-          '/project/${widget.projectId}/new',
-          extra: project?.name ?? context.l10n.project,
-        ),
-        tooltip: context.l10n.newConversation,
-        backgroundColor: wawBlue,
-        foregroundColor: Colors.white,
-        shape: const CircleBorder(),
-        child: const Icon(Icons.edit_outlined),
-      ),
+      floatingActionButton:
+          workspace?.selectedAgent?.capabilities.createConversation == false
+          ? null
+          : FloatingActionButton(
+              onPressed: () => context.push(
+                '/project/${widget.projectId}/new',
+                extra: project?.name ?? context.l10n.project,
+              ),
+              tooltip: context.l10n.newConversation,
+              backgroundColor: wawBlue,
+              foregroundColor: Colors.white,
+              shape: const CircleBorder(),
+              child: const Icon(Icons.edit_outlined),
+            ),
     );
   }
 }

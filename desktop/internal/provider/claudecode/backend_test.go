@@ -75,8 +75,9 @@ func TestProjectsAndConversationsFromTranscripts(t *testing.T) {
 	if conversation.ID != fixtureSession || conversation.Title != "Auth fixes" || conversation.ProjectName != "demo-project" || conversation.ExternallyActive {
 		t.Fatalf("conversation = %#v", conversation)
 	}
-	if conversation.CreatedAt == 0 || conversation.UpdatedAt == 0 {
-		t.Fatalf("timestamps missing: %#v", conversation)
+	// Mobile and the Codex DTOs use Unix seconds.
+	if conversation.CreatedAt != 1793062800 || conversation.UpdatedAt < 1_000_000_000 || conversation.UpdatedAt > 100_000_000_000 || projects[0].UpdatedAt != conversation.UpdatedAt {
+		t.Fatalf("timestamps are not Unix seconds: %#v", conversation)
 	}
 	empty, err := backend.ListConversations(ctx, provider.ConversationQuery{Query: "no such title"})
 	if err != nil || len(empty.Items) != 0 {
