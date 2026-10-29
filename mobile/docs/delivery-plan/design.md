@@ -1,6 +1,6 @@
 # Mobile delivery plan
 
-> 状态：Phase 0/1 的代码底座、分页 ConversationSnapshot/timeline/content DTO、稳定 model/permission catalog、thread settings 和部分 Phase 2/3 UI 已落地，但所有 phase 的完整 exit criteria 均未满足；以下阶段仍是当前依赖顺序，不能据此宣称已公开测试或发布。
+> 状态：Phase 0/1 的代码底座、分页 ConversationSnapshot/timeline/content DTO、稳定 model/permission catalog、thread settings 和部分 Phase 2/3 UI 已落地；Claude Code 的 Desktop 后端（浏览与受控写入）和 Mobile 适配也已落地，并经真实 CLI 互操作冒烟，但未做物理手机端到端验收。所有 phase 的完整 exit criteria 均未满足；以下阶段仍是当前依赖顺序，不能据此宣称已公开测试或发布。
 
 ## 目标与范围
 
@@ -12,6 +12,7 @@
 
 - 在 Desktop control 层定义并测试 `AgentSummary`、`ProjectSummary`、带权威项目 ID/名称的 `ConversationSummary/Snapshot`、分页/搜索、typed timeline、`PendingAction`、catalog 和 stable error DTO；Codex instance 映射为 Agent，禁止 Mobile 产品代码解析任意 Codex raw JSON。
 - 增加 Codex-first `agent.list`、`project.list` 和带 `agentId/projectId/query/limit/cursor` 的 `conversation.list` 规范化接口；预留 `navigationKind=bots`/`BotSummary`，但不把 Hermes 描述为已适配。
+- 共享 Mobile DTO 与 `provider.Backend` 边界已归属 `desktop/internal/provider`；非 Codex agent 通过 `capabilities` 声明能力，缺失时按全部支持处理。Claude Code 是第一个 Backend 实现，见 [Desktop 设计](../../../desktop/docs/claude-code-provider/design.md)。
 - 冻结 control DTO 版本协商与兼容策略；明确新增字段、unknown kind 和最低支持版本行为。
 - 从 Relay/Go reference 导出 auth、pair proof/grant、Noise KK handshake/transport、replay/tamper 的语言无关 golden vectors。
 - 把 Relay endpoint canonical/protobuf/Noise reference 重构为窄 `relay/pkg/endpoint`，为 schema 接入 Buf breaking baseline；schema hash 进入 Mobile core 构建检查。
@@ -36,6 +37,7 @@
 - 已实现 Android 多电脑 catalog、锚定选择菜单、管理页排序/启停/名称与 Relay origin 编辑；仅当前电脑保持长期连接，其他启用电脑使用有界短探测。
 - 实现 Codex 最近项目 10 条与展开、跨项目最近对话 20 条、项目内最近对话 15 条与分页、项目/对话全集搜索和运行中蓝色 loading icon。
 - 实现项目/会话详情和 typed timeline renderer；Hermes Bot 仅完成 capability/unsupported 状态，不纳入 Codex-first 发布范围。
+- Claude Code（已实现）：Agent selector 中的 Claude Code 项，按转录 `cwd` 聚合的项目、会话、完整时间线与大内容读取；电脑端其他进程正在使用的会话以 `externallyActive` 只读展示（列表电脑图标、会话页只读说明）。
 - 实现 conversation snapshot/cursor、event reducer、gap/snapshot fallback、弱网退避和 selection generation。
 - 完成 Markdown 安全 renderer（GFM 常用格式、选择/复制、链接确认和远程图片拦截）、diff/tool 安全 renderer、滚动跟随、stale/offline/error 状态与应用锁/隐私遮罩。
 
@@ -47,8 +49,9 @@
 - 实现 interrupt 的 pending/terminal 状态。
 - 完善 composer；计划模式、模型、思考等级、四种执行权限、`expectedRevision`、`clientMessageId` 和 ambiguous-write reconciliation 已有代码与 Widget 覆盖，仍需 Android 真机链路验收。
 - 实现相册/相机选择、图片预览、begin/chunk/commit、取消与失败重试。
+- Claude Code（已实现）：新建会话、文字/图片发送、实时文字与思考 delta、工具审批（带命令/文件 `detail`）、`AskUserQuestion`、`ExitPlanMode` 计划确认、中断、模型/effort/权限选择；运行中排队与 steer 不支持，按 `capabilities.queue=false` 保留草稿。
 
-验收：两台 Mobile + Desktop 的 action race、turn.start response 丢失、运行中 queue add/edit/start/delete 及结果不明恢复、interrupt/completion race、revision conflict、48 MiB/1 MiB 分块边界和跨 instance attachment 安全测试通过；抓包、Relay DB/log、Mobile log 不出现明文。
+验收：两台 Mobile + Desktop 的 action race、turn.start response 丢失、运行中 queue add/edit/start/delete 及结果不明恢复、interrupt/completion race、revision conflict、48 MiB/1 MiB 分块边界和跨 instance attachment 安全测试通过；抓包、Relay DB/log、Mobile log 不出现明文。Claude Code 另需物理手机验收：新建并发送、批准一次命令、回答一次提问、确认与修订计划、中断、在电脑端打开同一会话时手机只读且拒绝发送，并在电脑端 `claude --resume` 看到完整记录。
 
 ## Phase 4 — push and lifecycle
 
@@ -103,15 +106,18 @@ mobile/scripts/build-android.ps1    Android tester APK
 | at-most-once route 造成重复写 | no auto retry + clientMessageId + snapshot reconciliation | 弱网测试出现重复 Turn/action |
 | key/正文泄露 | platform key wrapping、no body disk、scrubbed logs | artifact/log/db 扫描发现 fixture 明文 |
 | 二维码被截取 | 短 TTL、Desktop 人工批准、fingerprint | 未批准即可建立 pairing |
+| Claude Code headless stdio 协议非公开、随 CLI 版本漂移 | `MinimumVersion` 门控、录制 fixture、按录制协议工作的假 CLI 测试、新版本真实 CLI 冒烟 | 支持的 CLI 版本上发送、审批、提问、计划或中断任一失败 |
+| 手机与电脑端同时写同一 Claude Code 会话 | 活跃会话登记判定 `externallyActive`，后端拒绝 `turn.start`，UI 只读 | 电脑端打开中的会话可从手机发送 |
 
 ## 不变量与非目标
 
-交付压力不能降低 E2EE、scope、明确 Desktop 批准、写操作不重放和无正文 push 的要求。V1 不以 Web/PWA、browser simulator 或单平台 beta 代替 iOS/Android 生产验收；也不在本计划加入账号、离线 mailbox、多节点 Relay 或 Hermes/Claude Code/OpenCode/Pi 的完整适配。新建 thread 仅限已同步 Codex 项目，并遵循结果未知不自动重放。
+交付压力不能降低 E2EE、scope、明确 Desktop 批准、写操作不重放和无正文 push 的要求。V1 不以 Web/PWA、browser simulator 或单平台 beta 代替 iOS/Android 生产验收；也不在本计划加入账号、离线 mailbox、多节点 Relay 或 Hermes/OpenCode/Pi 的完整适配；Claude Code 不支持运行中排队/steer，也不接管电脑端正在使用的会话。新建 thread 仅限已同步的 Codex 或 Claude Code 项目，并遵循结果未知不自动重放。
 
 ## 代码归属
 
 - Mobile：`mobile/core/`、`mobile/app/`、`mobile/scripts/` 与 `mobile/docs/`
 - Desktop DTO/QR：`desktop/internal/daemon/`, `desktop/internal/provider/`, `desktop/internal/daemon/admin.go`
+- Claude Code 后端：`desktop/internal/provider/claudecode/`, `desktop/internal/daemon/backends.go`
 - Relay schema/vectors/push：`relay/proto/`, `relay/internal/protocol/`, `relay/internal/e2ee/`, `relay/internal/push/`
 - CI/release：`.github/workflows/` 与未来 `mobile/app/tool/`
 
@@ -119,7 +125,7 @@ mobile/scripts/build-android.ps1    Android tester APK
 
 每个 phase 的 exit criteria 是进入下一阶段的必要条件。跨模块改动分别运行 Desktop 和 Relay 的仓库规定验证；Mobile scaffold 后运行 analyze/test/build、真机 E2E 和生成物 no-diff。文档链接与命令在每个阶段结束时一并检查。
 
-会话发送修复验收包含：首次发送同步期间连续收到 MCP 事件仍只提交一个 Turn、后续发送重新读取快照、共享读取失败仍阻止写入、选择改变后丢弃迟到结果、首次快照失败后复用会话 ID、MCP 启动通知不误触业务版本、并发启动最多一次、真实业务冲突保留草稿、按会话读取回退、空历史、cursor 失效、大内容及队列降级。真实模型互操作使用 [Desktop opt-in 验证入口](../../../desktop/docs/build-install-and-compatibility/design.md)，不能以 schema fixture 或 mock 测试替代。Android debug APK 和 Windows exe 的版本、源码状态及 SHA-256 随构建交付记录；物理手机完整 E2E 和 iOS 验收仍是独立未完成项。
+会话发送修复验收包含：首次发送同步期间连续收到 MCP 事件仍只提交一个 Turn、后续发送重新读取快照、共享读取失败仍阻止写入、选择改变后丢弃迟到结果、首次快照失败后复用会话 ID、MCP 启动通知不误触业务版本、并发启动最多一次、真实业务冲突保留草稿、按会话读取回退、空历史、cursor 失效、大内容及队列降级。真实模型互操作使用 [Desktop opt-in 验证入口](../../../desktop/docs/build-install-and-compatibility/design.md)，不能以 schema fixture 或 mock 测试替代；Claude Code 的仓库内测试使用录制 fixture 与假 CLI，真实 CLI 互操作需对支持的版本单独冒烟并记入 [验收记录](verification.md)。Android debug APK 和 Windows exe 的版本、源码状态及 SHA-256 随构建交付记录；物理手机完整 E2E 和 iOS 验收仍是独立未完成项。
 
 ## 文档更新触发
 
