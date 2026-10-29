@@ -16,7 +16,7 @@
 
 Mobile 请求使用独立 contract discriminator：`{"contract":"mobile-control-v1"}`。响应回显相同 contract；未知非空值返回 `unsupported_contract`，未带 contract 的本机 CLI/管理页保持既有 raw control 语义。
 
-daemon 将控制方法路由到实例 supervisor；Codex driver/能力描述用于隔离未来不同 Provider 的功能差异。事件订阅使用有界队列，慢订阅者会被断开，客户端应使用 conversation cursor 补齐状态。
+daemon 将控制方法路由到实例 supervisor。Mobile 请求的 `agentId` 若属于已注册的 `provider.Backend`（当前为只读 [Claude Code provider](../claude-code-provider/design.md)），会话方法改由 `backendControl` 处理，其余方法和未知 agent 仍走 Codex 实例路径。事件订阅使用有界队列，慢订阅者会被断开，客户端应使用 conversation cursor 补齐状态。
 
 ## Interfaces
 
@@ -69,7 +69,7 @@ Mobile control 响应序列化后上限为 512 KiB。时间线超预算时以同
 
 CLI 对应提供 daemon、instance、conversation、turn、action、catalog、traffic、通用 `call`、`ui`、`self-test`、install/uninstall 和 version 命令。CLI 通过本机受保护管理 Pipe 调用，不自行启动第二个 App Server。
 
-Provider capabilities 当前包含 history、live stream、text/image input、approval、question、interrupt、steer、model/reasoning selection、permission mode 和 desktop mirror。Codex 是唯一 driver；部分能力标志表示协议边界，不代表所有 provider 已实现。
+非 Codex agent 在 `agent.list` 中携带 `capabilities`（`history`、`liveStream`、`textInput`、`imageInput`、`approval`、`question`、`interrupt`、`steer`、`queue`、`plan`、`createConversation`、`modelSelection`、`reasoningSelection`、`permissionMode`、`desktopMirror`）；Codex agent 当前省略该字段，按全部支持处理。后端不支持的写方法返回 `unsupported_capability`。`ConversationSummary` 和快照 metadata 可带 `externallyActive=true`，表示会话正被电脑端其他进程使用，只能读取。后端会话变化以 `provider.conversation.updated`（带 conversationId）或 `provider.conversations.changed` 事件进入事件总线，Remote 将其转为无 payload 的 `conversation.invalidated`；后端会话的 revision/sequence 由 daemon 维护，订阅不回放事件，cursor 不等于当前 sequence 时返回 `snapshot=true`。
 
 ### 会话读取兼容与写入版本
 
@@ -107,6 +107,8 @@ Timeline 优先调用 `thread/items/list`。仅官方 JSON-RPC `-32601` 方法�
 
 - `internal/daemon/daemon.go`（控制路由）
 - `internal/daemon/mobile_contract.go`（Mobile DTO、时间线分页和大内容引用）
+- `internal/daemon/backends.go`（非 Codex 后端注册、路由、版本与事件）
+- `internal/provider/provider.go`（共享 Mobile DTO 与 `Backend` 接口）
 - `internal/daemon/admin.go`（HTTP/WebSocket 与授权）
 - `internal/cli/cli.go`
 - `internal/provider/`

@@ -1,0 +1,3 @@
+{"type":"control_request","request_id":"init-1","request":{"subtype":"initialize"}}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Use the AskUserQuestion tool to ask me which color I prefer: red or blue. Then tell me my answer."}]}}
+{"type":"control_response","response":{"subtype":"success","request_id":"9e594ebb-512b-46c4-aa9f-5531f05f776b","response":{"behavior":"allow","updatedInput":{"questions":[{"question":"Which color do you prefer?","header":"Color","options":[{"label":"Red","description":"You prefer red."},{"label":"Blue","description":"You prefer blue."}],"multiSelect":false}],"answers":{"Which color do you prefer?":"Red"}}}}}

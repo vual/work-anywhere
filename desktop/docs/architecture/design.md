@@ -2,7 +2,7 @@
 
 ## Goal and scope
 
-Desktop 模块让官方 ChatGPT Codex Desktop 继续作为桌面显示层，同时把官方 Codex App Server 的会话能力暴露给本机控制客户端和出站 Relay connector。当前实现面向 Windows x64，Provider driver 只有 Codex。
+Desktop 模块让官方 ChatGPT Codex Desktop 继续作为桌面显示层，同时把官方 Codex App Server 的会话能力暴露给本机控制客户端和出站 Relay connector。当前实现面向 Windows x64；Codex 通过 App Server 投影提供完整会话能力，本机 Claude Code 会话通过只读 `provider.Backend` 提供浏览能力。
 
 ## Current architecture and data flow
 
@@ -24,6 +24,7 @@ Bridge shim ── WAI1 Named Pipe ──► daemon ── stdio JSONL ──►
 - `daemon run` 启动当前 Windows 用户唯一的 daemon。
 - 已知控制命令进入 CLI；其他参数透明执行真实 `codex.exe`。
 - daemon 是它托管的 App Server 的唯一真实 stdio 客户端。Desktop Bridge 和本机控制客户端是被多路复用的 frontend。
+- daemon 启动时按配置注册非 Codex 的 `provider.Backend`（当前为只读 [Claude Code provider](../claude-code-provider/design.md)），它直接读取 Claude Code 的本机转录目录，不经过 Bridge。Mobile 请求按 `agentId` 路由到 Codex 实例或后端。
 
 ## Interfaces
 
@@ -32,11 +33,11 @@ Bridge shim ── WAI1 Named Pipe ──► daemon ── stdio JSONL ──►
 - daemon 与 Codex：官方 App Server stdio JSONL。
 - daemon 与控制客户端：本机 WebSocket 上的版本化 request/response/event JSON。
 - daemon 与 Relay：出站 WSS 内的 Noise E2EE control，Relay 不接触业务明文。
-- Provider 抽象：`Driver` 定义历史、输入、中断、审批和 catalog 能力；当前只有 Codex 实现。
+- Provider 边界：`internal/provider` 定义共享 Mobile DTO、`Capabilities` 和 `Backend` 接口。Codex 仍由 daemon 的 App Server 投影直接产出这些 DTO；Claude Code 后端实现 `Backend`。
 
 ## State and persistence
 
-daemon 内存中持有运行时进程、连接、ID 映射、初始化缓存、活跃 Turn、待处理 action 和有界事件回放。官方 Codex session 是会话、Turn 和 Timeline 的唯一权威来源。Desktop 不保存消息数据库；Relay、身份、配对和 thread 设置写入 `%USERPROFILE%\.work-anywhere\config.json`，运行状态在 daemon 重启后从 App Server 重新读取。
+daemon 内存中持有运行时进程、连接、ID 映射、初始化缓存、活跃 Turn、待处理 action 和有界事件回放。官方 Codex session 是 Codex 会话、Turn 和 Timeline 的唯一权威来源；Claude Code 会话的权威来源是 CLI 自身的转录目录。Desktop 不保存消息数据库；Relay、身份、配对和 thread 设置写入 `%USERPROFILE%\.work-anywhere\config.json`，运行状态在 daemon 重启后从 App Server 重新读取。
 
 ## Security and failure handling
 
@@ -51,7 +52,7 @@ daemon 内存中持有运行时进程、连接、ID 映射、初始化缓存、�
 - 每个稳定逻辑实例最多一个由 daemon 托管的 App Server。
 - runtime 可升级，但 runtime 路径和版本不参与逻辑实例 ID。
 - Desktop 模块不实现自建桌面聊天 UI。
-- Desktop 不实现 Mobile UI、离线消息队列和其他 Provider driver。
+- Desktop 不实现 Mobile UI 和离线消息队列；Claude Code 后端当前只读，发送、审批和中断等写路径尚未实现。
 
 ## Code ownership
 

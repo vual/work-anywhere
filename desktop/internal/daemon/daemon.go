@@ -23,6 +23,7 @@ import (
 	platformprocess "github.com/hurf/work-anywhere/desktop/internal/platform/process"
 	"github.com/hurf/work-anywhere/desktop/internal/platform/tray"
 	"github.com/hurf/work-anywhere/desktop/internal/protocol"
+	"github.com/hurf/work-anywhere/desktop/internal/provider"
 	"github.com/hurf/work-anywhere/desktop/internal/remote"
 	"github.com/hurf/work-anywhere/desktop/internal/traffic"
 )
@@ -58,6 +59,9 @@ type Manager struct {
 	traffic           *traffic.Recorder
 	remote            *remote.Service
 	log               *logging.Logger
+	backendMu         sync.Mutex
+	backends          map[string]provider.Backend
+	backendVersions   map[string]*backendVersion
 }
 
 const maxEventPayloadMemory = int64(32 << 20)
@@ -211,6 +215,7 @@ func Run(ctx context.Context, version string) error {
 	}
 	m := &Manager{ctx: ctx, cancel: cancel, version: version, startedAt: time.Now(), listener: listener, job: job, settings: settings, syncEpoch: randomToken(18), instances: make(map[string]*Instance), subscribers: make(map[uint64]chan protocol.Event), uploads: make(map[string]*attachmentUpload), attachments: make(map[string]*attachmentUpload), imageEncode: make(chan struct{}, 1), contentRefs: make(map[string]mobileContentRef), traffic: traffic.New(filepath.Join(dataDir, "logs", "traffic")), log: logger}
 	go m.cleanupAttachmentLoop(ctx)
+	m.startBackends()
 	remoteService, err := remote.New(settings, m.control, m.subscribe, logger)
 	if err != nil {
 		listener.Close()
@@ -264,6 +269,7 @@ func (m *Manager) close() {
 		m.stopTray()
 	}
 	m.abortAttachmentUploads()
+	m.closeBackends()
 	m.configWriteMu.Lock()
 	m.configWriteMu.Unlock()
 	m.configWrites.Wait()
@@ -435,6 +441,11 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 	if m.controlPaused.Load() && isMutatingControlMethod(request.Method) {
 		response.Error = &protocol.ControlError{Code: "control_paused", Message: "local control is paused from the tray menu"}
 		return response
+	}
+	if request.Contract == protocol.MobileControlContract {
+		if backend, ok := m.backendTarget(request.Params); ok && m.backendControl(backend, request, &response) {
+			return response
+		}
 	}
 	// Serialize control writes per conversation without holding the instance state lock during RPC.
 	if request.Method == "turn.start" || request.Method == "plan.respond" || request.Method == "conversation.settings.update" || strings.HasPrefix(request.Method, "conversation.queue.") {

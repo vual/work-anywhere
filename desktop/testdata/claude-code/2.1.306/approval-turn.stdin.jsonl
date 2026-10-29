@@ -1,0 +1,4 @@
+{"type":"control_request","request_id":"init-1","request":{"subtype":"initialize"}}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Make two separate PowerShell tool calls, one after the other: first `Set-Content -Path probe2.txt -Value hi`, then `Remove-Item -Path probe2.txt`. Do the second even if the first fails."}]}}
+{"type":"control_response","response":{"subtype":"success","request_id":"26dc4709-2390-4cd7-9d52-e63e3f339cf7","response":{"behavior":"allow","updatedInput":{"command":"Set-Content -Path probe2.txt -Value hi","description":"Create probe2.txt with content \"hi\""}}}}
+{"type":"control_response","response":{"subtype":"success","request_id":"8ea04741-6321-497f-ab25-d5d532a5ca24","response":{"behavior":"deny","message":"Denied by probe"}}}

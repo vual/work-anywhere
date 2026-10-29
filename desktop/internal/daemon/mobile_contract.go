@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/hurf/work-anywhere/desktop/internal/protocol"
+	"github.com/hurf/work-anywhere/desktop/internal/provider"
 )
 
 const (
@@ -32,34 +33,11 @@ const (
 	mobileSummaryValueBytes        = 512
 )
 
-type mobileAgentSummary struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	Kind           string `json:"kind"`
-	Status         string `json:"status"`
-	ActiveTurn     bool   `json:"activeTurn"`
-	PendingActions int    `json:"pendingActions"`
-}
+type mobileAgentSummary = provider.AgentSummary
 
-type mobileProjectSummary struct {
-	ID        string `json:"id"`
-	AgentID   string `json:"agentId"`
-	Name      string `json:"name"`
-	UpdatedAt int64  `json:"updatedAt"`
-}
+type mobileProjectSummary = provider.ProjectSummary
 
-type mobileConversationSummary struct {
-	ID             string `json:"id"`
-	AgentID        string `json:"agentId"`
-	ProjectID      string `json:"projectId,omitempty"`
-	ProjectName    string `json:"projectName,omitempty"`
-	Title          string `json:"title"`
-	Status         string `json:"status"`
-	Running        bool   `json:"running"`
-	NeedsAttention bool   `json:"needsAttention"`
-	CreatedAt      int64  `json:"createdAt"`
-	UpdatedAt      int64  `json:"updatedAt"`
-}
+type mobileConversationSummary = provider.ConversationSummary
 
 type mobileActionOption struct {
 	Label       string `json:"label"`
@@ -85,10 +63,7 @@ type mobileAction struct {
 	Questions      []mobileActionQuestion `json:"questions,omitempty"`
 }
 
-type mobilePage[T any] struct {
-	Items      []T    `json:"items"`
-	NextCursor string `json:"nextCursor,omitempty"`
-}
+type mobilePage[T any] = provider.Page[T]
 
 type mobileReasoningEffort struct {
 	ID          string `json:"id"`
@@ -267,7 +242,7 @@ func (m *Manager) mobileAgents() []mobileAgentSummary {
 		}
 		result = append(result, mobileAgentSummary{ID: item.ID, Name: name, Kind: "codex", Status: item.State, ActiveTurn: item.ActiveTurn, PendingActions: item.PendingActions})
 	}
-	return result
+	return append(result, m.backendAgents()...)
 }
 
 // mobileControlTarget accepts agentId at the public boundary while preserving
@@ -799,17 +774,7 @@ func normalizeMobileActions(actions []pendingAction) []mobileAction {
 	return result
 }
 
-type mobileConversationMetadata struct {
-	ID        string `json:"id"`
-	AgentID   string `json:"agentId"`
-	ProjectID string `json:"projectId,omitempty"`
-	Title     string `json:"title"`
-	Preview   string `json:"preview,omitempty"`
-	Status    string `json:"status"`
-	Running   bool   `json:"running"`
-	CreatedAt int64  `json:"createdAt"`
-	UpdatedAt int64  `json:"updatedAt"`
-}
+type mobileConversationMetadata = provider.ConversationMetadata
 
 func normalizeConversationCreate(raw json.RawMessage) (map[string]any, error) {
 	var source struct {
@@ -843,29 +808,11 @@ func mobileConversationStartParams(raw json.RawMessage, projectRoot string) (jso
 	return json.Marshal(params)
 }
 
-type mobileTimelineBlock struct {
-	Kind         string `json:"kind"`
-	Text         string `json:"text"`
-	SummaryKind  string `json:"summaryKind,omitempty"`
-	SummaryValue string `json:"summaryValue,omitempty"`
-	Truncated    bool   `json:"truncated"`
-	ContentRef   string `json:"contentRef,omitempty"`
-	TotalBytes   int    `json:"totalBytes,omitempty"`
-}
+type mobileTimelineBlock = provider.TimelineBlock
 
-type mobileTimelineItem struct {
-	ID              string                `json:"id"`
-	ClientMessageID string                `json:"clientMessageId,omitempty"`
-	TurnID          string                `json:"turnId,omitempty"`
-	Kind            string                `json:"kind"`
-	Status          string                `json:"status,omitempty"`
-	Blocks          []mobileTimelineBlock `json:"blocks"`
-}
+type mobileTimelineItem = provider.TimelineItem
 
-type mobileTimelinePage struct {
-	Items      []mobileTimelineItem `json:"items"`
-	NextCursor string               `json:"nextCursor,omitempty"`
-}
+type mobileTimelinePage = provider.TimelinePage
 
 type mobilePlanConfirmation struct {
 	PlanItemID string `json:"planItemId"`
@@ -1189,6 +1136,9 @@ func mobileControlError(err error) *protocol.ControlError {
 	var contractErr *mobileContractError
 	if errors.As(err, &contractErr) {
 		return &protocol.ControlError{Code: contractErr.code, Message: contractErr.message}
+	}
+	if code, ok := backendErrorCode(err); ok {
+		return &protocol.ControlError{Code: code, Message: err.Error()}
 	}
 	return &protocol.ControlError{Code: "provider_error", Message: err.Error()}
 }

@@ -1,0 +1,3 @@
+{"type":"control_request","request_id":"init-1","request":{"subtype":"initialize"}}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Plan (do not execute) adding a file named notes.txt with one line. Keep the plan to two bullet points, then exit plan mode."}]}}
+{"type":"control_response","response":{"subtype":"success","request_id":"25eddef3-2d17-482f-bd97-9d0d3e5c2ce9","response":{"behavior":"deny","message":"Plan rejected by probe; stop now."}}}

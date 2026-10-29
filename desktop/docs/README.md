@@ -15,6 +15,7 @@
 | App Server 监督与升级 | [`app-server-supervision/design.md`](app-server-supervision/design.md) | 运行时、JSON-RPC、管理生命周期 | `internal/daemon`, `internal/codex` |
 | JSON-RPC 多路复用、会话与审批 | [`json-rpc-and-actions/design.md`](json-rpc-and-actions/design.md) | Bridge IPC、控制面、持久化 | `internal/daemon/instance.go`, `internal/jsonrpc` |
 | 本机控制 API、CLI 与 Provider | [`local-control/design.md`](local-control/design.md) | JSON-RPC、存储、管理入口 | `internal/daemon/admin.go`, `internal/cli`, `internal/provider` |
+| Claude Code 只读 Provider | [`claude-code-provider/design.md`](claude-code-provider/design.md)（协议录制见 [`protocol.md`](claude-code-provider/protocol.md)） | 本机控制、架构、存储与安全、Mobile 协议同步 | `internal/provider/claudecode`, `internal/daemon/backends.go`, `internal/platform/processinfo` |
 | Relay 出站连接器 | [`remote-relay-connector/design.md`](remote-relay-connector/design.md) | 本机控制、平台 secrets、Relay wire/E2EE | `internal/remote`, `internal/daemon` |
 | JSON 配置、内存状态、日志与附件 | [`persistence-and-security/design.md`](persistence-and-security/design.md) | 平台支持、控制面、JSON-RPC | `internal/config`, `internal/platform/secrets`, `internal/logging` |
 | 管理页、托盘与进程生命周期 | [`administration-and-lifecycle/design.md`](administration-and-lifecycle/design.md) | 平台支持、App Server 托管、控制面 | `internal/daemon/admin.go`, `internal/platform/tray`, `internal/platform/process` |

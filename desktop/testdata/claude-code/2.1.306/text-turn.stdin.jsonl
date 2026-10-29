@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Reply with exactly: hello probe"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Now reply with exactly: second turn"}]}}

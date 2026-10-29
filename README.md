@@ -41,6 +41,7 @@ Desktop V1 提供：
 - App Server delta 在加密前按语义批量合并，Mobile 按 `syncEpoch + sequence` 实时展示；缺口、终态或内存超限时回到权威快照。
 - 系统托盘、本机管理页和命令行控制工具。
 - daemon 无法在请求前建立连接时直通官方 Codex，优先保证 Desktop 可用。
+- 只读接入本机 Claude Code：按项目浏览会话和完整历史，并标记正在电脑端使用的会话；在 Claude Code 会话中发送消息、审批和中断尚未实现，见 [Claude Code provider 设计](desktop/docs/claude-code-provider/design.md)。
 
 Relay V1 提供：
 

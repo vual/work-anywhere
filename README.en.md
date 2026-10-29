@@ -41,6 +41,7 @@ Desktop V1 provides:
 - Semantic delta batching before encryption, with Mobile applying `syncEpoch + sequence` updates and falling back to authoritative snapshots after gaps, terminal events, or memory limits.
 - A system tray, local administration page, and command-line control interface.
 - Pre-request fallback to the official Codex executable when the daemon cannot be reached, prioritizing Desktop availability.
+- Read-only access to local Claude Code sessions: browse conversations and full history by project, with sessions open on the computer marked as in use. Sending messages, approvals, and interruption in Claude Code sessions are not implemented yet; see the [Claude Code provider design](desktop/docs/claude-code-provider/design.md).
 
 Relay V1 provides:
 

@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Write the numbers 1 to 300, each on its own line, with a short word after each."}]}}
+{"type":"control_request","request_id":"probe-int-1","request":{"subtype":"interrupt"}}
