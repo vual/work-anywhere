@@ -177,11 +177,19 @@ func TestApprovalFirstResponseWins(t *testing.T) {
 	request := []byte(`{"jsonrpc":"2.0","id":42,"method":"item/commandExecution/requestApproval","params":{"threadId":"thread-1"}}` + "\n")
 	done := make(chan struct{})
 	go func() { instance.handleServerFrame(0, request); close(done) }()
-	if _, err := ipc.ReadFrame(aReader); err != nil {
-		t.Fatal(err)
+	// Broadcast order follows map iteration and the pipes are unbuffered, so
+	// both readers must run concurrently.
+	readErrors := make(chan error, 2)
+	for _, reader := range []net.Conn{aReader, bReader} {
+		go func() {
+			_, err := ipc.ReadFrame(reader)
+			readErrors <- err
+		}()
 	}
-	if _, err := ipc.ReadFrame(bReader); err != nil {
-		t.Fatal(err)
+	for range 2 {
+		if err := <-readErrors; err != nil {
+			t.Fatal(err)
+		}
 	}
 	<-done
 	writer.Reset()
