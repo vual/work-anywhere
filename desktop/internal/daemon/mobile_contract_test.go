@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -922,6 +923,43 @@ func TestMobileProjectListFallsBackToConversationCWD(t *testing.T) {
 	}
 	if page.Items[0].UpdatedAt != 300 || page.Items[1].UpdatedAt != 200 || page.Items[2].UpdatedAt != 100 {
 		t.Fatalf("cwd-matched project timestamps were incorrect: %#v", page.Items)
+	}
+}
+
+// The provider's projectId filter misses threads that only carry a cwd, so a
+// project page must use the same membership rule as project.list.
+func TestMobileConversationListIncludesUnassignedProjectThreads(t *testing.T) {
+	caller := &projectRecencyCaller{
+		projects:      json.RawMessage(`{"data":[{"id":"p-main","name":"Main","roots":[{"path":"D:/CodeSpace/work-anywhere"}]},{"id":"p-other","name":"Other","roots":[{"path":"D:/CodeSpace/other"}]}]}`),
+		conversations: json.RawMessage(`{"data":[{"id":"t-new","projectId":null,"cwd":"D:/CodeSpace/work-anywhere","updatedAt":300},{"id":"t-other","projectId":"p-other","cwd":"D:/CodeSpace/work-anywhere","updatedAt":250},{"id":"t-new","projectId":null,"cwd":"D:/CodeSpace/work-anywhere","updatedAt":240},{"id":"t-sub","projectId":null,"cwd":"D:/CodeSpace/work-anywhere/mobile","updatedAt":200},{"id":"t-old","projectId":"p-main","cwd":"D:/CodeSpace/work-anywhere","updatedAt":100}]}`),
+	}
+	manager := &Manager{ctx: context.Background()}
+	list := func(params map[string]any) (ids []string, next string) {
+		t.Helper()
+		raw, _ := json.Marshal(params)
+		result, err := manager.mobileConversationListWithCaller(caller, raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		page, err := normalizeConversationList("agent-1", result, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range page.Items {
+			ids = append(ids, item.ID)
+		}
+		return ids, page.NextCursor
+	}
+	first, cursor := list(map[string]any{"projectId": "p-main", "limit": 2, "sortKey": "updated_at"})
+	if !slices.Equal(first, []string{"t-new", "t-sub"}) || cursor == "" {
+		t.Fatalf("first page = %v, cursor %q", first, cursor)
+	}
+	second, cursor := list(map[string]any{"projectId": "p-main", "limit": 2, "cursor": cursor})
+	if !slices.Equal(second, []string{"t-old"}) || cursor != "" {
+		t.Fatalf("second page = %v, cursor %q", second, cursor)
+	}
+	if _, err := manager.mobileConversationListWithCaller(caller, json.RawMessage(`{"projectId":"p-main","cursor":"!"}`)); err == nil {
+		t.Fatal("invalid cursor accepted")
 	}
 }
 

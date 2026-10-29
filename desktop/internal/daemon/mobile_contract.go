@@ -30,6 +30,7 @@ const (
 	mobileMaxTimelineProviderPages = 8
 	mobileProjectProviderPageLimit = 1000
 	mobileMaxProjectProviderPages  = 128
+	mobileMaxConversationPageLimit = 100
 	mobileSummaryValueBytes        = 512
 )
 
@@ -327,10 +328,7 @@ func (m *Manager) mobileProjectListWithCaller(instance *Instance, caller mobileP
 	}
 	latestByProject := make(map[string]int64, len(projects))
 	for _, conversation := range conversations {
-		projectID := conversation.ProjectID
-		if _, exists := projectIDs[projectID]; !exists {
-			projectID = mobileConversationProjectID(conversation, projects)
-		}
+		projectID := mobileConversationProject(conversation, projectIDs, projects)
 		if projectID == "" {
 			continue
 		}
@@ -434,15 +432,30 @@ func fetchMobileProjects(ctx context.Context, instance mobileProviderCaller) ([]
 }
 
 func fetchMobileProjectConversations(ctx context.Context, instance mobileProviderCaller) ([]mobileProviderConversation, error) {
-	conversations := make([]mobileProviderConversation, 0)
+	items, err := fetchProviderThreads(ctx, instance, map[string]any{"sortKey": "updated_at", "sortDirection": "desc"})
+	if err != nil {
+		return nil, err
+	}
+	conversations := make([]mobileProviderConversation, 0, len(items))
+	for _, item := range items {
+		var conversation mobileProviderConversation
+		if err := json.Unmarshal(item, &conversation); err != nil {
+			return nil, fmt.Errorf("decode thread/list: %w", err)
+		}
+		conversations = append(conversations, conversation)
+	}
+	return conversations, nil
+}
+
+// fetchProviderThreads pages through every thread/list result for the given
+// filters. The cursor and limit entries of params are owned by this function.
+func fetchProviderThreads(ctx context.Context, instance mobileProviderCaller, params map[string]any) ([]json.RawMessage, error) {
+	items := make([]json.RawMessage, 0)
 	cursor := ""
 	seenCursors := make(map[string]struct{})
 	for page := 0; page < mobileMaxProjectProviderPages; page++ {
-		params := map[string]any{
-			"limit":         mobileProjectProviderPageLimit,
-			"sortKey":       "updated_at",
-			"sortDirection": "desc",
-		}
+		params["limit"] = mobileProjectProviderPageLimit
+		delete(params, "cursor")
 		if cursor != "" {
 			params["cursor"] = cursor
 		}
@@ -455,15 +468,15 @@ func fetchMobileProjectConversations(ctx context.Context, instance mobileProvide
 			return nil, err
 		}
 		var response struct {
-			Data       []mobileProviderConversation `json:"data"`
-			NextCursor *string                      `json:"nextCursor"`
+			Data       []json.RawMessage `json:"data"`
+			NextCursor *string           `json:"nextCursor"`
 		}
 		if err := json.Unmarshal(raw, &response); err != nil {
 			return nil, fmt.Errorf("decode thread/list: %w", err)
 		}
-		conversations = append(conversations, response.Data...)
+		items = append(items, response.Data...)
 		if response.NextCursor == nil || *response.NextCursor == "" {
-			return conversations, nil
+			return items, nil
 		}
 		cursor = *response.NextCursor
 		if _, exists := seenCursors[cursor]; exists {
@@ -472,6 +485,17 @@ func fetchMobileProjectConversations(ctx context.Context, instance mobileProvide
 		seenCursors[cursor] = struct{}{}
 	}
 	return nil, errors.New("thread/list exceeded pagination limit")
+}
+
+// mobileConversationProject is the single project-membership rule for Mobile:
+// a provider projectId naming a known project wins; otherwise the session cwd
+// decides. Threads created before the provider assigned project IDs, or by
+// clients that never assign one, only carry a cwd.
+func mobileConversationProject(conversation mobileProviderConversation, known map[string]struct{}, projects []mobileProviderProject) string {
+	if _, exists := known[conversation.ProjectID]; exists {
+		return conversation.ProjectID
+	}
+	return mobileConversationProjectID(conversation, projects)
 }
 
 func mobileConversationProjectID(conversation mobileProviderConversation, projects []mobileProviderProject) string {
@@ -572,44 +596,109 @@ func decodeMobileProjectCursor(value string) (mobileProjectCursor, error) {
 	return mobileProjectCursor{UpdatedAt: updatedAt, ProjectID: parts[1]}, nil
 }
 
-// mobileConversationList keeps project navigation working for threads created
-// before the provider migrated legacy project assignments to project IDs.
-// Those threads can still be addressed reliably by their session cwd.
+// mobileConversationList scopes a project's conversations with the same
+// membership rule project.list uses (see mobileConversationProject). The
+// provider's projectId filter alone misses threads that were never assigned a
+// project ID, so project pages are assembled from the full thread listing and
+// paginated here with a daemon-owned cursor.
 func (m *Manager) mobileConversationList(instance *Instance, params json.RawMessage) (json.RawMessage, error) {
-	var request struct {
-		ProjectID string `json:"projectId"`
-	}
-	if err := json.Unmarshal(params, &request); err != nil || request.ProjectID == "" {
-		return instance.Call(m.ctx, "thread/list", params)
-	}
-
-	result, err := instance.Call(m.ctx, "thread/list", params)
-	if err != nil || !emptyThreadList(result) {
-		return result, err
-	}
-
-	root, err := m.projectRoot(instance, request.ProjectID)
-	if err != nil || root == "" {
-		return result, nil
-	}
-	var object map[string]any
-	if err := json.Unmarshal(params, &object); err != nil {
-		return result, nil
-	}
-	delete(object, "projectId")
-	object["cwd"] = root
-	fallbackParams, err := json.Marshal(object)
-	if err != nil {
-		return result, nil
-	}
-	return instance.Call(m.ctx, "thread/list", fallbackParams)
+	return m.mobileConversationListWithCaller(instance, params)
 }
 
-func emptyThreadList(raw json.RawMessage) bool {
-	var source struct {
-		Data []json.RawMessage `json:"data"`
+func (m *Manager) mobileConversationListWithCaller(caller mobileProviderCaller, params json.RawMessage) (json.RawMessage, error) {
+	var object map[string]any
+	if err := json.Unmarshal(params, &object); err != nil {
+		return caller.Call(m.ctx, "thread/list", params)
 	}
-	return json.Unmarshal(raw, &source) == nil && len(source.Data) == 0
+	projectID, _ := object["projectId"].(string)
+	if projectID == "" {
+		return caller.Call(m.ctx, "thread/list", params)
+	}
+	cursor, _ := object["cursor"].(string)
+	limit := 20
+	if value, ok := object["limit"].(float64); ok && value > 0 {
+		limit = min(int(value), mobileMaxConversationPageLimit)
+	}
+	delete(object, "projectId")
+	delete(object, "cursor")
+	delete(object, "limit")
+
+	projects, err := fetchMobileProjects(m.ctx, caller)
+	if err != nil {
+		return nil, err
+	}
+	known := make(map[string]struct{}, len(projects))
+	for _, project := range projects {
+		known[project.ID] = struct{}{}
+	}
+	items, err := fetchProviderThreads(m.ctx, caller, object)
+	if err != nil {
+		return nil, err
+	}
+	members := make([]json.RawMessage, 0)
+	ids := make([]string, 0)
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		var conversation mobileProviderConversation
+		if err := json.Unmarshal(item, &conversation); err != nil {
+			return nil, fmt.Errorf("decode thread/list: %w", err)
+		}
+		if conversation.ID == "" {
+			return nil, errors.New("thread/list item has no id")
+		}
+		if _, exists := seen[conversation.ID]; exists {
+			continue
+		}
+		seen[conversation.ID] = struct{}{}
+		if mobileConversationProject(conversation, known, projects) == projectID {
+			members = append(members, item)
+			ids = append(ids, conversation.ID)
+		}
+	}
+
+	start := 0
+	if cursor != "" {
+		position, lastID, err := decodeMobileConversationCursor(cursor)
+		if err != nil {
+			return nil, err
+		}
+		// Resume after the last delivered thread; if it disappeared (archived
+		// or deleted), fall back to its former position.
+		start = min(position, len(ids))
+		for index, id := range ids {
+			if id == lastID {
+				start = index + 1
+				break
+			}
+		}
+	}
+	end := min(start+limit, len(members))
+	response := struct {
+		Data       []json.RawMessage `json:"data"`
+		NextCursor *string           `json:"nextCursor"`
+	}{Data: members[start:end]}
+	if end < len(members) {
+		next := encodeMobileConversationCursor(end, ids[end-1])
+		response.NextCursor = &next
+	}
+	return json.Marshal(response)
+}
+
+func encodeMobileConversationCursor(position int, lastID string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(strconv.Itoa(position) + ":" + lastID))
+}
+
+func decodeMobileConversationCursor(value string) (int, string, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return 0, "", fmt.Errorf("invalid conversation cursor: %w", err)
+	}
+	parts := strings.SplitN(string(decoded), ":", 2)
+	position, err := strconv.Atoi(parts[0])
+	if len(parts) != 2 || err != nil || position < 0 || parts[1] == "" {
+		return 0, "", errors.New("invalid conversation cursor")
+	}
+	return position, parts[1], nil
 }
 
 func (m *Manager) projectRoot(instance *Instance, projectID string) (string, error) {
