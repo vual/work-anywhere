@@ -2,6 +2,7 @@
 param(
     [string]$Version = "0.1.0",
     [string]$Commit = "unknown",
+    [string]$OutputDirectory = "",
     [string]$BuildDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 )
 
@@ -18,6 +19,12 @@ if ($actualVersion -notmatch "go1\.26\.5 windows/amd64") {
 }
 
 $outputDir = Join-Path $repoRoot "dist\windows-amd64"
+if (-not [string]::IsNullOrWhiteSpace($OutputDirectory)) {
+    if (-not [System.IO.Path]::IsPathRooted($OutputDirectory)) {
+        throw "OutputDirectory must be an absolute path."
+    }
+    $outputDir = [System.IO.Path]::GetFullPath($OutputDirectory)
+}
 New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
 $output = Join-Path $outputDir "work-anywhere.exe"
 $iconSource = Join-Path $workspaceRoot "waw-app-icon.svg"

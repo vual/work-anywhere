@@ -16,7 +16,7 @@ Desktop 只持久化重新连接所需的小型配置，并对运行内存、临
 
 ## Process diagnostic boundary
 
-App Server stderr 仅在当前代次的有界内存尾部保存（64 KiB），可通过受保护的本机 instance 状态用于排错，可能包含官方错误详情；不作为结构化日志持久化。退出码单独保留。默认进程退出日志仅保存阶段、代次、实例和退出码，不保存原始环境、启动配置 JSON、token 或工具结果。`self-test --protocol` 只输出阶段/结果，不输出官方策略内容；隔离握手的临时 CODEX_HOME 在退出时清理。
+App Server stderr 仅在当前代次的有界内存尾部保存（64 KiB），可通过受保护的本机 instance 状态用于排错，可能包含官方错误详情；不作为结构化日志持久化。退出码单独保留。Claude 会话同样只保留 64 KiB 内存 stderr 尾部及最近失败诊断，启动/挂接同步失败可通过现有 control error 返回有界详情；不新增持久化诊断或 Mobile DTO。claude_code.process 日志仅含阶段、PID、runtimeVersion、退出码与 Win32 码。默认进程退出日志仅保存阶段、代次、实例和退出码，不保存原始环境、启动配置 JSON、token 或工具结果。`self-test --protocol` 只输出阶段/结果，不输出官方策略内容；隔离握手的临时 CODEX_HOME 在退出时清理。
 
 ## State and persistence
 

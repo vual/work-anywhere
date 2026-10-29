@@ -12,7 +12,7 @@
 2. 运行一次性 `app-server --print-startup-config --startup-client-info <JSON>`；恢复登录路径可能附带 `--startup-sign-out`。stdin 关闭，读取完整 stdout 和进程退出码。
 3. 校验 `appServerVersion`、`configRequirements.requirements`，加载 `application.network`。必要时重新启动客户端以应用 Node 网络权限；协议错误不会当作普通网络瞬断重试。
 4. 启动长驻 App Server。Windows 当前正式路径仍是 stdio；`CODEX_APP_SERVER_USE_LOCAL_DAEMON` 的客户端分支仅用于非 Windows。
-5. `initialize` → 成功 response → `initialized`，随后使用业务接口。
+5. `initialize` → 成功 response → daemon 主动发送一次 `initialized` → 发布成功缓存与业务可写状态。当前 Desktop 主连接可以不发送该通知；frontend 提前发送时保留原始字段，延迟或重复发送时去重。
 
 典型长驻参数为 `-c features.code_mode_host=true app-server --analytics-default-enabled -c features.prefer_mxc=true`，还可能附带插件配置。WAW 不硬编码这些配置的值，保留选项顺序、重复 `-c`、环境与 cwd。
 

@@ -29,7 +29,7 @@ supervisor 接收 Bridge 的 WAI1 frames 和 daemon 控制请求，向 App Serve
 
 ## Initialization and exit diagnostics
 
-每代进程分别维护 initialize 成功缓存与 initialized 已发送状态。首次、并发 frontend 及自动恢复路径每代只写一次 initialized；initialize error 原样返回等待者，不进入 ready、不作为重连成功缓存。
+每代进程分别维护 initialize 成功缓存与 initialized 已发送状态。daemon 在成功 initialize response 后主动完成 initialized，不依赖 Desktop 是否发送通知；完整写入前不发布缓存、不回答成功、不打开控制写入门禁。首次、并发 frontend 及自动恢复共用完成路径，每代只写一次；initialize error 原样返回等待者，通知写入失败返回明确错误，均不进入 ready 或缓存为成功。
 
 stderr 每行和整个内存尾部均有 64 KiB 上限。非零退出的 `lastError` 保留退出错误及有界 stderr 尾部，`lastExitCode` 单独暴露真实退出码；stdout 读取失败诊断优先。新代次清空旧诊断，旧代次输出不能覆盖当前状态。结构化 `appserver.exited` 只记录实例、代次、阶段和退出码，不持久化 stderr、参数或认证内容。
 
@@ -39,7 +39,7 @@ stderr 每行和整个内存尾部均有 64 KiB 上限。非零退出的 `lastEr
 
 ## Security and failure handling
 
-- App Server 加入 Windows Job Object，配置 `KILL_ON_JOB_CLOSE`；daemon 退出或崩溃时由操作系统清理子进程。
+- 每个 App Server 根进程加入独立 Windows Job Object，配置 `KILL_ON_JOB_CLOSE`；Group 统一持有所有 Job 的非继承句柄，避免复用已填充 Job 与宿主继承层级冲突。根进程退出即关闭对应 Job并清理后代；daemon 退出或崩溃时清理全部受管进程。单个 Job 的关闭不影响其他根进程。挂接失败时终止并 Wait 本次子进程，不能无托管继续运行。
 - 实例 lease 与 fallback lease 互斥，避免同一逻辑实例的重复 writer。
 - 启动失败进入 `error`，保留官方 session 文件和现有 JSON 配置，不覆盖原会话。
 - Pipe 在请求执行中断开只移除 frontend，不立即终止 App Server。

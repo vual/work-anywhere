@@ -43,6 +43,7 @@ type sessionProcess struct {
 	stdin    io.WriteCloser
 	writeMu  sync.Mutex
 	done     chan struct{}
+	stderr   *diagnosticTail
 
 	turnID       string
 	turnActive   bool
@@ -118,18 +119,22 @@ func (b *Backend) startProcessLocked(id, cwd string, resume bool, settings provi
 	if err != nil {
 		return nil, err
 	}
-	cmd.Stderr = io.Discard
+	stderr := &diagnosticTail{}
+	cmd.Stderr = stderr
+	cmd.WaitDelay = time.Second
 	if err = cmd.Start(); err != nil {
-		return nil, provider.NewError("runtime_unavailable", "start Claude Code: "+err.Error())
+		return nil, provider.NewError("runtime_unavailable", b.processFailure("start", cmd, err, stderr).Error())
 	}
 	if b.attach != nil {
 		if err = b.attach(cmd); err != nil {
 			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
-			return nil, fmt.Errorf("attach Claude Code process: %w", err)
+			_ = stdin.Close()
+			return nil, b.processFailure("attach", cmd, err, stderr)
 		}
 	}
-	process := &sessionProcess{backend: b, id: id, cwd: cwd, settings: settings, cmd: cmd, stdin: stdin, done: make(chan struct{}), lastUsed: time.Now(), requests: make(map[string]*pendingRequest)}
+	process := &sessionProcess{backend: b, id: id, cwd: cwd, settings: settings, cmd: cmd, stdin: stdin, stderr: stderr, done: make(chan struct{}), lastUsed: time.Now(), requests: make(map[string]*pendingRequest)}
+	b.lastProcessError = ""
 	b.processes[id] = process
 	go process.read(stdout)
 	// The initialize request declares this host as the approval surface;
@@ -186,9 +191,20 @@ func (p *sessionProcess) read(stdout io.Reader) {
 			break
 		}
 	}
-	_ = p.cmd.Wait()
-	close(p.done)
+	err := p.cmd.Wait()
+	p.backend.mu.Lock()
+	if err != nil {
+		if p.backend.processes[p.id] == p {
+			_ = p.backend.processFailure("exit", p.cmd, err, p.stderr)
+		} else {
+			p.backend.processDiagnostic("exit", p.cmd, err)
+		}
+	} else {
+		p.backend.processDiagnostic("exit", p.cmd, nil)
+	}
+	p.backend.mu.Unlock()
 	p.exit()
+	close(p.done)
 }
 
 func (p *sessionProcess) handle(message streamLine) {

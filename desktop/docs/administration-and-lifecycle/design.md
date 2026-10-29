@@ -11,7 +11,7 @@ Bridge 首次需要 daemon 时会隐藏启动 `work-anywhere.exe daemon run`；�
 - 当前 SID ACL 的管理 Named Pipe。
 - 随机 `127.0.0.1` 端口上的嵌入式管理 HTTP/WebSocket 服务。
 - 原生 `Shell_NotifyIcon` 托盘图标；图标来自仓库根目录 `waw-app-icon.svg`，构建时优先用 Chrome 原生 SVG 透明背景渲染，缺少 Chrome 时使用透明背景的 `packaging/windows/icon.png` fallback，再编译为 Windows PE icon resource。托盘通过 `LoadImageW` 显式加载 48×48 资源以保证缩放清晰度；最终显示尺寸仍由 Windows 托盘和 DPI 设置决定。
-- 用于托管官方 App Server 的 Windows Job Object。
+- 用于托管官方 App Server、Claude 会话和诊断子树的 Windows Job 集合，每个受管根进程拥有独立 Job。
 
 托盘菜单包括打开管理页、查看实例状态、暂停/恢复本机控制、重启错误实例和退出。管理页展示同一 `waw-app-icon.svg`、daemon、Codex 实例、runtime、日志和连接状态，并提供 Relay 配置、enrollment、配对 URI 复制、配对审批/取消/撤销；不展示聊天 Timeline 或 Prompt 输入。页面同时将该 SVG 作为浏览器页签 favicon。
 
@@ -43,7 +43,7 @@ daemon PID、启动时间、管理端口、一次性 token、session、托盘状
 
 - 每个 Windows 用户最多一个 daemon 和一个托盘入口。
 - Desktop 关闭不等于 daemon 退出；daemon 只在用户/CLI明确退出或进程异常时结束。
-- Job Object 关闭后不得遗留本 daemon 创建的 App Server。
+- Group 关闭后不得遗留已成功挂接的受管根进程及其后代。根进程退出清理自己的 Job；其余成员继续服务。Close 幂等并与 Add/退出清理互斥。
 - V1 不实现自动登录启动、Windows Service、自动空闲退出和桌面聊天 UI。
 
 ## Code ownership

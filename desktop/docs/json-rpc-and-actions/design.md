@@ -26,7 +26,7 @@ Turn 通知驱动会话状态：`idle`、`running`、`waiting_action`、`complet
 
 ## Initialize virtualization
 
-- 第一个 Desktop `initialize` 发送给真实 App Server，只缓存成功响应；首次 `initialized` 每代只转发一次，之后进入 ready。失败原样返回所有等待者，清除初始化成功缓存并允许重试。自动恢复同样检查 error。
+- 第一个 Desktop `initialize` 发送给真实 App Server；daemon 收到成功响应后主动发送 `initialized`，每代至多一次。写入成功后才发布成功缓存、回答各 frontend 并按 Turn/action 状态进入 ready、active 或 waiting_action。Desktop 可以不发送通知；提前发送的通知保留原始字段，延迟或重复通知被吸收。初始化期间同能力请求一直等待完整握手。官方 initialize error 原样返回，initialized 写入失败返回明确错误；两者均不发布成功缓存并允许重试。自动恢复使用同一完成路径。
 - 后续 Desktop 重连的 `initialize` 使用缓存 response 本地回答，`initialized` 被 daemon 吸收。
 - capability 参数不同且实例空闲时重启 App Server；运行中则保存最新参数，在安全边界后重启。
 - 初始化兼容判断只比较 `params.capabilities`；缺失、`null` 和空对象视为相同，client name/version 变化不会触发重启。

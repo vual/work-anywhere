@@ -44,6 +44,11 @@ func (m *Manager) startBackends() {
 		return
 	}
 	options := claudecode.Options{ConfigDir: configDir, Executable: settings.Executable}
+	options.ProcessDiagnostic = func(d claudecode.ProcessDiagnostic) {
+		if m.log != nil {
+			m.log.Event("claude_code.process", map[string]any{"stage": d.Stage, "pid": d.PID, "runtimeVersion": d.RuntimeVersion, "exitCode": d.ExitCode, "win32Code": d.Win32Code})
+		}
+	}
 	if m.job != nil {
 		options.Attach = m.job.Add
 	}

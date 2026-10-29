@@ -45,7 +45,9 @@ func TestCodexMobileLifecycleIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer group.Close()
-	i.manager.ctx = context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	i.manager.ctx = ctx
+	defer cancel()
 	i.manager.job = group
 	i.descriptor.ID = "mobile-integration-" + time.Now().Format("150405.000000000")
 	i.descriptor.CodexHome = home
@@ -66,16 +68,35 @@ func TestCodexMobileLifecycleIntegration(t *testing.T) {
 	}
 	defer i.Stop(true)
 	init := json.RawMessage(`{"clientInfo":{"name":"waw-mobile-integration","version":"0.1"},"capabilities":{"experimentalApi":true}}`)
-	if _, err = i.Call(context.Background(), "initialize", init); err != nil {
+	desktop := compatDesktop(i, "live-desktop")
+	if err = i.HandleDesktop(desktop, mustJSON(map[string]any{"id": "live-init", "method": "initialize", "params": init})); err != nil {
 		t.Fatal(err)
 	}
-	if err = i.writeServer([]byte("{\"method\":\"initialized\"}\n")); err != nil {
-		t.Fatal(err)
+	select {
+	case frame := <-desktop.outbound:
+		var response struct {
+			ID    string
+			Error json.RawMessage
+		}
+		if json.Unmarshal(frame.Payload, &response) != nil || response.ID != "live-init" || len(response.Error) > 0 {
+			t.Fatalf("Desktop initialize failed: %s", frame.Payload)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("Desktop initialize timed out")
 	}
-	i.mu.Lock()
-	i.state = "ready"
-	i.cachedInitializeRequest = []byte(`{"id":1,"method":"initialize","params":` + string(init) + `}`)
-	i.mu.Unlock()
+	if i.Snapshot().State != "ready" {
+		t.Fatal("upstream handshake not completed")
+	}
+	// Drain notifications like the Desktop transport, without sending initialized.
+	go func() {
+		for {
+			select {
+			case <-desktop.outbound:
+			case <-i.manager.ctx.Done():
+				return
+			}
+		}
+	}()
 	call := func(method string, params map[string]any) protocol.ControlResponse {
 		params["agentId"] = i.descriptor.ID
 		raw, _ := json.Marshal(params)

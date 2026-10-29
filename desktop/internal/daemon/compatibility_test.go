@@ -54,8 +54,8 @@ func TestInitializeNotificationOncePerGeneration(t *testing.T) {
 	i.handleServerFrame(0, []byte(fmt.Sprintf(`{"id":%s,"result":{"userAgent":"test","future":true}}`, request.ID)))
 	_ = compatResponse(t, a)
 	_ = compatResponse(t, b)
-	if i.state != "waiting_initialize" || w.Len() != 0 {
-		t.Fatal("ready before initialized")
+	if i.state != "ready" || strings.Count(w.String(), "initialized") != 1 {
+		t.Fatal("daemon did not finish handshake without a Desktop notification")
 	}
 	for _, c := range []*clientConn{a, b, a} {
 		if err := i.HandleDesktop(c, []byte(`{"method":"initialized"}`)); err != nil {
@@ -69,7 +69,7 @@ func TestInitializeNotificationOncePerGeneration(t *testing.T) {
 	i.initializedSent = false
 	i.cachedInitializeResponse = nil
 	w.Reset()
-	i.completeInitialize(i.generation, []byte(`{"id":1,"result":{}}`), true)
+	i.completeInitialize(i.generation, []byte(`{"id":1,"result":{}}`))
 	if strings.Count(w.String(), "initialized") != 1 || i.state != "ready" {
 		t.Fatal("recovery did not initialize")
 	}
@@ -102,7 +102,7 @@ func TestInitializeErrorNotCachedAndConflictsRejected(t *testing.T) {
 		t.Fatal("retry not forwarded")
 	}
 	w.Reset()
-	i.completeInitialize(0, []byte(`{"id":1,"error":{"code":-1,"message":"recovery denied"}}`), true)
+	i.completeInitialize(0, []byte(`{"id":1,"error":{"code":-1,"message":"recovery denied"}}`))
 	if w.Len() != 0 || i.state != "error" {
 		t.Fatal("automatic initialization ignored error")
 	}

@@ -31,6 +31,14 @@ The repository pins Go 1.26.5. Place the Windows x64 SDK at `.tools\go-sdk\go`, 
 
 Output: `dist\windows-amd64\work-anywhere.exe`.
 
+When the installed executable is running, build a reviewable candidate without replacing it:
+
+```powershell
+.\scripts\build.ps1 -OutputDirectory "$PWD\dist\windows-amd64\candidate"
+```
+
+The override must be an absolute directory. Run both self-tests on the candidate; replace the installed executable only after all turns/actions are idle and the old daemon has stopped.
+
 To create a per-user Windows installer, install Inno Setup 6 and run:
 
 ```powershell

@@ -53,6 +53,8 @@ type Options struct {
 	IdleTimeout time.Duration
 	// Attach places started processes into the daemon's process group.
 	Attach func(*exec.Cmd) error
+	// ProcessDiagnostic receives metadata only, never stderr or credentials.
+	ProcessDiagnostic func(ProcessDiagnostic)
 	// Alive and Resolve override process liveness and runtime discovery in
 	// tests.
 	Alive   func(pid int, startTime string) bool
@@ -88,15 +90,17 @@ type createdConversation struct {
 }
 
 type Backend struct {
-	agentID     string
-	name        string
-	configDir   string
-	executable  string
-	poll        time.Duration
-	idleTimeout time.Duration
-	alive       func(int, string) bool
-	resolve     func(context.Context) (Runtime, error)
-	attach      func(*exec.Cmd) error
+	agentID             string
+	name                string
+	configDir           string
+	executable          string
+	poll                time.Duration
+	idleTimeout         time.Duration
+	alive               func(int, string) bool
+	resolve             func(context.Context) (Runtime, error)
+	attach              func(*exec.Cmd) error
+	onProcessDiagnostic func(ProcessDiagnostic)
+	lastProcessError    string
 
 	refreshMu      sync.Mutex
 	mu             sync.Mutex
@@ -140,22 +144,23 @@ func New(options Options) (*Backend, error) {
 		return nil, err
 	}
 	b := &Backend{
-		agentID:        AgentID(configDir),
-		name:           options.Name,
-		configDir:      configDir,
-		executable:     options.Executable,
-		poll:           options.PollInterval,
-		idleTimeout:    options.IdleTimeout,
-		alive:          options.Alive,
-		resolve:        options.Resolve,
-		attach:         options.Attach,
-		files:          make(map[string]*fileEntry),
-		transcripts:    make(map[string]*cachedTranscript),
-		live:           make(map[string]bool),
-		created:        make(map[string]*createdConversation),
-		settings:       make(map[string]provider.ConversationSettings),
-		processes:      make(map[string]*sessionProcess),
-		clientMessages: make(map[string]string),
+		agentID:             AgentID(configDir),
+		name:                options.Name,
+		configDir:           configDir,
+		executable:          options.Executable,
+		poll:                options.PollInterval,
+		idleTimeout:         options.IdleTimeout,
+		alive:               options.Alive,
+		resolve:             options.Resolve,
+		attach:              options.Attach,
+		onProcessDiagnostic: options.ProcessDiagnostic,
+		files:               make(map[string]*fileEntry),
+		transcripts:         make(map[string]*cachedTranscript),
+		live:                make(map[string]bool),
+		created:             make(map[string]*createdConversation),
+		settings:            make(map[string]provider.ConversationSettings),
+		processes:           make(map[string]*sessionProcess),
+		clientMessages:      make(map[string]string),
 	}
 	if b.name == "" {
 		b.name = "Claude Code"

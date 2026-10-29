@@ -77,6 +77,10 @@ func (c *fakeCLI) turn(text string) int {
 	c.send(map[string]any{"type": "system", "subtype": "init", "session_id": c.sessionID})
 	switch {
 	case strings.Contains(text, "crash"):
+		if strings.Contains(text, "diagnostic") {
+			fmt.Fprint(os.Stderr, strings.Repeat("x", 200000)+"\nCLAUDE_DIAGNOSTIC_END\n")
+			return 23
+		}
 		return 3
 	case strings.Contains(text, "approve"):
 		response := c.permission("Bash", "toolu_bash", map[string]any{"command": "go test ./...", "description": "Run tests"})

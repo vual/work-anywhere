@@ -19,7 +19,7 @@ Mobile ──Relay(E2EE)──► daemon.control()
 - daemon 启动时由 `startBackends` 创建后端：配置 `claudeCode.enabled=false` 时跳过；未配置时仅在 `<configDir>/projects` 存在时启用。`configDir` 依次取配置 `claudeCode.configDir`、`CLAUDE_CONFIG_DIR`、`~/.claude`。后端在后台解析 CLI（见下文），解析完成前 agent 只声明 `history`/`desktopMirror` 能力。
 - `control()` 对 Mobile contract 请求先按 `agentId` 查后端；命中时由 `backendControl` 处理 agent 方法，未知 agent 仍走 Codex 路径（`invalid_target`）。
 - **读路径**：后端每 2 秒轮询，增量扫描转录（按文件偏移续读完整行，尾部半行留到下次）并重读活跃会话登记；时间线首次读取时解析整份转录并缓存（最多 8 份，LRU）。扫描在条目副本上进行、解析持有单份转录自己的锁，完成后才在后端锁内替换，因此 CLI 输出读取和 Mobile 请求不会被文件 I/O 阻塞。轮询只为会话本身变化发失效；列表级失效仅在会话增删、标题或首个提问变化、电脑端占用变化以及 Turn 开始/结束时发送。daemon 自有进程正在流式输出的会话不发轮询失效（stdout 事件已覆盖），以免打断 delta 序号连续性。
-- **写路径**：首个 `turn.start` 为会话启动一个 `claude.exe` 子进程（已有转录用 `--resume`，新会话用 `--session-id`），之后同一进程连续服务多轮；无 Turn、无待处理请求超过 10 分钟后关闭 stdin 回收，下次发送再 `--resume`。进程隐藏窗口并加入 daemon 的 job object，daemon 退出时一并终止。CLI 输出逐行解析：
+- **写路径**：首个 `turn.start` 为会话启动一个 `claude.exe` 子进程（已有转录用 `--resume`，新会话用 `--session-id`），之后同一进程连续服务多轮；无 Turn、无待处理请求超过 10 分钟后关闭 stdin 回收，下次发送再 `--resume`。进程隐藏窗口，每个会话根进程加入独立的 `KILL_ON_JOB_CLOSE` Job，由 daemon 的 Group 统一管理。根进程退出清理其后代，daemon 退出时清理所有成员，单个会话退出不影响其他会话。CLI 输出逐行解析：
   - `stream_event` 的 `text_delta`/`thinking_delta` → `assistantText`/`reasoning` delta；
   - `assistant`/`user` 消息 → 会话失效（Mobile 读取权威快照）；
   - `control_request{can_use_tool}` → 待处理请求（见“交互映射”）；其他 host 回调以 error 响应，避免 CLI 阻塞；
@@ -92,7 +92,7 @@ Mobile ──Relay(E2EE)──► daemon.control()
 - **目录与会话**：会话 ID 必须是索引中的 UUID 文件名或 daemon 创建的 UUID；工作目录只来自转录索引或基于已索引项目创建的会话，Mobile 不能传路径；启动前确认目录存在。
 - **电脑端占用**：活跃登记中进程仍存活（Windows 上核对 `procStart` 防 PID 复用），且后端当前没有为该会话运行进程时，会话为 `externallyActive`，`turn.start` 返回 `conversation_busy_external`。按会话而不是 PID 排除自有进程，配置的包装程序 PID 与登记 PID 不同也不会误判；代价是后端进程运行期间另一进程打开同一会话不会被标记。登记文件遗留但进程已退出时不锁定。daemon 无法阻止用户在 daemon 进程运行期间另开终端 `--resume` 同一会话。
 - **并发**：同一会话已有活跃 Turn 或待处理请求时返回 `conversation_busy`；请求解析先移除再回复，保证 first-valid-wins。写操作的 `expectedRevision` 不匹配返回 `revision_conflict`。
-- **进程失败**：进程退出时，活跃 Turn 以失败（或中断）结束，待处理请求全部失效；下一次发送重新启动进程。
+- **进程失败**：进程退出时，活跃 Turn 以失败（或中断）结束，待处理请求全部失效；下一次发送重新启动进程。stderr 始终排空，只保留当前进程的 64 KiB 内存尾部；非零退出保留真实退出码，旧进程迟到退出不覆盖同会话替代进程诊断。启动/挂接失败在发送初始化及用户消息前终止并回收进程，错误区分 create/configure/open/assign 阶段并保留 Win32 码；同步失败响应可含有界 stderr。结构化 claude_code.process 日志仅含 stage、pid、runtimeVersion、exitCode、win32Code，不记录 stderr、环境或认证 payload。
 - **daemon 退出**：`system.shutdown` 的活跃 Turn 计数和托盘退出确认都包含 Claude Code Turn；确认中断后对每个活跃 Turn 发送 `interrupt`，与 Codex 共用最多 10 秒的等待，再终止进程。
 - **权限**：`fullAccess` 映射到 Claude Code 的 bypass 模式并在 catalog 中标记 `dangerous`；`readOnly` 不可选，避免把非只读模式伪装为只读。
 - 读取错误返回 `provider_error`，不影响 Codex 路径；大内容遵循与 Codex 相同的 contentRef 和响应上限。
@@ -127,6 +127,8 @@ cd desktop
 
 - `backend_test.go`：项目/会话聚合、标题、时间线映射、稳定 cursor、增量追加、半行、活跃登记、删除通知。
 - `interactive_test.go`：测试二进制在 `WA_FAKE_CLAUDE` 下充当按录制协议工作的假 CLI（`fakecli_test.go`），覆盖流式 delta 与持久化 ID 一致、启动参数与环境净化、initialize 握手、进程复用、审批允许/拒绝与重复解析、提问答案映射、计划确认与修订、中断、进程崩溃、电脑端占用拒绝、自有进程不算外部占用、新建会话、设置到启动参数与重启、空闲回收。
+- `diagnostics_test.go` 验证 stderr 上限、退出码、挂接失败不发送消息及替代进程诊断隔离；`managed_windows_test.go` 使用真实 Group 覆盖 fake CLI 连续两轮。设置 `WORK_ANYWHERE_TEST_CLAUDE` 为原生 CLI 路径后执行 `go test ./internal/provider/claudecode -run TestClaudeManagedInitializeIntegration -v`，在临时配置目录完成无模型请求的真实初始化。
+- 额外设置 `WORK_ANYWHERE_TEST_CLAUDE_CONFIG` 为授权使用的 Claude 配置目录，可执行 `go test ./internal/provider/claudecode -run TestClaudeMobileLifecycleIntegration -v -timeout 300s`。测试仅复制认证文件和 settings.env 到临时目录，不复制用户 hooks、MCP 或转录；创建测试会话完成三次短模型响应，覆盖连续发送、流式、权威转录和空闲回收后的 resume，结束清理测试目录。
 - `internal/daemon/backends_test.go`：agent 合并、分页、快照与 contentRef、事件名与 sequence/revision、写方法路由与 revision 冲突、附件绑定、catalog 转换、队列不支持。
 - `internal/remote/delta_backend_test.go`：后端 delta payload 被 Remote 批处理识别。
 - 人工：用真实 CLI 新建会话并发送、批准一次 PowerShell 写文件、回答一次 `AskUserQuestion`、修订一次计划、以 `fullAccess` 发送；回到电脑端 `claude --resume <id>` 能看到完整记录。

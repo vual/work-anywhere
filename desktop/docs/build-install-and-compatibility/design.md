@@ -12,6 +12,8 @@ Desktop 是独立 Go module：`github.com/hurf/work-anywhere/desktop`。仓库�
 desktop/dist/windows-amd64/work-anywhere.exe
 ```
 
+`scripts/build.ps1 -OutputDirectory <绝对目录>` 可把同样的测试、资源和构建流程输出到候选目录，默认输出位置不变。正在使用的 EXE 不覆盖；候选自检及隔离测试通过后，在所有 Turn/action 空闲且旧 daemon 正常停止后替换，保留原 EXE 供回滚。
+
 一个 EXE 同时包含 Bridge、daemon 和 CLI。版本、commit 和 UTC build date 通过 linker flags 写入；PE resource 保存 file/product version。
 
 Windows 分发安装包由 `scripts/build-installer.ps1` 调用 Inno Setup 6 生成。安装包采用当前用户模式，默认目录为 `%LOCALAPPDATA%\Programs\WorkAnywhere`，不申请管理员权限；安装器在文件复制完成后调用同一个 EXE 的 `install` 命令完成 `CODEX_CLI_PATH` 写入，卸载时调用 `uninstall` 恢复原值。
@@ -66,7 +68,7 @@ Mobile 的接口可用性按会话和进程代次判断，不以 schema 中的�
 .\.tools\go-sdk\go\bin\go.exe test ./internal/daemon -run '^TestCodexMobileLifecycleIntegration$' -v -timeout 240s
 ```
 
-测试将鉴权材料复制到测试临时 CODEX_HOME，不打印凭据；创建临时项目，执行两次短文本模型请求，验证空快照、首次/后续发送、流式 delta、控制订阅重连和隔离 App Server 重启。测试结束清理临时配置与会话，不替换用户当前 daemon。默认单元测试跳过真实模型请求。
+测试将鉴权材料复制到测试临时 CODEX_HOME，不打印凭据；创建临时项目，通过 Desktop HandleDesktop 初始化入口完成握手，frontend 不发送 initialized，测试不得直接设置 ready；执行两次短文本模型请求，验证空快照、首次/后续发送、流式 delta、控制订阅重连和隔离 App Server 重启。测试结束清理临时配置与会话，不替换用户当前 daemon。默认单元测试跳过真实模型请求。
 
 ## State and persistence
 
@@ -104,6 +106,7 @@ Mobile 的接口可用性按会话和进程代次判断，不以 schema 中的�
 - `self-test` 使用当前安装的官方 Codex 成功。
 - 使用旧 fixture 与当前 0.165.0-alpha.1.2 fixture 验证 initialize 成功/失败、initialized 每代一次、未知字段/通知、基础设施请求分类、慢连接隔离、请求清理和 fallback；真实 runtime 用 `self-test --protocol` 验证。基于 fixture 的通过不表示真机 E2E 已通过。
 - 执行 `go test -race ./internal/daemon ./internal/app ./internal/codex`（需支持 Go race 的 C 编译器），验证初始化/请求/退出并发；执行上述 Python 比较工具测试。
+- Windows process 回归覆盖独立根进程、显式 ParentProcess 继承、后代清理、宿主异常退出以及 Add/Close 并发。Claude 的真实无模型初始化验证见 [provider 设计](../claude-code-provider/design.md)。
 - 发布前完整重启 Desktop，验证策略检查后进入 Bridge，并验证手机历史、文字/图片、队列、流式、审批/问题和中断。替换 EXE 前确认无活跃 Turn，正常停止 daemon 并备份旧 EXE；不能强制中断活跃会话以完成安装。
 - install/uninstall 测试备份、恢复及多 Desktop 实例重启后的路径。
 - 在 Inno Setup 6 环境构建安装包，验证 per-user 安装目录、安装后 `CODEX_CLI_PATH`、完成页重启提示和卸载恢复。

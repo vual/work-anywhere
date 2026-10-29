@@ -11,7 +11,7 @@ Desktop 使用一套共享 Bridge/daemon 业务代码，并通过 `internal/plat
 | 构建目标 | 支持 | 可编译骨架，未发布 | 可编译骨架，未发布 |
 | 本机 IPC | 当前 SID ACL Named Pipe | 未实现 Unix Domain Socket | 未实现 Unix Domain Socket |
 | 单实例/实例 lease | Named Mutex | 未实现 file lock | 未实现 file lock |
-| 子进程清理 | Job Object | 未实现完整 process-group 清理 | 未实现完整 process-group/PDEATHSIG 清理 |
+| 子进程清理 | 每根进程独立 Job，Group 统一清理 | 未实现完整 process-group 清理 | 未实现完整 process-group/PDEATHSIG 清理 |
 | 主密钥保护 | Current-user DPAPI | 未实现 Keychain | 未实现 Secret Service/keyring |
 | 托盘 | `Shell_NotifyIcon` | 无操作占位 | 无操作占位 |
 | URL 打开 | `rundll32` | `open` 适配已存在 | `xdg-open` 适配已存在 |

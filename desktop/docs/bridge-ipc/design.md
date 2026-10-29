@@ -13,6 +13,8 @@ Desktop stdout ◄────────────────────�
 
 daemon 向每个 Bridge 连接使用独立的有界发送队列（最多 128 帧或 8 MiB），由单独 writer 顺序写入。队列满、连接写入失败或写入持续超过 10 秒时，该连接会被关闭并从实例订阅者中移除；慢连接不能阻塞其他 Desktop 的响应和流式通知。
 
+daemon 是唯一上游客户端，负责在 initialize 成功后主动写入一次 initialized，再向 Bridge 返回初始化成功。当前 Desktop 不发送该通知时同样可用；frontend 的提前通知保留字段、延迟或重复通知去重。完整握手前不开放 Mobile 写入，失败不发布重连成功缓存，详见 [初始化虚拟化](../json-rpc-and-actions/design.md#initialize-virtualization)。
+
 Bridge 先发现 runtime/instance，再连接当前用户管理 Pipe。连接失败时隐藏启动 `work-anywhere.exe daemon run` 并在最多五秒内重试。若在任何 Desktop frame 发出前仍失败，则持有实例级 lease 并直通 `codex.exe app-server`；发出过 frame 后连接中断则直接退出，不热切换。
 
 `app-server --standalone-ws` 是诊断兼容模式：Bridge 在随机 loopback 端口启动官方实验性 WebSocket App Server，并在 stdio JSONL 与 WebSocket text frame 之间转发。daemon 正式链路不使用该模式。普通桌面启动即使带有 `-c ... app-server ...` 形式的全局选项，也会进入同一 stdio Bridge 路径。

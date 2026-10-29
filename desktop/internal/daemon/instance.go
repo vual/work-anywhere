@@ -556,6 +556,7 @@ func (i *Instance) startGeneration(expected *uint64) error {
 	}
 	if err = i.manager.job.Add(cmd); err != nil {
 		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
 		return i.startFailed(generation, err)
 	}
 
@@ -563,6 +564,7 @@ func (i *Instance) startGeneration(expected *uint64) error {
 	if generation != i.generation {
 		i.mu.Unlock()
 		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
 		return errors.New("instance generation changed during startup")
 	}
 	i.cmd, i.stdin, i.state = cmd, stdin, "waiting_initialize"
@@ -951,7 +953,7 @@ func (i *Instance) handleServerFrame(generation uint64, raw []byte) {
 				}
 				return
 			}
-			i.completeInitialize(generation, raw, true)
+			i.completeInitialize(generation, raw)
 			return
 		}
 		restored, rewriteErr := jsonrpc.RewriteRawID(bytes.TrimSpace(raw), origin.originalID)
@@ -960,7 +962,10 @@ func (i *Instance) handleServerFrame(generation uint64, raw []byte) {
 		}
 		restored = append(restored, '\n')
 		if origin.method == "initialize" {
-			i.completeInitialize(generation, restored, false)
+			restored = i.completeInitialize(generation, restored)
+			if restored == nil {
+				return
+			}
 		}
 		i.sendDesktop(origin.desktopID, restored)
 		return
