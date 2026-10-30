@@ -4,6 +4,8 @@
 
 ## 目标与范围
 
+首条发送验收覆盖默认及用户预选设置、非空且不同于草稿的初始快照、旧版空模型/custom、settings:null、目录失效、明确拒绝后同会话重试及结果不明不重发。共享页面同时回归 Claude；Codex 真实消息成功后必须检查 ChatGPT Desktop 加载同一会话。EXE/APK 采用候选产物验证与覆盖更新，保留配对和回滚产物；尚未完成的 GUI/真机项目不得记为通过。
+
 用可验证的纵向切片交付生产 Mobile，优先消除跨语言协议和状态语义风险，再扩展完整交互。任何阶段都必须保持 Relay 不解密、Desktop 为权威和 Mobile 不离线写入三个边界。
 
 ## Phase 0 — contract release gates

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -45,40 +46,125 @@ func emptyHistoryUnsupported(err error) bool {
 	return code == -32601 && message == "list_turns is not supported yet"
 }
 
-// Codex may create the session metadata file before it has any durable turns.
-// Only bounded, metadata-only files qualify; unreadable or non-metadata records fail closed.
-func metadataOnlyRollout(path string) bool {
-	if path == "" {
-		return true
+// Disk evidence survives daemon restarts. Resolve symlinks before checking the
+// sessions boundary, and require a matching session identity in every record.
+func verifiedEmptyRollout(home, path, threadID string) bool {
+	if home == "" || path == "" || threadID == "" {
+		return false
 	}
-	file, err := os.Open(path)
-	if os.IsNotExist(err) {
-		return true
+	root, err := filepath.EvalSymlinks(filepath.Join(home, "sessions"))
+	if err != nil {
+		return false
 	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || rel == "." || rel == ".." || filepath.IsAbs(rel) || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	file, err := os.Open(resolved)
 	if err != nil {
 		return false
 	}
 	defer file.Close()
 	stat, err := file.Stat()
-	if err != nil || !stat.Mode().IsRegular() || stat.Size() > 1<<20 {
+	if err != nil || !stat.Mode().IsRegular() || stat.Size() == 0 || stat.Size() > 1<<20 {
 		return false
 	}
 	scanner := bufio.NewScanner(io.LimitReader(file, (1<<20)+1))
-	total := 0
 	scanner.Buffer(make([]byte, 4096), 1<<20)
+	total, count := 0, 0
 	for scanner.Scan() {
 		total += len(scanner.Bytes()) + 1
-		if total > 1<<20 {
-			return false
-		}
 		var record struct {
-			Type string `json:"type"`
+			Type    string `json:"type"`
+			Payload struct {
+				ID string `json:"id"`
+			} `json:"payload"`
 		}
-		if json.Unmarshal(scanner.Bytes(), &record) != nil || record.Type != "session_meta" {
+		if total > 1<<20 || json.Unmarshal(scanner.Bytes(), &record) != nil || record.Type != "session_meta" || record.Payload.ID != threadID {
 			return false
 		}
+		count++
 	}
-	return scanner.Err() == nil
+	return count > 0 && scanner.Err() == nil
+}
+
+func (i *Instance) allowEmptyHistory(threadID string, path *string) bool {
+	i.mu.Lock()
+	home := i.descriptor.CodexHome
+	created := i.createdThreads[threadID]
+	busy := i.pendingTurnStarts[threadID] || i.activeTurns[threadID] != "" || i.pendingTurnSettings[threadID].Mode != ""
+	i.mu.Unlock()
+	if busy {
+		return false
+	}
+	if path == nil || *path == "" {
+		return created
+	}
+	if verifiedEmptyRollout(home, *path, threadID) {
+		return true
+	}
+	// Missing rollouts are only expected immediately after a known creation.
+	_, err := os.Stat(*path)
+	return created && os.IsNotExist(err)
+}
+
+// Called only for an explicit user write, after reserving its turn. Reading a
+// conversation never resumes it. No retry of the user message is involved.
+func (m *Manager) resumeEmptyThreadForTurn(i *Instance, threadID string) error {
+	i.mu.Lock()
+	generation, needed := i.emptyThreadsToResume[threadID]
+	needed = needed && generation == i.generation
+	home := i.descriptor.CodexHome
+	i.mu.Unlock()
+	if !needed {
+		return nil
+	}
+	raw, err := i.Call(m.ctx, "thread/read", mustJSON(map[string]any{"threadId": threadID, "includeTurns": false}))
+	if err != nil {
+		return err
+	}
+	var metadata struct {
+		Thread struct {
+			ID     string `json:"id"`
+			Path   string `json:"path"`
+			Status struct {
+				Type string `json:"type"`
+			} `json:"status"`
+		} `json:"thread"`
+	}
+	if json.Unmarshal(raw, &metadata) != nil || metadata.Thread.ID != threadID {
+		return &mobileContractError{code: "invalid_provider_response", message: "invalid empty thread metadata"}
+	}
+	if metadata.Thread.Status.Type == "notLoaded" {
+		if !verifiedEmptyRollout(home, metadata.Thread.Path, threadID) {
+			return &mobileContractError{code: "revision_conflict", message: "empty thread changed before resume"}
+		}
+		resumed, resumeErr := i.Call(m.ctx, "thread/resume", mustJSON(map[string]any{"threadId": threadID, "excludeTurns": true}))
+		if resumeErr != nil {
+			return resumeErr
+		}
+		var response struct {
+			Thread struct {
+				ID string `json:"id"`
+			} `json:"thread"`
+		}
+		if json.Unmarshal(resumed, &response) != nil || response.Thread.ID != threadID {
+			return &mobileContractError{code: "invalid_provider_response", message: "resume response does not match the empty thread"}
+		}
+	} else if metadata.Thread.Status.Type != "idle" {
+		return &mobileContractError{code: "conversation_busy", message: "empty thread is no longer idle"}
+	}
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if generation != i.generation {
+		return &mobileContractError{code: "revision_conflict", message: "App Server restarted during resume"}
+	}
+	delete(i.emptyThreadsToResume, threadID)
+	return nil
 }
 
 func noRollout(err error, threadID string) bool {

@@ -702,6 +702,13 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 				break
 			}
 			originalParams := params
+			if request.Contract == protocol.MobileControlContract {
+				if err = m.resumeEmptyThreadForTurn(instance, turnTarget.ThreadID); err != nil {
+					instance.clearPendingTurnSettings("turn/start", originalParams)
+					response.Error = mobileControlError(err)
+					break
+				}
+			}
 			acceptedAttachmentIDs = attachmentIDs(originalParams)
 			params, err = m.normalizeTurnStart(instance.descriptor.ID, params)
 			if err != nil {

@@ -24,12 +24,13 @@ import (
 )
 
 type requestOrigin struct {
-	desktopID  string
-	originalID json.RawMessage
-	method     string
-	internal   bool
-	response   chan []byte
-	startedAt  time.Time
+	desktopID       string
+	originalID      json.RawMessage
+	method          string
+	internal        bool
+	response        chan []byte
+	startedAt       time.Time
+	settingsContext threadSettingsRequest
 }
 
 type pendingAction struct {
@@ -83,17 +84,18 @@ type conversationProjection struct {
 }
 
 type threadCollaborationSettings struct {
-	TurnID            string `json:"turnId,omitempty"`
-	Mode              string `json:"mode"`
-	Model             string `json:"model"`
-	ReasoningEffort   string `json:"reasoningEffort,omitempty"`
-	PermissionModeID  string `json:"permissionModeId,omitempty"`
-	PermissionProfile string `json:"permissionProfile,omitempty"`
-	SandboxMode       string `json:"sandboxMode,omitempty"`
-	SandboxPolicyJSON string `json:"sandboxPolicyJSON,omitempty"`
-	ApprovalPolicy    string `json:"approvalPolicy,omitempty"`
-	ApprovalsReviewer string `json:"approvalsReviewer,omitempty"`
-	Succeeded         bool   `json:"succeeded"`
+	TurnID             string `json:"turnId,omitempty"`
+	Mode               string `json:"mode"`
+	Model              string `json:"model"`
+	ReasoningEffort    string `json:"reasoningEffort,omitempty"`
+	PermissionModeID   string `json:"permissionModeId,omitempty"`
+	PermissionProfile  string `json:"permissionProfile,omitempty"`
+	SandboxMode        string `json:"sandboxMode,omitempty"`
+	SandboxPolicyJSON  string `json:"sandboxPolicyJSON,omitempty"`
+	ApprovalPolicy     string `json:"approvalPolicy,omitempty"`
+	ApprovalPolicyJSON string `json:"approvalPolicyJSON,omitempty"`
+	ApprovalsReviewer  string `json:"approvalsReviewer,omitempty"`
+	Succeeded          bool   `json:"succeeded"`
 }
 
 type initializeWaiter struct {
@@ -130,6 +132,8 @@ type Instance struct {
 	conversations            map[string]*conversationProjection
 	threadSettings           map[string]threadCollaborationSettings
 	settingsNotifications    map[string]uint64
+	settingsClock            uint64
+	emptyThreadsToResume     map[string]uint64
 	pendingTurnSettings      map[string]threadCollaborationSettings
 	nextRequest              uint64
 	eventSequence            int64
@@ -272,6 +276,11 @@ func collaborationSettingsFromParams(params json.RawMessage, notification bool) 
 		}
 	}
 	approvalPolicy, _ := settingsRoot["approvalPolicy"].(string)
+	approvalJSON := ""
+	if value, exists := settingsRoot["approvalPolicy"]; exists {
+		encoded, _ := json.Marshal(value)
+		approvalJSON = string(encoded)
+	}
 	approvalsReviewer, _ := settingsRoot["approvalsReviewer"].(string)
 	sandboxMode := ""
 	sandboxJSON := ""
@@ -298,7 +307,7 @@ func collaborationSettingsFromParams(params json.RawMessage, notification bool) 
 		PermissionModeID: permissionModeID, PermissionProfile: permissionProfile,
 		SandboxMode:       sandboxMode,
 		SandboxPolicyJSON: sandboxJSON,
-		ApprovalPolicy:    approvalPolicy, ApprovalsReviewer: approvalsReviewer,
+		ApprovalPolicy:    approvalPolicy, ApprovalPolicyJSON: approvalJSON, ApprovalsReviewer: approvalsReviewer,
 	}, true
 }
 
@@ -344,6 +353,7 @@ func (i *Instance) observeOutgoingThreadSettings(method string, params json.RawM
 			settings.SandboxMode, settings.SandboxPolicyJSON = current.SandboxMode, current.SandboxPolicyJSON
 			if settings.ApprovalPolicy == "" {
 				settings.ApprovalPolicy = current.ApprovalPolicy
+				settings.ApprovalPolicyJSON = current.ApprovalPolicyJSON
 			}
 			if settings.ApprovalsReviewer == "" {
 				settings.ApprovalsReviewer = current.ApprovalsReviewer
@@ -381,6 +391,8 @@ func (i *Instance) observeOutgoingThreadSettings(method string, params json.RawM
 		i.pendingTurnSettings[threadID] = settings
 	} else {
 		i.threadSettings[threadID] = settings
+		i.settingsClock++
+		i.settingsNotifications[threadID] = i.settingsClock
 	}
 	i.mu.Unlock()
 	if method != "turn/start" {
@@ -414,7 +426,8 @@ func (i *Instance) observeThreadSettingsNotification(params json.RawMessage) {
 		settings.TurnID = current.TurnID
 		settings.Succeeded = current.Succeeded
 	}
-	i.settingsNotifications[threadID]++
+	i.settingsClock++
+	i.settingsNotifications[threadID] = i.settingsClock
 	i.threadSettings[threadID] = settings
 	i.mu.Unlock()
 	i.persistThreadSettingsAsync(threadID, settings)
@@ -632,6 +645,7 @@ func (i *Instance) stopProcess(release bool) {
 	i.pendingTurnSettings = make(map[string]threadCollaborationSettings)
 	i.actions = make(map[string]*pendingAction)
 	i.createdThreads = make(map[string]bool)
+	i.emptyThreadsToResume = nil
 	i.legacyTimeline = make(map[string]uint64)
 	i.cachedInitializeResponse = nil
 	i.initializedSent = false
@@ -743,7 +757,7 @@ func (i *Instance) HandleDesktop(conn *clientConn, raw []byte) error {
 	rewritten, err := jsonrpc.RewriteID(bytes.TrimSpace(raw), proxyID)
 	proxyKey := string(mustJSON(proxyID))
 	if err == nil {
-		i.requests[proxyKey] = requestOrigin{desktopID: conn.id, originalID: append(json.RawMessage(nil), message.ID...), method: message.Method, startedAt: time.Now()}
+		i.requests[proxyKey] = requestOrigin{desktopID: conn.id, originalID: append(json.RawMessage(nil), message.ID...), method: message.Method, startedAt: time.Now(), settingsContext: i.threadSettingsRequestLocked(message.Method, message.Params)}
 	}
 	i.mu.Unlock()
 	if err != nil {
@@ -937,6 +951,10 @@ func (i *Instance) handleServerFrame(generation uint64, raw []byte) {
 	if message.IsResponse() {
 		key := string(message.ID)
 		i.mu.Lock()
+		if generation != i.generation {
+			i.mu.Unlock()
+			return
+		}
 		origin, ok := i.requests[key]
 		if ok {
 			delete(i.requests, key)
@@ -944,6 +962,9 @@ func (i *Instance) handleServerFrame(generation uint64, raw []byte) {
 		i.mu.Unlock()
 		if !ok {
 			return
+		}
+		if len(message.Error) == 0 || bytes.Equal(bytes.TrimSpace(message.Error), []byte("null")) {
+			i.observeThreadSettingsResponse(generation, origin, message.Result)
 		}
 		if origin.internal {
 			if origin.response != nil {
@@ -1084,6 +1105,8 @@ func (i *Instance) observeNotification(method string, params json.RawMessage) {
 				settings.TurnID = turnID
 				settings.Succeeded = false
 				i.threadSettings[threadID] = settings
+				i.settingsClock++
+				i.settingsNotifications[threadID] = i.settingsClock
 				delete(i.pendingTurnSettings, threadID)
 				copy := settings
 				settingsToPersist = &copy
@@ -1221,6 +1244,7 @@ func (i *Instance) waitServer(generation uint64, cmd *exec.Cmd) {
 	i.pendingTurnStarts = make(map[string]bool)
 	i.pendingTurnSettings = make(map[string]threadCollaborationSettings)
 	i.createdThreads = make(map[string]bool)
+	i.emptyThreadsToResume = nil
 	i.legacyTimeline = make(map[string]uint64)
 	i.actions = make(map[string]*pendingAction)
 	i.cachedInitializeResponse = nil
@@ -1504,7 +1528,7 @@ func (i *Instance) call(ctx context.Context, method string, params json.RawMessa
 	i.nextRequest++
 	id := fmt.Sprintf("wa:c:local:%d", i.nextRequest)
 	response := make(chan []byte, 1)
-	i.requests[string(mustJSON(id))] = requestOrigin{method: method, internal: true, response: response, startedAt: time.Now()}
+	i.requests[string(mustJSON(id))] = requestOrigin{method: method, internal: true, response: response, startedAt: time.Now(), settingsContext: i.threadSettingsRequestLocked(method, params)}
 	i.mu.Unlock()
 	request := map[string]any{"jsonrpc": "2.0", "id": id, "method": method}
 	if len(bytes.TrimSpace(params)) > 0 && !bytes.Equal(bytes.TrimSpace(params), []byte("null")) {

@@ -48,6 +48,8 @@ App Server 的审批、用户提问、MCP elicitation 和未知 server request �
 
 ## State and persistence
 
+成功 `thread/start`/`thread/resume` 响应在路由给 Desktop 或内部调用前更新会话设置，发布设置失效事件并推进 revision/sequence。请求只记录必要的模式和设置版本，不复制 instructions；权威通知、后续已提交设置和旧进程代次保护阻止迟到响应覆盖新状态。未知响应字段仍原样返回。设置未知以 Mobile `settings:null` 表达，详见[控制面](../local-control/design.md)。
+
 请求 ID 映射、initialize waiter、会话状态、Turn、timeline event 和 pending action 都只存在有界内存中。每会话最多回放 256 条事件，全局 payload 预算为 32 MiB；旧 cursor 或淘汰后的缺口返回 snapshot。官方 App Server/官方 session 是完整会话的唯一权威来源。
 
 控制请求取消、超时、stdin 写入失败或 App Server 退出时会清理内存中的 request mapping；内部调用收到终止错误，迟到 response 会被丢弃。

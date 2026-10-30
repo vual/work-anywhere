@@ -83,6 +83,17 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   List<PermissionModeOption> _permissionModes = const [];
   String _permissionCatalogModelId = '';
   ConversationSettings? _settings;
+  late bool _initialSettingsPending = widget.conversationId == null;
+  bool get _ownsInitialSettings =>
+      _initialSettingsPending ||
+      _submissions
+          .records(_submissionScope)
+          .any(
+            (record) =>
+                record.initialSettings &&
+                !record.reconciled &&
+                record.phase != SubmissionPhase.confirming,
+          );
   bool _planPreferencesLoaded = false;
   final Set<String> _dismissedPlanConfirmations = {};
   final Set<String> _handledPlanConfirmations = {};
@@ -161,6 +172,16 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       _boundAgentId = agentId;
       _boundGeneration = workspace.eventGeneration;
       _activeConversationId ??= _submissions.draftThreads[_submissionScope];
+      final pending = _submissions
+          .records(_submissionScope)
+          .where(
+            (record) =>
+                record.initialSettings &&
+                !record.reconciled &&
+                record.phase != SubmissionPhase.confirming,
+          )
+          .firstOrNull;
+      if (pending != null) _settings = pending.settings;
       await _loadCatalogs(agentId);
       final conversationId = _activeConversationId;
       if (conversationId == null || !mounted) return;
@@ -216,11 +237,18 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
 
   void _changed() {
     if (!mounted) return;
+    final initial = _submissions
+        .records(_submissionScope)
+        .where((record) => record.initialSettings)
+        .toList();
     _submissions.reconcile(
       _submissionScope,
       _controller?.state.items ?? const [],
       _controller?.state.queuedSubmissions ?? const [],
     );
+    if (initial.any((record) => record.reconciled)) {
+      _initialSettingsPending = false;
+    }
     final queuedClientIds = _controller?.state.queuedSubmissions
         .map((item) => item.clientMessageId)
         .toSet();
@@ -230,8 +258,8 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       );
     }
     final authoritative = _controller?.settings;
-    if (authoritative != null && !_settingsUpdating) {
-      _settings = _normalizeSettings(authoritative);
+    if (authoritative != null && !_settingsUpdating && !_ownsInitialSettings) {
+      _settings = authoritative;
       if (_settings?.modelId.isNotEmpty == true &&
           _permissionCatalogModelId != _settings!.modelId &&
           !_catalogLoading) {
@@ -312,7 +340,12 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         _permissionModes
             .where((item) => item.id == 'default' && item.available)
             .firstOrNull ??
-        _permissionModes.where((item) => item.available).firstOrNull;
+        _permissionModes
+            .where(
+              (item) =>
+                  item.available && !item.dangerous && item.id != 'fullAccess',
+            )
+            .firstOrNull;
     return ConversationSettings(
       mode: value?.mode == 'plan' ? 'plan' : 'default',
       modelId: model.id,
@@ -343,7 +376,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       if (models.isEmpty) {
         throw const FormatException('empty catalog');
       }
-      final requestedModelId = _controller?.settings?.modelId.isNotEmpty == true
+      final requestedModelId =
+          !_ownsInitialSettings &&
+              _controller?.settings?.modelId.isNotEmpty == true
           ? _controller!.settings!.modelId
           : (_settings?.modelId.isNotEmpty == true
                 ? _settings!.modelId
@@ -358,7 +393,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         _permissionModes = permissions;
         _permissionCatalogModelId = requestedModelId;
         _catalogFailed = false;
-        _settings = _normalizeSettings(_controller?.settings ?? _settings);
+        _settings = _ownsInitialSettings
+            ? (_settings ?? _normalizeSettings(null))
+            : (_controller?.settings ?? _settings ?? _normalizeSettings(null));
       });
     } catch (_) {
       if (mounted) setState(() => _catalogFailed = true);
@@ -395,7 +432,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         _permissionModes = permissions;
         _permissionCatalogModelId = modelId;
         _catalogFailed = false;
-        _settings = _normalizeSettings(_controller?.settings ?? _settings);
+        if (!_ownsInitialSettings && _controller?.settings != null) {
+          _settings = _controller!.settings;
+        }
       });
     } catch (_) {
       if (mounted) setState(() => _catalogFailed = true);
@@ -441,6 +480,15 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   }
 
   void _localSubmissionsChanged() {
+    if (_submissions
+        .records(_submissionScope)
+        .any(
+          (record) =>
+              record.initialSettings &&
+              (record.reconciled || record.phase == SubmissionPhase.confirming),
+        )) {
+      _initialSettingsPending = false;
+    }
     if (mounted) setState(() {});
   }
 
@@ -838,8 +886,13 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
 
   Future<void> _applySettings(ConversationSettings next) async {
     if (!_canChangeSettings) return;
-    if (_isDraft) {
-      setState(() => _settings = _normalizeSettings(next));
+    if (_ownsInitialSettings) {
+      setState(() => _settings = next);
+      for (final record in _submissions.records(_submissionScope)) {
+        if (record.initialSettings && record.phase == SubmissionPhase.failed) {
+          record.settings = next;
+        }
+      }
       return;
     }
     final agentId = _agentId;
@@ -863,13 +916,13 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       );
       await controller.refreshConversation();
       if (mounted && controller.isCurrent) {
-        setState(() => _settings = _normalizeSettings(controller.settings));
+        setState(() => _settings = controller.settings);
       }
     } catch (error) {
       if (!mounted || !controller.isCurrent) return;
       await controller.refreshConversation();
       if (mounted && controller.isCurrent) {
-        setState(() => _settings = _normalizeSettings(controller.settings));
+        setState(() => _settings = controller.settings);
         _showComposerMessage(
           error is CoreFault && error.code == 'revision_conflict'
               ? context.l10n.conversationChangedRetry
@@ -1170,17 +1223,13 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       await _reloadPermissions(agentId, model.id);
       if (!mounted || _catalogFailed) return;
     }
-    var permissionModeId = current.permissionModeId;
+    final permissionModeId = current.permissionModeId;
     if (permissionModeId != 'custom' &&
         !_permissionModes.any(
           (item) => item.id == permissionModeId && item.available,
         )) {
-      permissionModeId =
-          _permissionModes
-              .where((item) => item.id == 'autoReview' && item.available)
-              .firstOrNull
-              ?.id ??
-          _permissionModes.where((item) => item.available).first.id;
+      _showComposerMessage(context.l10n.settingsSelectionUnavailable);
+      return;
     }
     await _applySettings(
       current.copyWith(
@@ -1197,6 +1246,8 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       scope: _submissionScope,
       text: _composer.text.trim(),
       images: _images,
+      initialSettings: _ownsInitialSettings,
+      settings: _ownsInitialSettings && !_catalogFailed ? _settings : null,
     );
     _submissions.add(record);
     _composer.clear();
@@ -1210,6 +1261,33 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     if (!_selectionCurrent ||
         (_controller != null && !_controller!.isCurrent)) {
       throw CoreFault('selection_changed', 'The selected conversation changed');
+    }
+  }
+
+  Future<void> _validateSubmissionSettings(LocalSubmission record) async {
+    final unavailableMessage = context.l10n.settingsSelectionUnavailable;
+    final selected = record.settings;
+    if (selected == null) return; // Inherit the provider's settings.
+    final agentId = _agentId;
+    if (agentId == null) return;
+    await _loadCatalogs(agentId);
+    _assertSubmissionCurrent();
+    final model = _models
+        .where((item) => item.id == selected.modelId)
+        .firstOrNull;
+    final permissions = await _fetchPermissions(agentId, selected.modelId);
+    _assertSubmissionCurrent();
+    if (_catalogFailed ||
+        model == null ||
+        !model.selectable ||
+        !model.reasoningEfforts.any(
+          (item) => item.id == selected.reasoningEffort,
+        ) ||
+        (selected.mode != 'default' && selected.mode != 'plan') ||
+        !permissions.any(
+          (item) => item.id == selected.permissionModeId && item.available,
+        )) {
+      throw CoreFault('selection_unavailable', unavailableMessage);
     }
   }
 
@@ -1231,6 +1309,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         throw CoreFault('payload_too_large', imageTooLargeMessage);
       }
       _assertSubmissionCurrent();
+      await _validateSubmissionSettings(record);
       createSent = _isDraft;
       final conversationId = await _ensureConversation();
       record.scope = (_boundDaemonId, _boundAgentId!, conversationId);
@@ -1263,13 +1342,14 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
           'text': record.text,
           if (attachmentIds.isNotEmpty) 'attachmentIds': attachmentIds,
           'clientMessageId': record.clientMessageId,
-          if (!record.queueWrite && _settings != null && !_catalogFailed)
-            'settings': _settings!.toJson(),
+          if (!record.queueWrite && record.settings != null)
+            'settings': record.settings!.toJson(),
           if (!record.queueWrite) 'expectedRevision': controller.state.revision,
         },
         timeoutMilliseconds: 60000,
       );
       accepted = true;
+      if (record.initialSettings) _initialSettingsPending = false;
       final result = envelope['result'] as Map<String, dynamic>? ?? const {};
       final turn = result['turn'] as Map<String, dynamic>?;
       record.turnId = result['turnId'] as String? ?? turn?['id'] as String?;
@@ -1313,6 +1393,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       }
     } finally {
       record.busy = false;
+      if (record.initialSettings && record.reconciled) {
+        _initialSettingsPending = false;
+      }
       // Leaving a page may interrupt upload, but never leaves an endless spinner.
       _submissions.changed();
       if (mounted) setState(() => _submitting = false);
@@ -1375,6 +1458,10 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       return;
     }
     _composer.text = record.text;
+    if (record.initialSettings) {
+      _initialSettingsPending = true;
+      _settings = record.settings;
+    }
     setState(() => _images.addAll(record.images));
     _submissions.remove(record);
     _composerPanelKey.currentState?.requestInputFocus();
@@ -2869,6 +2956,9 @@ class _LocalSubmissionBubble extends StatelessWidget {
               ),
               if (record.errorCode == 'revision_conflict')
                 Text(l10n.conversationChangedRetry),
+              if (record.errorCode == 'selection_unavailable' ||
+                  record.errorCode == 'invalid_selection')
+                Text(l10n.settingsSelectionUnavailable),
               if (record.errorCode == 'queue_unavailable')
                 Text(l10n.queueUnavailableWait),
               if (record.phase == SubmissionPhase.failed)

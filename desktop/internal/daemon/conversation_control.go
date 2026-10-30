@@ -77,6 +77,7 @@ func (i *Instance) pruneProjectionsLocked() {
 			}
 		}
 		delete(i.conversations, oldestID)
+		delete(i.emptyThreadsToResume, oldestID)
 	}
 }
 

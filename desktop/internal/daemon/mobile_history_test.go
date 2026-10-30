@@ -7,8 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -339,25 +337,6 @@ func TestSnapshotRejectsRepeatedBusinessChanges(t *testing.T) {
 	_, err := i.manager.conversationSnapshot(i, i.descriptor.ID, json.RawMessage(`{"threadId":"t"}`))
 	if !historyError(err, "snapshot_unstable") || reads.Load() != 3 {
 		t.Fatalf("snapshot retry bound: reads=%d err=%v", reads.Load(), err)
-	}
-}
-
-func TestMetadataOnlyRolloutNeverHidesConversationContent(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "rollout.jsonl")
-	if !metadataOnlyRollout(path) {
-		t.Fatal("missing rollout should qualify")
-	}
-	if err := os.WriteFile(path, []byte("{\"type\":\"session_meta\",\"payload\":{}}\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if !metadataOnlyRollout(path) {
-		t.Fatal("metadata-only rollout should qualify")
-	}
-	if err := os.WriteFile(path, []byte("{\"type\":\"session_meta\"}\n{\"type\":\"response_item\"}\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if metadataOnlyRollout(path) {
-		t.Fatal("content rollout must not qualify")
 	}
 }
 

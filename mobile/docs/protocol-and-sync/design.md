@@ -8,6 +8,8 @@
 
 ## 外部与内部接口
 
+`conversation.read.settings` 可为 null，表示尚无可靠设置；模型为空的旧版快照同样按未知处理，并清除旧设置投影。有效快照仍受 sequence/syncEpoch 约束，迟到快照不能清除较新设置。已有会话普通发送省略 settings、继承官方配置；用户主动修改通过 `conversation.settings.update` 提交。新建会话首条发送将草稿设置保存在内存提交记录中，获取最新快照只更新 revision/运行状态，不覆盖该选择。失败重试复用会话 ID 和设置；结果不明时仅对账，不自动重放。
+
 外层唯一 schema 是 [`relay.proto`](../../../relay/proto/waw/relay/v1/relay.proto)，当前使用：
 
 - pair：`server_challenge`、`pair_join`、`pair_result`；
@@ -113,7 +115,7 @@ App 前台对未选中 Daemon 以有界短连接依次执行 status probe，更�
 
 `mobile-control-v1` envelope 会回显 contract，未知 contract 返回 `unsupported_contract`。Mobile-facing target 参数统一使用 `agentId`，Desktop 只在 provider 边界内转换为 `instanceId`；附件上传会先绑定该实例，再把 `instanceId` 从 provider 参数中移除。`agent.list`、`project.list`、`conversation.list`、conversation timeline 与 model/permission catalog 已输出稳定 DTO；project list 不暴露 root，conversation list 不暴露 preview，Mobile 不解析 provider 原始权限结构。Mobile `action.list` 不返回原始 params：通用 approval 只返回归属和 method，`item/tool/requestUserInput` 额外归一化 questions/options。
 
-`conversation.read` 组合 metadata-only `thread/read`、`thread/items/list(sortDirection=desc)` 和 `thread/queue/list`，默认 timeline 20、最大 50。snapshot 包含 metadata、revision、sequence、可选 `syncEpoch`、timeline、权威 queue 和 `settings={mode,modelId,reasoningEffort,permissionModeId}`。queue item 固定为 `id`、`clientMessageId`、`text` 与 `attachmentCount`，不得把 Desktop 图片/mention 路径带到 Mobile。`TimelineItem` 固定为 id、可选 turnId、kind、status 与 blocks，不透传 provider JSON。Plan item 使用单个 `kind=plan` block，daemon 保留原始 Markdown；真正超过 5 个源文件行时普通 Timeline response 只返回前 5 行，并为完整正文返回 `contentRef` 与 `totalBytes`，不生成 title/summary。Plan 和其他大 block 通过 `conversation.content.read` 按 128 KiB 分块读取；引用过期后，Flutter 使用私有的 turnId/itemId/blockIndex 调用 `conversation.content.resolve`，daemon 在该 turn 内分页查找 item 并重新签发引用，找不到时返回 `content_not_found`，不要求刷新或丢弃已加载旧页。
+`conversation.read` 组合 metadata-only `thread/read`、`thread/items/list(sortDirection=desc)` 和 `thread/queue/list`，默认 timeline 20、最大 50。snapshot 包含 metadata、revision、sequence、可选 `syncEpoch`、timeline、权威 queue 和 `settings=null|{mode,modelId,reasoningEffort,permissionModeId}`。queue item 固定为 `id`、`clientMessageId`、`text` 与 `attachmentCount`，不得把 Desktop 图片/mention 路径带到 Mobile。`TimelineItem` 固定为 id、可选 turnId、kind、status 与 blocks，不透传 provider JSON。Plan item 使用单个 `kind=plan` block，daemon 保留原始 Markdown；真正超过 5 个源文件行时普通 Timeline response 只返回前 5 行，并为完整正文返回 `contentRef` 与 `totalBytes`，不生成 title/summary。Plan 和其他大 block 通过 `conversation.content.read` 按 128 KiB 分块读取；引用过期后，Flutter 使用私有的 turnId/itemId/blockIndex 调用 `conversation.content.resolve`，daemon 在该 turn 内分页查找 item 并重新签发引用，找不到时返回 `content_not_found`，不要求刷新或丢弃已加载旧页。
 
 `catalog.models` 返回模型 ID/名称/说明、default/selectable、默认思考等级与该模型支持的等级；`catalog.permissionProfiles(modelId)` 固定返回 `default`、`autoReview`、`readOnly`、`fullAccess` 及 Desktop 根据 profile catalog、企业配置和该模型 auto-review 要求计算的可用性。更换模型时 Mobile 重新读取权限 catalog，保留当前自定义权限或仍可用的内置权限，并仅保留新模型仍支持的思考等级，否则分别回落到可用权限和模型默认等级。`conversation.settings.update` 携带最后确认的 revision 和完整 settings；Desktop 仅发送 `sandboxPolicy` 和审批字段，不同时发送互斥的 `permissions`。投影优先采用 `activePermissionProfile`，缺失时依据 sandbox、审批策略与 reviewer 推导，无法准确映射则显示 `custom`（自定义权限）。自定义权限仅代表当前配置，不进入新会话预设；模型变化保留它并由 App Server 校验。完整策略在 Desktop 加密保存，模型/思考/模式变化不得重置网络或可写目录。空闲或运行中的 thread 均可在无阻塞 action 时更新后续 Turn 设置，当前正在执行的 Turn 不改变；明确失败后刷新 snapshot，结果不明不自动重试。尚未创建的草稿只在进程内保存选择，首次 `turn.start` 才提交完整 settings。计划的 revise/implement 继承 model/effort，省略权限覆盖以继承实时线程权限，implement 将 mode 切回 `default`。
 

@@ -873,14 +873,14 @@ type mobileConversationSnapshot struct {
 	Capabilities struct {
 		Queue bool `json:"queue"`
 	} `json:"capabilities"`
-	Conversation     mobileConversationMetadata `json:"conversation"`
-	Settings         mobileConversationSettings `json:"settings"`
-	Revision         int64                      `json:"revision"`
-	Sequence         int64                      `json:"sequence"`
-	SyncEpoch        string                     `json:"syncEpoch,omitempty"`
-	Timeline         mobileTimelinePage         `json:"timeline"`
-	Queue            mobileQueuePage            `json:"queue"`
-	PlanConfirmation *mobilePlanConfirmation    `json:"planConfirmation,omitempty"`
+	Conversation     mobileConversationMetadata  `json:"conversation"`
+	Settings         *mobileConversationSettings `json:"settings"`
+	Revision         int64                       `json:"revision"`
+	Sequence         int64                       `json:"sequence"`
+	SyncEpoch        string                      `json:"syncEpoch,omitempty"`
+	Timeline         mobileTimelinePage          `json:"timeline"`
+	Queue            mobileQueuePage             `json:"queue"`
+	PlanConfirmation *mobilePlanConfirmation     `json:"planConfirmation,omitempty"`
 }
 
 type mobileQueuedSubmission struct {
@@ -1048,7 +1048,7 @@ func (m *Manager) providerThreadSettings(instance mobileProviderCaller, requeste
 	if !selectedModel.Selectable && selectedModel.ID != current.Model {
 		return nil, threadCollaborationSettings{}, &mobileContractError{code: "selection_unavailable", message: "model is not selectable"}
 	}
-	effortAllowed := false
+	effortAllowed := requested.ReasoningEffort == "" && current.Model == requested.ModelID && current.ReasoningEffort == ""
 	for _, effort := range selectedModel.ReasoningEfforts {
 		if effort.ID == requested.ReasoningEffort {
 			effortAllowed = true
@@ -1058,14 +1058,21 @@ func (m *Manager) providerThreadSettings(instance mobileProviderCaller, requeste
 	if !effortAllowed {
 		return nil, threadCollaborationSettings{}, &mobileContractError{code: "invalid_selection", message: "reasoning effort is not supported by the model"}
 	}
+	var effort any = requested.ReasoningEffort
+	if requested.ReasoningEffort == "" {
+		effort = nil
+	}
 	if requested.PermissionModeID == "custom" && current.PermissionModeID == "custom" {
+		if current.SandboxPolicyJSON == "" && current.PermissionProfile == "" {
+			return nil, threadCollaborationSettings{}, &mobileContractError{code: "selection_unavailable", message: "the current custom permission policy is unavailable"}
+		}
 		// Preserve the live policy, including approval variants this client cannot
 		// represent. The provider validates model requirements on this update.
 		projected := current
 		projected.Mode, projected.Model, projected.ReasoningEffort = requested.Mode, requested.ModelID, requested.ReasoningEffort
 		return map[string]any{
-			"collaborationMode": map[string]any{"mode": requested.Mode, "settings": map[string]any{"model": requested.ModelID, "reasoning_effort": requested.ReasoningEffort, "developer_instructions": nil}},
-			"model":             requested.ModelID, "effort": requested.ReasoningEffort,
+			"collaborationMode": map[string]any{"mode": requested.Mode, "settings": map[string]any{"model": requested.ModelID, "reasoning_effort": effort, "developer_instructions": nil}},
+			"model":             requested.ModelID, "effort": effort,
 		}, projected, nil
 	}
 	permissions, err := m.mobileCatalogPermissions(instance, requested.ModelID)
@@ -1092,12 +1099,12 @@ func (m *Manager) providerThreadSettings(instance mobileProviderCaller, requeste
 			projected := current
 			projected.Mode, projected.Model, projected.ReasoningEffort = requested.Mode, requested.ModelID, requested.ReasoningEffort
 			return map[string]any{
-				"collaborationMode": map[string]any{"mode": requested.Mode, "settings": map[string]any{"model": requested.ModelID, "reasoning_effort": requested.ReasoningEffort, "developer_instructions": nil}},
-				"model":             requested.ModelID, "effort": requested.ReasoningEffort,
+				"collaborationMode": map[string]any{"mode": requested.Mode, "settings": map[string]any{"model": requested.ModelID, "reasoning_effort": effort, "developer_instructions": nil}},
+				"model":             requested.ModelID, "effort": effort,
 			}, projected, nil
 		}
 	}
-	modeSettings := map[string]any{"model": requested.ModelID, "developer_instructions": nil, "reasoning_effort": requested.ReasoningEffort}
+	modeSettings := map[string]any{"model": requested.ModelID, "developer_instructions": nil, "reasoning_effort": effort}
 	policy, err := m.permissionPolicy(instance, threadID, requested.PermissionModeID, current)
 	if err != nil {
 		return nil, threadCollaborationSettings{}, err
@@ -1105,7 +1112,7 @@ func (m *Manager) providerThreadSettings(instance mobileProviderCaller, requeste
 	policyJSON, _ := json.Marshal(policy)
 	provider := map[string]any{
 		"collaborationMode": map[string]any{"mode": requested.Mode, "settings": modeSettings},
-		"model":             requested.ModelID, "effort": requested.ReasoningEffort,
+		"model":             requested.ModelID, "effort": effort,
 		"approvalPolicy":    selectedPermission.Approval,
 		"approvalsReviewer": selectedPermission.Reviewer,
 		"sandboxPolicy":     policy,
@@ -1158,6 +1165,8 @@ func (m *Manager) mobileConversationSettingsUpdate(instance *Instance, params js
 	}
 	projected.TurnID, projected.Succeeded = latest.TurnID, latest.Succeeded
 	instance.threadSettings[request.ThreadID] = projected
+	instance.settingsClock++
+	instance.settingsNotifications[request.ThreadID] = instance.settingsClock
 	instance.mu.Unlock()
 	instance.persistThreadSettingsAsync(request.ThreadID, projected)
 	instance.broadcastEvent("frontend.thread.settings.updated", map[string]any{"threadId": request.ThreadID})
@@ -1709,26 +1718,42 @@ func (m *Manager) conversationSnapshotOnce(instance *Instance, agentID string, p
 		}
 		metadata.ProjectID = mobileConversationProjectID(history.Thread.mobileProviderConversation, projects)
 	}
-	unpersisted := history.Thread.Path == nil || metadataOnlyRollout(*history.Thread.Path)
-	allowEmpty := !metadata.Running && instance.emptyCreatedThread(request.ThreadID) && unpersisted
+	allowEmpty := metadata.ID == request.ThreadID && (metadata.Status == "idle" || metadata.Status == "notLoaded") && !metadata.Running && instance.allowEmptyHistory(request.ThreadID, history.Thread.Path)
 	page, err := m.readTimelinePage(instance, agentID, request.ThreadID, "", request.Limit)
-	if allowEmpty && (noRollout(err, request.ThreadID) || emptyHistoryUnsupported(err)) {
+	if allowEmpty && (noRollout(err, request.ThreadID) || emptyHistoryUnsupported(err)) && instance.allowEmptyHistory(request.ThreadID, history.Thread.Path) {
 		page = mobileTimelinePage{Items: []mobileTimelineItem{}}
 		err = nil
 	}
 	if err != nil {
 		return mobileConversationSnapshot{}, err
 	}
+	if allowEmpty && len(page.Items) == 0 && metadata.Status == "notLoaded" && instance.allowEmptyHistory(request.ThreadID, history.Thread.Path) {
+		instance.mu.Lock()
+		if instance.emptyThreadsToResume == nil {
+			instance.emptyThreadsToResume = make(map[string]uint64)
+		}
+		instance.emptyThreadsToResume[request.ThreadID] = instance.generation
+		instance.mu.Unlock()
+	}
 	queue, queueAvailable, err := m.compatibleQueue(instance, request.ThreadID, allowEmpty)
 	if err != nil {
 		return mobileConversationSnapshot{}, err
 	}
 	revision, sequence := instance.ConversationVersion(request.ThreadID)
-	settings, _ := instance.collaborationSettings(request.ThreadID)
-	snapshot := mobileConversationSnapshot{Conversation: metadata, Settings: projectedMobileSettings(settings), Revision: revision, Sequence: sequence, SyncEpoch: m.syncEpoch, Timeline: page, Queue: queue}
+	var settings *mobileConversationSettings
+	if current, found := instance.collaborationSettings(request.ThreadID); found && reliableMobileSettings(current) {
+		projected := projectedMobileSettings(current)
+		settings = &projected
+	}
+	snapshot := mobileConversationSnapshot{Conversation: metadata, Settings: settings, Revision: revision, Sequence: sequence, SyncEpoch: m.syncEpoch, Timeline: page, Queue: queue}
 	snapshot.Capabilities.Queue = queueAvailable
 	snapshot.PlanConfirmation = planConfirmationFor(instance, request.ThreadID, metadata, page, revision)
 	return snapshot, nil
+}
+
+func reliableMobileSettings(current threadCollaborationSettings) bool {
+	return current.Model != "" && current.PermissionModeID != "" &&
+		(current.PermissionModeID != "custom" || current.SandboxPolicyJSON != "" || current.PermissionProfile != "")
 }
 
 func planConfirmationFor(instance *Instance, threadID string, metadata mobileConversationMetadata, page mobileTimelinePage, revision int64) *mobilePlanConfirmation {

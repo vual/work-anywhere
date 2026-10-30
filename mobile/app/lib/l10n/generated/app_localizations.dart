@@ -844,6 +844,12 @@ abstract class AppLocalizations {
   /// **'模型和权限设置加载失败，仍可发送普通文字和图片。'**
   String get settingsUnavailable;
 
+  /// No description provided for @settingsSelectionUnavailable.
+  ///
+  /// In zh, this message translates to:
+  /// **'所选模型、思考等级或权限已不可用，请重新选择后重试。'**
+  String get settingsSelectionUnavailable;
+
   /// No description provided for @retrySettings.
   ///
   /// In zh, this message translates to:

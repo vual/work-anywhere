@@ -79,4 +79,6 @@ App Server stderr 仅在当前代次的有界内存尾部保存（64 KiB），�
 
 线程设置增加可选 `sandboxPolicyJSON` 字符串，随原有 DPAPI 配置加密保存；旧记录无需迁移，重建 workspace 权限前从项目有效配置补齐策略。字段不保存 developer instructions 或正文。
 
+新建/恢复响应也使用同一异步设置持久化路径；`approvalPolicyJSON` 保存不可映射的官方审批策略，未知策略只允许继承，不凭空转换为更宽权限。空会话恢复证据来自可信 sessions 目录内匹配 thread ID 的有界元数据文件，检查不写入官方历史。待恢复提示仅存在内存并绑定进程代次；日志不记录用户首条消息或认证内容。
+
 图片选择上限仍为 48 MiB，base64、文字和 JSON 包装后的完整 App Server JSONL 请求（含换行）不得超过 64 MiB。超限在写入前返回 `too_large`，不受理 Turn、不删除手机草稿；不通过提高协议行上限规避限制。验证使用 48 MiB 图片对应 base64 长度加 JSON 包装的边界请求。

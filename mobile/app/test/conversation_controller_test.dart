@@ -34,6 +34,35 @@ Map<String, dynamic> _item(String id) => {
 };
 
 void main() {
+  for (final unknown in [
+    null,
+    {'mode': 'default', 'modelId': '', 'permissionModeId': 'custom'},
+  ]) {
+    test('unknown settings clear previous authority: $unknown', () async {
+      var reads = 0;
+      final controller = ConversationController(
+        gateway: _FakeGateway(
+          (method, params) async => {
+            'result': {
+              'conversation': {'id': 't'},
+              'timeline': {'items': []},
+              'sequence': ++reads,
+              'settings': reads == 1
+                  ? {'modelId': 'm', 'permissionModeId': 'readOnly'}
+                  : unknown,
+            },
+          },
+        ),
+        agentId: 'a',
+        threadId: 't',
+      );
+      addTearDown(controller.dispose);
+      await controller.requireFreshSnapshot();
+      expect(controller.settings?.modelId, 'm');
+      await controller.requireFreshSnapshot();
+      expect(controller.settings, isNull);
+    });
+  }
   test(
     'expired history cursor reloads the latest page without stale items',
     () async {

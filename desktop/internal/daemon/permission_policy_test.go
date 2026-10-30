@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -126,5 +127,30 @@ func TestLegacyPolicyModelChangeDoesNotGuessNetworkOrRoots(t *testing.T) {
 	}
 	if params["sandboxPolicy"] != nil || projected.SandboxPolicyJSON != "" {
 		t.Fatal("legacy policy guessed")
+	}
+}
+
+func TestHydratedSettingsAcceptFirstTurnAndInheritedEffort(t *testing.T) {
+	m := &Manager{ctx: context.Background()}
+	raw := json.RawMessage(strings.ReplaceAll(startedSettings, "model-a", "m"))
+	_, current, ok := settingsFromThreadResponse("thread/start", threadSettingsRequest{}, raw, threadCollaborationSettings{})
+	if !ok {
+		t.Fatal("response not hydrated")
+	}
+	requested := projectedMobileSettings(current)
+	params, _, err := m.providerThreadSettings(&policyCaller{}, requested, current, "fresh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if params["effort"] != nil {
+		t.Fatalf("inherited effort changed: %#v", params)
+	}
+	policy := params["sandboxPolicy"].(map[string]any)
+	if policy["futurePolicy"] != float64(42) {
+		t.Fatal("unknown sandbox field lost")
+	}
+	requested.PermissionModeID = "custom"
+	if _, _, err = m.providerThreadSettings(&policyCaller{}, requested, current, "fresh"); !historyError(err, "invalid_selection") {
+		t.Fatalf("invented custom accepted: %v", err)
 	}
 }

@@ -29,6 +29,8 @@ class LocalSubmission {
     required this.scope,
     required this.text,
     required List<XFile> images,
+    this.settings,
+    this.initialSettings = false,
   }) : images = List.unmodifiable(images),
        clientMessageId = newMessageId();
 
@@ -43,6 +45,9 @@ class LocalSubmission {
   SubmissionScope scope;
   final String text;
   final List<XFile> images;
+  // A submission keeps the user's choice across create/read and failed retries.
+  ConversationSettings? settings;
+  final bool initialSettings;
   String clientMessageId;
   SubmissionPhase phase = SubmissionPhase.syncing;
   String? turnId;

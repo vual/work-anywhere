@@ -101,6 +101,9 @@ Mobile 的接口可用性按会话和进程代次判断，不以 schema 中的�
 
 ## Verification
 
+- 首条发送回归必须覆盖真实 `thread/start` 设置响应、手机 `turn.start.settings`、初始快照与用户选择不一致、失败保留和重启后的元数据空会话。真实集成测试不能省略 settings；成功 Turn 后同时验证官方完整历史和 `thread/resume`，GUI/真机验证单独记录。
+- 本地候选 EXE 与 APK 都通过测试后再更新。活动 Turn 或待处理交互存在时保留候选产物，不强制终止；Android 覆盖安装保留 pairing。无 C 工具链的 Windows 环境不得将 race 标记为通过。
+
 - 从 `desktop/` 执行 `scripts/build.ps1`，确认测试通过并生成 Windows x64 EXE/SHA256。
 - `work-anywhere.exe version` 与 PE file/product version 一致。
 - `self-test` 使用当前安装的官方 Codex 成功。

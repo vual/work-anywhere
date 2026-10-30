@@ -72,6 +72,21 @@ class _FakeWorkspaceController extends WorkspaceController {
   );
 }
 
+class _ClaudeWorkspaceController extends _FakeWorkspaceController {
+  @override
+  Future<WorkspaceState> build() async => (await super.build()).copyWith(
+    agents: const [
+      AgentSummary(
+        id: 'agent-1',
+        name: 'Claude Code',
+        kind: 'claude-code',
+        status: 'ready',
+        capabilities: AgentCapabilities(queue: false),
+      ),
+    ],
+  );
+}
+
 class _EmbeddedProjectWorkspaceController extends WorkspaceController {
   @override
   Future<WorkspaceState> build() async => const WorkspaceState(
@@ -207,6 +222,160 @@ final _settingsCatalogs = <String, Map<String, dynamic>>{
 };
 
 void main() {
+  for (final scenario in [
+    'legacy custom',
+    'null',
+    'retry',
+    'catalog revoked',
+    'unknown outcome',
+    'existing unknown',
+    'claude',
+  ]) {
+    testWidgets('submission keeps settings intent: $scenario', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      var creates = 0;
+      final sent = <Map<String, dynamic>>[];
+      final events = StreamController<Map<String, dynamic>>.broadcast();
+      addTearDown(events.close);
+      final catalogs = <String, Map<String, dynamic>>{..._settingsCatalogs};
+      final gateway = _FakeGateway(
+        (method, params) async {
+          if (method == 'action.list') return {'result': <dynamic>[]};
+          if (method == 'conversation.create') {
+            creates++;
+            return {
+              'result': {'id': 'fresh'},
+            };
+          }
+          if (method == 'conversation.read') {
+            return {
+              'result': {
+                'conversation': {'id': 'fresh', 'running': false},
+                'timeline': {'items': []},
+                'revision': 7,
+                'sequence': 7,
+                'settings': scenario == 'legacy custom'
+                    ? {
+                        'mode': 'default',
+                        'modelId': '',
+                        'reasoningEffort': '',
+                        'permissionModeId': 'custom',
+                      }
+                    : (scenario == 'null' || scenario == 'existing unknown'
+                          ? null
+                          : {
+                              'mode': 'default',
+                              'modelId': 'model-b',
+                              'reasoningEffort': 'medium',
+                              'permissionModeId': 'readOnly',
+                            }),
+              },
+            };
+          }
+          if (method == 'turn.start') {
+            sent.add(Map.of(params));
+            if (scenario == 'retry' && sent.length == 1) {
+              throw CoreFault('revision_conflict', 'changed');
+            }
+            if (scenario == 'unknown outcome') {
+              throw CoreFault('timeout', 'unknown outcome');
+            }
+            return {
+              'result': {'turnId': 'turn'},
+            };
+          }
+          return {'result': {}};
+        },
+        catalogs: catalogs,
+        events: events.stream,
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            coreGatewayProvider.overrideWithValue(gateway),
+            workspaceProvider.overrideWith(
+              scenario == 'claude'
+                  ? _ClaudeWorkspaceController.new
+                  : _FakeWorkspaceController.new,
+            ),
+          ],
+          child: MaterialApp(
+            locale: const Locale('zh', 'CN'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: ConversationScreen(
+              conversationId: scenario == 'existing unknown' ? 'fresh' : null,
+              projectId: 'project-1',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      if (scenario == 'catalog revoked') {
+        catalogs['catalog.permissionProfiles'] = {
+          'items': [
+            {'id': 'readOnly', 'available': true},
+          ],
+        };
+      }
+      await tester.enterText(find.byType(TextField), 'settings hello');
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await _finishFileIo(tester);
+      for (var n = 0; n < 8; n++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(ConversationScreen)),
+      );
+      final records = container.read(localSubmissionsProvider);
+      if (scenario == 'catalog revoked') {
+        expect(sent, isEmpty);
+        expect(creates, 0);
+        expect(find.textContaining('所选模型、思考等级或权限已不可用'), findsOneWidget);
+      } else {
+        expect(sent.length, 1);
+        expect(creates, scenario == 'existing unknown' ? 0 : 1);
+        if (scenario == 'existing unknown') {
+          expect(sent.single.containsKey('settings'), false);
+        } else {
+          expect(sent.single['settings'], {
+            'mode': 'default',
+            'modelId': 'model-a',
+            'reasoningEffort': 'high',
+            'permissionModeId': 'default',
+          });
+        }
+        if (scenario == 'retry') {
+          expect(
+            records
+                .records(('daemon-1', 'agent-1', 'fresh'))
+                .single
+                .settings
+                ?.modelId,
+            'model-a',
+          );
+          await tester.tap(find.text('重试'));
+          await _finishFileIo(tester);
+          for (var n = 0; n < 8; n++) {
+            await tester.pump(const Duration(milliseconds: 100));
+          }
+          expect(creates, 1);
+          expect(sent.length, 2);
+          expect(sent[1]['settings'], sent[0]['settings']);
+        }
+        if (scenario == 'unknown outcome') {
+          expect(
+            records.records(('daemon-1', 'agent-1', 'fresh')).single.phase,
+            SubmissionPhase.unknown,
+          );
+          await tester.pump(const Duration(seconds: 3));
+          expect(sent.length, 1);
+        }
+      }
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
   for (final rejection in [
     'revision_conflict',
     'too_large',
@@ -2069,7 +2238,14 @@ void main() {
                   'title': 'Settings',
                   'running': turnParams != null,
                 },
-                'settings': turnParams?['settings'],
+                'settings':
+                    turnParams?['settings'] ??
+                    {
+                      'mode': 'default',
+                      'modelId': 'model-a',
+                      'reasoningEffort': 'low',
+                      'permissionModeId': 'readOnly',
+                    },
                 'timeline': {'items': const []},
               },
             };

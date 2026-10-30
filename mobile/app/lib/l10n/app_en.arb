@@ -154,6 +154,7 @@
   "otherModels": "Other models",
   "reasoningEffort": "Thinking level",
   "settingsUnavailable": "Model and permission settings could not be loaded. Basic sending is still available.",
+  "settingsSelectionUnavailable": "The selected model, reasoning effort or permission is unavailable. Choose again before retrying.",
   "retrySettings": "Retry settings",
   "settingsUpdateFailed": "Could not update conversation settings: {error}",
   "@settingsUpdateFailed": {"placeholders": {"error": {"type": "String"}}},

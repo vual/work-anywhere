@@ -537,9 +537,10 @@ func (m *Manager) backendConversationRead(backend provider.Backend, agentID stri
 	if err != nil {
 		return mobileConversationSnapshot{}, err
 	}
+	settings := backend.Settings(request.ThreadID)
 	snapshot := mobileConversationSnapshot{
 		Conversation: metadata,
-		Settings:     backend.Settings(request.ThreadID),
+		Settings:     &settings,
 		Revision:     version.revision,
 		Sequence:     version.sequence,
 		SyncEpoch:    m.syncEpoch,

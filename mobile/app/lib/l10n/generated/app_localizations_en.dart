@@ -439,6 +439,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Model and permission settings could not be loaded. Basic sending is still available.';
 
   @override
+  String get settingsSelectionUnavailable =>
+      'The selected model, reasoning effort or permission is unavailable. Choose again before retrying.';
+
+  @override
   String get retrySettings => 'Retry settings';
 
   @override

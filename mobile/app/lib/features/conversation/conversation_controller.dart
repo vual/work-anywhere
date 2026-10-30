@@ -508,7 +508,10 @@ class ConversationController extends ChangeNotifier {
       }
       final settings = result['settings'];
       if (settings is Map<String, dynamic>) {
-        _settings = ConversationSettings.fromJson(settings);
+        final parsed = ConversationSettings.fromJson(settings);
+        _settings = parsed.modelId.isEmpty ? null : parsed;
+      } else {
+        _settings = null;
       }
       final latest = _dedupe(newestFirst.reversed);
       _state = ConversationState(

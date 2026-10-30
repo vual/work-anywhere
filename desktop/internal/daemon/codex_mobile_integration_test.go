@@ -141,9 +141,40 @@ func TestCodexMobileLifecycleIntegration(t *testing.T) {
 	if snapshot := read(); len(snapshot.Timeline.Items) != 0 || snapshot.Conversation.ProjectID != projectResult.Project.ID {
 		t.Fatalf("new thread has unexpected project or timeline: %#v", snapshot)
 	}
+	models, err := i.manager.mobileCatalogModels(i)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var selected mobileConversationSettings
+	for _, model := range models.Items {
+		if model.Default && model.Selectable {
+			selected = mobileConversationSettings{Mode: "default", ModelID: model.ID, ReasoningEffort: model.DefaultReasoningEffort, PermissionModeID: "readOnly"}
+			break
+		}
+	}
+	if selected.ModelID == "" {
+		t.Fatal("catalog has no selectable default model")
+	}
+	if snapshot := read(); snapshot.Settings == nil || snapshot.Settings.ModelID == "" {
+		t.Fatal("thread/start settings were not hydrated")
+	}
+	// Exercise a persisted metadata-only thread, as left by a rejected first send.
+	if err = i.Restart(); err != nil {
+		t.Fatal(err)
+	}
+	readyDeadline := time.Now().Add(15 * time.Second)
+	for i.Snapshot().State != "ready" && time.Now().Before(readyDeadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if i.Snapshot().State != "ready" {
+		t.Fatal("empty thread restart did not initialize")
+	}
 	for turn := 0; turn < 2; turn++ {
 		snapshot := read()
-		started := call("turn.start", map[string]any{"threadId": tid, "text": "Reply only with WAW_SMOKE_OK. Do not use tools.", "expectedRevision": snapshot.Revision})
+		i.mu.Lock()
+		t.Logf("turn %d status=%s emptyResume=%v generation=%d", turn, snapshot.Conversation.Status, i.emptyThreadsToResume[tid], i.generation)
+		i.mu.Unlock()
+		started := call("turn.start", map[string]any{"threadId": tid, "text": "Reply only with WAW_SMOKE_OK. Do not use tools.", "settings": selected, "expectedRevision": snapshot.Revision})
 		if started.Error != nil {
 			t.Fatal(started.Error)
 		}
@@ -199,6 +230,24 @@ func TestCodexMobileLifecycleIntegration(t *testing.T) {
 	}
 	if snapshot := read(); len(snapshot.Timeline.Items) == 0 {
 		t.Fatal("process restart lost history")
+	}
+	for _, method := range []string{"thread/read", "thread/resume"} {
+		params := map[string]any{"threadId": tid}
+		if method == "thread/read" {
+			params["includeTurns"] = true
+		}
+		result, err := i.Call(context.Background(), method, mustJSON(params))
+		if err != nil {
+			t.Fatalf("Desktop history path %s: %v", method, err)
+		}
+		var decoded struct {
+			Thread struct {
+				Turns []json.RawMessage `json:"turns"`
+			} `json:"thread"`
+		}
+		if json.Unmarshal(result, &decoded) != nil || len(decoded.Thread.Turns) < 2 {
+			t.Fatalf("Desktop %s lost turns", method)
+		}
 	}
 	t.Log("isolated create, empty snapshot, two turns, streaming, reconnect and process restart verified")
 }

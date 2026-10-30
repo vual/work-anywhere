@@ -39,7 +39,9 @@ daemon 将控制方法路由到实例 supervisor。Mobile 请求的 `agentId` �
 
 `turn.start` 当前接受 `instanceId`、`threadId`、文字、attachment IDs、model、reasoning effort、approval policy、sandbox policy、client message ID 和 expected revision。Mobile 内置权限设置只发送 `sandboxPolicy`、`approvalPolicy` 和 `approvalsReviewer`，不与 `permissions` 混用；profile ID 用于目录可用性校验和界面映射。附件中的图片被转换为官方 App Server 支持的输入项；调用必须指向已有 thread。忙碌门禁按目标 thread 判断：同一 thread 已有活跃 Turn、等待该 thread 的用户 action，或用户 action 无法归属 thread 时拒绝；同一 Agent 的其他 thread 正在运行或等待自身 action 时不阻塞本 thread。`attestation/generate` 等明确分类的客户端基础设施请求不参与会话门禁。实例仍汇总保存全部活跃 Turn，用于状态、升级和强制退出。
 
-Desktop 从 `turn/start`、`thread/settings/update` 和 `thread/settings/updated` 投影各 thread 最近确认的 collaboration mode、model、reasoning effort 与稳定 permission mode，并兼容 App Server 的 `activePermissionProfile`/`sandboxPolicy` 回执字段；使用现有加密 settings 存储按 instance/thread 持久化。权限投影优先识别 `activePermissionProfile`，缺失时结合 sandbox 类型、审批策略和 reviewer 推导内置模式；无法映射时返回 `custom`（自定义权限），不能作为新会话预设选择。Mobile 的 `conversation.read.settings` 固定返回 `mode`、`modelId`、`reasoningEffort` 与 `permissionModeId`。投影不保存 developer instructions 或计划正文；Turn 的 started/completed/failed/interrupted 通知用于把配置绑定到权威 Turn 并记录其是否成功完成。`ConversationSnapshot.planConfirmation` 仅在最新 Turn 成功完成、以 plan mode 启动、包含完成的 Plan item、当前 thread 空闲且无阻塞 action，并且 model/effort 足以安全启动下一 Turn 时返回 `{planItemId, turnId, revision}`。
+Desktop 从成功的 `thread/start`、`thread/resume` 响应，以及 `turn/start`、`thread/settings/update` 和 `thread/settings/updated` 投影每个 thread 的设置。新建/恢复响应在发回 frontend 前提交内存投影，并异步加密持久化；响应不能覆盖请求发出后收到的更新或新进程代次。映射 `model`、`reasoningEffort`、`sandbox`/`sandboxPolicy`、审批策略、reviewer、`activePermissionProfile` 和 collaboration mode，保留完整沙箱及未知策略字段。新建缺省 mode 为 `default`；旧恢复响应缺失 mode 时只保留已知值。null reasoning effort 保持继承语义，不伪造具体档位。
+
+Mobile 的 `conversation.read.settings` 在设置未知时为 `null`，已知时返回 `mode`、`modelId`、`reasoningEffort` 与 `permissionModeId`。只有真实策略不能映射为内置权限时才返回 `custom`，不能作为新会话预设；未知权限不会通过校验。空 reasoning effort 仅在同一模型已有继承状态时接受，并映射为官方 null。投影不保存 developer instructions 或计划正文；Turn 通知把配置绑定到权威 Turn 并记录是否成功完成。`ConversationSnapshot.planConfirmation` 仅在最新 Turn 成功完成、以 plan mode 启动、包含完成的 Plan item、当前 thread 空闲且无阻塞 action，并且 model/effort 足以安全启动下一 Turn 时返回 `{planItemId, turnId, revision}`。
 
 `plan.respond` 接受 `agentId`、`threadId`、`planItemId`、`expectedRevision`、`decision=implement|revise` 和非空 `text`。它重新读取权威 snapshot 并校验计划身份、revision、空闲/action 状态和配置：`implement` 继承 model/effort/permission 并以 `collaborationMode.mode=default` 启动 Turn，`revise` 继承同一组设置并以 `mode=plan` 启动 Turn，两者都显式清空 `developer_instructions`。响应为 `{started:true, turnId?}`；`invalid_params`、`conversation_busy`、`revision_conflict`、`stale_plan`、`plan_mode_unavailable` 和 `provider_error` 保持稳定。该方法复用 `turn.start` pairing scope。
 
@@ -79,7 +81,9 @@ Mobile 快照携带可选 `capabilities.queue`；缺失按支持处理，`false`
 
 Timeline 优先调用 `thread/items/list`。仅官方 JSON-RPC `-32601` 方法不支持错误触发 `thread/read(includeTurns=true)` 回退，按 Turn/item 原始顺序展开，再按最近项优先返回。成功的兼容后端只缓存到当前实例进程代次和 thread；空会话的暂时不支持不缓存为永久后端。原生页继续使用 provider cursor；兼容 cursor 使用 `wa:history:` 前缀、base64url JSON，携带版本 1、backend、Agent/thread、Turn/item 锚点，不携带正文，最长 4096 字符。归属错误返回 `invalid_params`，锚点删除或原生后端变更返回 `cursor_expired`，Mobile 重新加载最新页。大内容定位和引用重签复用同一后端；兼容读取需要完整 provider history，但 Mobile 响应、预览和正文分块限制保持不变。
 
-仅 daemon 在当前进程中确认刚创建、尚未提交过输入、metadata 不运行、没有待启动或活跃 Turn 的会话，才允许将明确的无 rollout 错误或 `list_turns is not supported yet` 转为空 timeline。历史路径须不存在或经最多 1 MiB 的只读检查确认文件仅含 `session_meta`；有任何其他记录、读取失败或已有会话均保留错误。队列仅在相同边界下将无 rollout 错误转换为空结果。首次输入提交即撤销空会话资格，不重放任务。
+metadata 与请求会话 ID 匹配、没有待启动或活跃 Turn 时，允许以可验证的空会话证据将明确无 rollout 错误或 `list_turns is not supported yet` 转为空 timeline。路径不存在须有当前进程创建证据；已有文件须经符号链接解析后位于该实例的 sessions 目录，大小不超过 1 MiB，且每条记录均为相同会话 ID 的 `session_meta`。该证据可跨 daemon 重启使用；读取失败、损坏、越界或任何真实内容均保留错误，历史读取完成后再次检查。队列仅在相同边界下兼容无 rollout 错误。
+
+已确认空会话在官方进程中尚未加载时，手机读取只记录当前代次的恢复提示。用户主动发送经过 revision/busy 检查并预留 Turn 后，重新验证官方 metadata 和磁盘证据，再调用 `thread/resume(excludeTurns=true)`；恢复失败不提交用户消息，恢复成功才继续设置校验和首次发送。不自动重放消息、不改写 rollout，不伪造 Desktop 原始 RPC 响应。
 
 快照在读取前后比较业务 revision，最多共读取三次；仍有业务变化时返回 `snapshot_unstable`。发送、设置和队列控制写入按 thread 串行；启动 Turn 时在实例锁内检查版本、busy/action 并建立 pending 标记，provider 错误、取消或超时清理标记，成功响应或通知转为 active。官方 Desktop 请求继续由 App Server 仲裁，不承诺跨所有 frontend 的官方 CAS。
 

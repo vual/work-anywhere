@@ -422,6 +422,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsUnavailable => '模型和权限设置加载失败，仍可发送普通文字和图片。';
 
   @override
+  String get settingsSelectionUnavailable => '所选模型、思考等级或权限已不可用，请重新选择后重试。';
+
+  @override
   String get retrySettings => '重试设置';
 
   @override

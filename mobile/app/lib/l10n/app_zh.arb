@@ -155,6 +155,7 @@
   "otherModels": "其他模型",
   "reasoningEffort": "思考等级",
   "settingsUnavailable": "模型和权限设置加载失败，仍可发送普通文字和图片。",
+  "settingsSelectionUnavailable": "所选模型、思考等级或权限已不可用，请重新选择后重试。",
   "retrySettings": "重试设置",
   "settingsUpdateFailed": "无法更新会话设置：{error}",
   "@settingsUpdateFailed": {"placeholders": {"error": {"type": "String"}}},
