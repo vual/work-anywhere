@@ -7,6 +7,7 @@ import '../../app/chrome.dart';
 import '../../app/theme.dart';
 import '../../core/models.dart';
 import '../workspace/workspace_controller.dart';
+import 'project_conversations_controller.dart';
 
 class ProjectScreen extends ConsumerStatefulWidget {
   const ProjectScreen({required this.projectId, super.key});
@@ -17,71 +18,56 @@ class ProjectScreen extends ConsumerStatefulWidget {
 }
 
 class _ProjectScreenState extends ConsumerState<ProjectScreen> {
-  final List<ConversationSummary> _items = [];
-  String? _cursor;
-  bool _loading = true;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    Future<void>.microtask(_load);
+  // Loads the first page once the workspace knows this project's key; the
+  // workspace may still be loading when the screen opens (cold start, link).
+  void _ensureLoaded(ProjectConversationsKey? key) {
+    if (key == null) return;
+    Future<void>.microtask(() {
+      if (mounted) {
+        ref.read(projectConversationsProvider.notifier).ensureLoaded(key);
+      }
+    });
   }
 
-  Future<void> _load() async {
-    final workspace = ref.read(workspaceProvider).value;
-    if (workspace == null || workspace.selectedAgentId == null) return;
-    bool current() {
-      if (!mounted) return false;
-      final latest = ref.read(workspaceProvider).value;
-      return mounted &&
-          latest?.selectedDaemonId == workspace.selectedDaemonId &&
-          latest?.eventGeneration == workspace.eventGeneration &&
-          latest?.selectedAgentId == workspace.selectedAgentId;
-    }
+  ProjectConversationsKey? get _key => projectConversationsKeyFor(
+    ref.read(workspaceProvider).value,
+    widget.projectId,
+  );
 
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final response = await ref.read(coreGatewayProvider).callFor(
-        workspace.selectedDaemonId,
-        workspace.eventGeneration,
-        'conversation.list',
-        {
-          'agentId': workspace.selectedAgentId,
-          'projectId': widget.projectId,
-          'limit': 15,
-          if (_cursor != null) 'cursor': _cursor,
-          'sortKey': 'updated_at',
-          'sortDirection': 'desc',
-        },
-      );
-      if (!current()) return;
-      final result = response['result'] as Map<String, dynamic>? ?? const {};
-      final next = conversationSummariesFromResult(result);
-      setState(() {
-        final existingIds = _items.map((item) => item.id).toSet();
-        _items.addAll(next.where((item) => existingIds.add(item.id)));
-        _cursor = result['nextCursor'] as String?;
-      });
-    } catch (error) {
-      if (current()) setState(() => _error = error.toString());
-    } finally {
-      if (current()) setState(() => _loading = false);
-    }
+  Future<void> _reload() async {
+    final key = _key;
+    if (key == null) return;
+    await ref.read(projectConversationsProvider.notifier).reload(key);
+  }
+
+  Future<void> _loadMore() async {
+    final key = _key;
+    if (key == null) return;
+    await ref.read(projectConversationsProvider.notifier).loadMore(key);
   }
 
   @override
   Widget build(BuildContext context) {
     final workspace = ref.watch(workspaceProvider).value;
+    final key = projectConversationsKeyFor(workspace, widget.projectId);
+    final page = key == null
+        ? null
+        : ref.watch(projectConversationsProvider.select((value) => value[key]));
+    if (page == null) _ensureLoaded(key);
+    final items = page?.items ?? const <ConversationSummary>[];
+    final loading = key != null && (page == null || page.loading);
     final project = workspace?.projects
         .where((item) => item.id == widget.projectId)
         .firstOrNull;
     final daemon = workspace?.daemons
         .where((item) => item.id == workspace.selectedDaemonId)
         .firstOrNull;
+    final online = daemon?.phase == ConnectionPhase.online;
+    final computerName = daemon?.name ?? context.l10n.computer;
+    final agentName = workspace?.selectedAgent?.name;
+    final subtitleText = agentName == null
+        ? computerName
+        : '$computerName · $agentName';
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
@@ -91,122 +77,151 @@ class _ProjectScreenState extends ConsumerState<ProjectScreen> {
           tooltip: context.l10n.back,
           onPressed: () => context.pop(),
         ),
-        titleSpacing: 12,
-        title: WawTitleBlock(
-          title: project?.name ?? context.l10n.project,
-          subtitle: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.computer_rounded, size: 14),
-              const SizedBox(width: 5),
-              Flexible(
-                child: Text(
-                  daemon?.name ?? context.l10n.computer,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: WawCompact.metadata.copyWith(
-                    color: Theme.of(context).mutedInk,
-                  ),
+        titleSpacing: 4,
+        title: Padding(
+          key: const Key('project-title-pill'),
+          padding: const EdgeInsets.only(right: WawBackButton.edgePadding),
+          child: SizedBox(
+            width: double.infinity,
+            child: WawTitleBlock(
+              title: project?.name ?? context.l10n.project,
+              pill: true,
+              titleStyle: WawCompact.conversationTitle,
+              pillMinHeight: 48,
+              pillPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 5,
+              ),
+              subtitle: Semantics(
+                label:
+                    '${online ? context.l10n.connected : context.l10n.offline}, '
+                    '$subtitleText',
+                excludeSemantics: true,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    WawStatusDot(online: online),
+                    const SizedBox(width: 5),
+                    Flexible(
+                      child: Text(
+                        subtitleText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: WawCompact.metadata.copyWith(
+                          color: Theme.of(context).mutedInk,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(width: 7),
-              Text(
-                '• ${daemon?.phase == ConnectionPhase.online ? context.l10n.connected : context.l10n.offline}',
-                style: WawCompact.metadata.copyWith(
-                  color: Theme.of(context).mutedInk,
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       ),
-      body: _error != null && _items.isEmpty
+      body: page?.error != null && items.isEmpty && !loading
           ? Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(context.l10n.loadProjectFailed),
-                  TextButton(onPressed: _load, child: Text(context.l10n.retry)),
+                  TextButton(
+                    onPressed: _reload,
+                    child: Text(context.l10n.retry),
+                  ),
                 ],
               ),
             )
-          : ListView.builder(
-              padding: const EdgeInsets.only(top: 12, bottom: 104),
-              itemCount: _items.length + 1,
-              itemBuilder: (context, index) {
-                if (index == _items.length) {
-                  if (_loading) {
-                    return const Padding(
-                      padding: EdgeInsets.all(18),
-                      child: Center(child: CircularProgressIndicator()),
-                    );
+          : RefreshIndicator(
+              onRefresh: _reload,
+              child: ListView.builder(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.only(top: 12, bottom: 120),
+                itemCount: items.length + 1,
+                itemBuilder: (context, index) {
+                  if (index == items.length) {
+                    if (loading) {
+                      return const Padding(
+                        padding: EdgeInsets.all(18),
+                        child: Center(child: CircularProgressIndicator()),
+                      );
+                    }
+                    if (page?.cursor != null) {
+                      return TextButton(
+                        onPressed: _loadMore,
+                        child: Text(context.l10n.showMore),
+                      );
+                    }
+                    return const SizedBox(height: 18);
                   }
-                  if (_cursor != null) {
-                    return TextButton(
-                      onPressed: _load,
-                      child: Text(context.l10n.showMore),
-                    );
-                  }
-                  return const SizedBox(height: 18);
-                }
-                final item = _items[index];
-                return ListTile(
-                  minTileHeight: WawCompact.listTileHeight,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: WawCompact.horizontalPadding,
-                  ),
-                  title: Text(
-                    item.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: WawCompact.listTitle,
-                  ),
-                  trailing: item.needsAttention
-                      ? Semantics(
-                          label: context.l10n.needsAttention,
-                          child: const Icon(
-                            Icons.error_outline_rounded,
-                            color: wawAttention,
-                            size: 28,
+                  final item = items[index];
+                  return ListTile(
+                    minTileHeight: WawCompact.listTileHeight,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: WawCompact.horizontalPadding,
+                    ),
+                    title: Text(
+                      item.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: WawCompact.listTitle,
+                    ),
+                    trailing: item.needsAttention
+                        ? Semantics(
+                            label: context.l10n.needsAttention,
+                            child: const Icon(
+                              Icons.error_outline_rounded,
+                              color: wawAttention,
+                              size: 28,
+                            ),
+                          )
+                        : item.running
+                        ? const SizedBox.square(
+                            dimension: 19,
+                            child: CircularProgressIndicator(
+                              color: wawBlue,
+                              strokeWidth: 2.5,
+                            ),
+                          )
+                        : item.externallyActive
+                        ? const OpenOnComputerIndicator()
+                        : Text(
+                            _projectRelativeTime(context, item.updatedAt),
+                            style: WawCompact.metadata.copyWith(
+                              color: Theme.of(context).mutedInk,
+                            ),
                           ),
-                        )
-                      : item.running
-                      ? const SizedBox.square(
-                          dimension: 19,
-                          child: CircularProgressIndicator(
-                            color: wawBlue,
-                            strokeWidth: 2.5,
-                          ),
-                        )
-                      : item.externallyActive
-                      ? const OpenOnComputerIndicator()
-                      : Text(
-                          _projectRelativeTime(context, item.updatedAt),
-                          style: WawCompact.metadata.copyWith(
-                            color: Theme.of(context).mutedInk,
-                          ),
-                        ),
-                  onTap: () => context.push(
-                    '/conversation/${item.id}',
-                    extra: item.projectName ?? project?.name,
-                  ),
-                );
-              },
+                    onTap: () => context.push(
+                      '/conversation/${item.id}',
+                      extra: item.projectName ?? project?.name,
+                    ),
+                  );
+                },
+              ),
             ),
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       floatingActionButton:
           workspace?.selectedAgent?.capabilities.createConversation == false
           ? null
-          : FloatingActionButton(
-              onPressed: () => context.push(
-                '/project/${widget.projectId}/new',
-                extra: project?.name ?? context.l10n.project,
+          : Padding(
+              // Align the FAB's right edge with the list content and lift it
+              // to the shared floating-control height.
+              padding: const EdgeInsets.only(
+                right:
+                    WawCompact.horizontalPadding - kFloatingActionButtonMargin,
+                bottom: WawBottomInset.restingLift,
               ),
-              tooltip: context.l10n.newConversation,
-              backgroundColor: wawBlue,
-              foregroundColor: Colors.white,
-              shape: const CircleBorder(),
-              child: const Icon(Icons.edit_outlined),
+              child: FloatingActionButton(
+                onPressed: () => context.push(
+                  '/project/${widget.projectId}/new',
+                  extra: project?.name ?? context.l10n.project,
+                ),
+                tooltip: context.l10n.newConversation,
+                backgroundColor: wawBlue,
+                foregroundColor: Colors.white,
+                shape: const CircleBorder(),
+                child: const Icon(Icons.edit_outlined),
+              ),
             ),
     );
   }

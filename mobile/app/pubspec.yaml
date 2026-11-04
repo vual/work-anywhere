@@ -72,6 +72,8 @@ flutter:
 
   assets:
     - assets/waw-app-icon.svg
+    - assets/agents/codex.svg
+    - assets/agents/claude-code.svg
 
   # To add assets to your application, add an assets section, like this:
   # assets:

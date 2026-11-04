@@ -87,6 +87,7 @@ class AgentCapabilities {
     this.createConversation = true,
     this.modelSelection = true,
     this.permissionMode = true,
+    this.rename = true,
   });
 
   static const all = AgentCapabilities();
@@ -101,6 +102,7 @@ class AgentCapabilities {
   final bool createConversation;
   final bool modelSelection;
   final bool permissionMode;
+  final bool rename;
 
   factory AgentCapabilities.fromJson(Object? value) {
     if (value is! Map) return all;
@@ -116,6 +118,7 @@ class AgentCapabilities {
       createConversation: flag('createConversation'),
       modelSelection: flag('modelSelection'),
       permissionMode: flag('permissionMode'),
+      rename: flag('rename'),
     );
   }
 }
@@ -215,6 +218,19 @@ class ConversationSummary {
         needsAttention: json['needsAttention'] as bool? ?? false,
         externallyActive: json['externallyActive'] as bool? ?? false,
       );
+
+  ConversationSummary withTitle(String value) => ConversationSummary(
+    id: id,
+    agentId: agentId,
+    projectId: projectId,
+    projectName: projectName,
+    title: value,
+    status: status,
+    running: running,
+    updatedAt: updatedAt,
+    needsAttention: needsAttention,
+    externallyActive: externallyActive,
+  );
 }
 
 List<ConversationSummary> conversationSummariesFromResult(

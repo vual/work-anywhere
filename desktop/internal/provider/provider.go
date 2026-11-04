@@ -8,7 +8,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Capabilities tells Mobile which conversation features an agent supports so
@@ -29,6 +32,7 @@ type Capabilities struct {
 	ReasoningSelection bool `json:"reasoningSelection"`
 	PermissionMode     bool `json:"permissionMode"`
 	DesktopMirror      bool `json:"desktopMirror"`
+	Rename             bool `json:"rename"`
 }
 
 type AgentSummary struct {
@@ -253,6 +257,9 @@ type Backend interface {
 	CreateConversation(ctx context.Context, projectID string) (ConversationMetadata, error)
 	StartTurn(ctx context.Context, request TurnRequest) (string, error)
 	InterruptTurn(ctx context.Context, conversationID string) error
+	// RenameConversation sets the user-visible title; name is already
+	// validated by ValidConversationName.
+	RenameConversation(ctx context.Context, conversationID, name string) error
 	// ActiveTurns counts running turns; InterruptAll asks each to stop. The
 	// daemon uses them to guard and drain shutdown.
 	ActiveTurns() int
@@ -285,4 +292,22 @@ func ErrorCode(err error) (string, bool) {
 		return typed.Code, true
 	}
 	return "", false
+}
+
+// MaxConversationNameRunes bounds conversation.rename names.
+const MaxConversationNameRunes = 200
+
+// ValidConversationName trims name and reports whether it is a usable
+// conversation title: 1-200 runes on one line with no control characters.
+func ValidConversationName(name string) (string, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" || !utf8.ValidString(name) || utf8.RuneCountInString(name) > MaxConversationNameRunes {
+		return "", false
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return "", false
+		}
+	}
+	return name, true
 }

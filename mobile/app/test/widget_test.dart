@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:work_anywhere/app/chrome.dart';
 import 'package:work_anywhere/app/theme.dart';
 import 'package:work_anywhere/core/models.dart';
 import 'package:work_anywhere/features/pairing/pairing_screen.dart';
@@ -32,11 +33,35 @@ void main() {
       await tester.pumpAndSettle();
       final search = find.byType(TextField);
       final initial = tester.getRect(search);
+      final surface = find.ancestor(
+        of: search,
+        matching: find.byType(WawFloatingSurface),
+      );
+      expect(
+        tester.getRect(surface).bottom,
+        closeTo(800 - WawBottomInset.restingLift, 1),
+      );
+      expect(
+        tester.getRect(surface).height,
+        greaterThanOrEqualTo(WawBottomInset.inputMinHeight),
+      );
       await tester.tap(search);
       tester.view.viewInsets = const FakeViewPadding(bottom: 300);
       await tester.pumpAndSettle();
-      expect(tester.getRect(search).bottom, lessThanOrEqualTo(500));
-      expect(tester.getRect(search).top, closeTo(initial.top - 300, 1));
+      expect(
+        tester.getRect(surface).bottom,
+        closeTo(800 - 300 - WawBottomInset.keyboardGap, 1),
+      );
+      expect(
+        tester.getRect(search).top,
+        closeTo(
+          initial.top -
+              300 +
+              WawBottomInset.restingLift -
+              WawBottomInset.keyboardGap,
+          1,
+        ),
+      );
       expect(tester.takeException(), isNull);
       tester.view.resetViewInsets();
       await tester.pumpAndSettle();
@@ -419,6 +444,57 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('没有启用的电脑'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('project rows offer a new conversation button instead of time', (
+    tester,
+  ) async {
+    const data = WorkspaceState(
+      needsPairing: false,
+      daemons: [
+        DaemonSummary(
+          id: 'daemon-1',
+          name: 'My PC',
+          phase: ConnectionPhase.online,
+        ),
+      ],
+      agents: [
+        AgentSummary(
+          id: 'agent-1',
+          name: 'Codex',
+          kind: 'codex',
+          status: 'ready',
+        ),
+      ],
+      projects: [
+        ProjectSummary(
+          id: 'project-1',
+          agentId: 'agent-1',
+          name: 'Project Alpha',
+          updatedAt: 1,
+        ),
+      ],
+      selectedDaemonId: 'daemon-1',
+      selectedAgentId: 'agent-1',
+    );
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MaterialApp(
+          locale: Locale('zh', 'CN'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: WorkspaceScreen(data: data),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final row = find.widgetWithText(ListTile, 'Project Alpha');
+    final button = find.byKey(const Key('project-new-conversation-project-1'));
+    expect(button, findsOneWidget);
+    expect(tester.widget<IconButton>(button).tooltip, '新建对话');
+    final tile = tester.widget<ListTile>(row);
+    expect(tile.trailing, isA<IconButton>());
     expect(tester.takeException(), isNull);
   });
 }

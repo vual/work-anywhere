@@ -192,9 +192,9 @@ func (b *Backend) Agent() provider.AgentSummary {
 	if !Available(b.configDir) {
 		summary.Status = "unavailable"
 	}
-	capabilities := provider.Capabilities{History: true, DesktopMirror: true}
+	capabilities := provider.Capabilities{History: true, DesktopMirror: true, Rename: true}
 	if b.runtime.Executable != "" {
-		capabilities = provider.Capabilities{History: true, LiveStream: true, TextInput: true, ImageInput: true, Approval: true, Question: true, Interrupt: true, Plan: true, CreateConversation: true, ModelSelection: true, ReasoningSelection: true, PermissionMode: true, DesktopMirror: true}
+		capabilities = provider.Capabilities{History: true, LiveStream: true, TextInput: true, ImageInput: true, Approval: true, Question: true, Interrupt: true, Plan: true, CreateConversation: true, ModelSelection: true, ReasoningSelection: true, PermissionMode: true, DesktopMirror: true, Rename: true}
 	}
 	summary.Capabilities = &capabilities
 	for _, process := range b.processes {

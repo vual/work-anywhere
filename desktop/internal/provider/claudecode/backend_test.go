@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -312,5 +313,55 @@ func appendLine(t *testing.T, path, line string) {
 	defer file.Close()
 	if _, err = file.WriteString(line + "\n"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRenameConversationAppendsCustomTitle(t *testing.T) {
+	backend, path, processes := newFixtureBackend(t)
+	ctx := context.Background()
+	// A transcript cut mid-record must not glue the title onto that line.
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = file.WriteString(`{"type":"system"`)
+	_ = file.Close()
+
+	if err := backend.RenameConversation(ctx, fixtureSession, "Mobile title"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "\n" + `{"customTitle":"Mobile title","sessionId":"` + fixtureSession + `","type":"custom-title"}` + "\n"
+	if !strings.HasSuffix(string(data), want) {
+		t.Fatalf("transcript tail = %q", data[max(0, len(data)-160):])
+	}
+	page, _ := backend.ListConversations(ctx, provider.ConversationQuery{})
+	if page.Items[0].Title != "Mobile title" {
+		t.Fatalf("title = %q", page.Items[0].Title)
+	}
+	if code, _ := provider.ErrorCode(backend.RenameConversation(ctx, "00000000-0000-0000-0000-000000000000", "x")); code != "not_found" {
+		t.Fatalf("unknown conversation code = %q", code)
+	}
+
+	// A transcript another Claude Code process owns is not written.
+	sessions := filepath.Join(backend.configDir, "sessions")
+	if err := os.MkdirAll(sessions, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sessions, "4242.json"), []byte(`{"pid":4242,"sessionId":"`+fixtureSession+`","procStart":"1"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	processes.mu.Lock()
+	processes.alive[4242] = true
+	processes.mu.Unlock()
+	_ = backend.refresh()
+	if code, _ := provider.ErrorCode(backend.RenameConversation(ctx, fixtureSession, "Other")); code != "conversation_busy_external" {
+		t.Fatalf("external owner code = %q", code)
+	}
+	if got := backend.Agent().Capabilities; got == nil || !got.Rename {
+		t.Fatalf("capabilities = %#v", got)
 	}
 }

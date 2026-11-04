@@ -25,7 +25,7 @@
 | `status.read` | Daemon/Agent 状态 | `system.status`, `instance.list/get`, `agent.list` |
 | `conversation.read` | 项目/对话列表、搜索、snapshot、增量与大内容读取 | `project.list`, `conversation.list/read/subscribe`, `conversation.timeline.list`, `conversation.content.read/resolve` |
 | `conversation.create` | 首次发送时以当前项目 ID 创建 Codex thread；Desktop 解析项目主目录并适配 provider 的 cwd 归属协议 | `conversation.create` |
-| `turn.start` | 继续已有 thread、管理运行中消息队列、修改会话设置或响应已完成计划 | `turn.start`, `conversation.queue.add/update/delete/start`, `conversation.settings.update`, `plan.respond` |
+| `turn.start` | 继续已有 thread、管理运行中消息队列、修改会话设置、重命名会话或响应已完成计划 | `turn.start`, `conversation.queue.add/update/delete/start`, `conversation.settings.update`, `conversation.rename`, `plan.respond` |
 | `turn.interrupt` | 中断活跃 Turn | `turn.interrupt` |
 | `action.read` | 查看待处理 action | `action.list` |
 | `action.resolve` | 回答 approval/question | `action.resolve` |
@@ -178,7 +178,7 @@ V1 只支持图片附件，一条消息最多 10 张；单文件和图片总大�
 | status/list/read/catalog/subscribe | 是，限前台且有退避 | 丢弃旧 response，重新同步 |
 | pair join/auth/Noise handshake | 仅协议允许的全新 attempt/session | 旧 session 全部销毁 |
 | conversation.create | 否 | 结果未知时重新同步项目列表，不自动创建第二个 thread |
-| turn.start/conversation.queue.*/conversation.settings.update/action.resolve/turn.interrupt | 否 | 若返回 `ambiguous_write` 或响应丢失，刷新 snapshot 对账；确认已执行后不再提示失败，也不自动重发 |
+| turn.start/conversation.queue.*/conversation.settings.update/conversation.rename/action.resolve/turn.interrupt | 否 | 若返回 `ambiguous_write` 或响应丢失，刷新 snapshot 对账；确认已执行后不再提示失败，也不自动重发 |
 | attachment upload | 不续传旧 upload | 调用 abort 清理 `.part`，丢弃 attachment ID，用户触发整份重试 |
 | push register | 可按更高 generation 重试 | 新 socket auth 后再注册 |
 

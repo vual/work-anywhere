@@ -189,6 +189,44 @@ void main() {
     expect(result.conversations.single.projectName, 'Project for agent-ready');
   });
 
+  test('switching back to a loaded agent reuses its cached content', () async {
+    final gateway = _FakeCoreGateway(
+      connectedOnStatus: true,
+      agents: const [
+        {'id': 'agent-a', 'name': 'Codex', 'kind': 'codex', 'status': 'ready'},
+        {
+          'id': 'agent-b',
+          'name': 'Claude Code',
+          'kind': 'claude-code',
+          'status': 'ready',
+        },
+      ],
+    );
+    final container = ProviderContainer(
+      overrides: [coreGatewayProvider.overrideWithValue(gateway)],
+    );
+    addTearDown(container.dispose);
+
+    await container.read(workspaceProvider.future);
+    final controller = container.read(workspaceProvider.notifier);
+    expect(gateway.projectListCalls, 1);
+
+    await controller.selectAgent('agent-b');
+    expect(gateway.projectListCalls, 2);
+
+    await controller.selectAgent('agent-a');
+    var result = container.read(workspaceProvider).requireValue;
+    expect(gateway.projectListCalls, 2);
+    expect(result.selectedAgentId, 'agent-a');
+    expect(result.projects.single.id, 'project-agent-a');
+    expect(result.conversations.single.id, 'conversation-agent-a');
+
+    await controller.refresh();
+    result = container.read(workspaceProvider).requireValue;
+    expect(gateway.projectListCalls, 3);
+    expect(result.selectedAgentId, 'agent-a');
+  });
+
   test('duplicate conversation IDs are shown only once', () async {
     final gateway = _FakeCoreGateway(
       connectedOnStatus: true,
@@ -541,6 +579,7 @@ class _FakeCoreGateway extends CoreGateway {
   Completer<Map<String, dynamic>>? _delayedContent;
   bool persisted = false;
   int systemStatusCalls = 0;
+  int projectListCalls = 0;
 
   @override
   Stream<Map<String, dynamic>> get events => _events;
@@ -604,6 +643,7 @@ class _FakeCoreGateway extends CoreGateway {
       throw CoreFault('call_failed', 'sync failed for $agentId');
     }
     if (method == 'project.list') {
+      projectListCalls++;
       if (agentId == delayedFailureAgentId) {
         return (_delayedContent ??= Completer<Map<String, dynamic>>()).future;
       }

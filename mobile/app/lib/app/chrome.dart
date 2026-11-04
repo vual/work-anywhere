@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 import 'localization.dart';
 import 'theme.dart';
@@ -167,4 +168,85 @@ class OpenOnComputerIndicator extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// Brand mark for an agent kind; unknown kinds fall back to an initial.
+class AgentIcon extends StatelessWidget {
+  const AgentIcon({
+    required this.kind,
+    required this.name,
+    this.size = 18,
+    super.key,
+  });
+
+  final String kind;
+  final String name;
+  final double size;
+
+  static String? assetFor(String kind) => switch (kind) {
+    'codex' => 'assets/agents/codex.svg',
+    'claude-code' => 'assets/agents/claude-code.svg',
+    _ => null,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final asset = assetFor(kind);
+    if (asset == null) {
+      return SizedBox.square(
+        dimension: size,
+        child: Center(
+          child: Text(
+            name.isEmpty ? '?' : name.characters.first.toUpperCase(),
+            style: TextStyle(fontSize: size * .72, fontWeight: FontWeight.w700),
+          ),
+        ),
+      );
+    }
+    return SvgPicture.asset(
+      asset,
+      width: size,
+      height: size,
+      excludeFromSemantics: true,
+    );
+  }
+}
+
+/// Connection indicator: green when online, grey otherwise.
+class WawStatusDot extends StatelessWidget {
+  const WawStatusDot({required this.online, this.size = 7, super.key});
+
+  final bool online;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: size,
+    height: size,
+    decoration: BoxDecoration(
+      color: online ? wawGreen : Colors.grey,
+      shape: BoxShape.circle,
+    ),
+  );
+}
+
+/// Shared bottom placement for floating inputs (search, composer) and the
+/// project FAB: one fixed lift above the system safe area, and a small gap
+/// above the keyboard when it is open.
+abstract final class WawBottomInset {
+  static const restingLift = 16.0;
+  static const keyboardGap = 8.0;
+  static const inputMinHeight = 52.0;
+
+  /// Distance from the view bottom (or the keyboard top) to the floating
+  /// control, including the system safe area. A Scaffold body has the
+  /// keyboard inset removed from its MediaQuery, so the view is checked too.
+  static double of(BuildContext context) {
+    final keyboardOpen =
+        MediaQuery.viewInsetsOf(context).bottom > 0 ||
+        (View.maybeOf(context)?.viewInsets.bottom ?? 0) > 0;
+    return keyboardOpen
+        ? keyboardGap
+        : MediaQuery.paddingOf(context).bottom + restingLift;
+  }
 }

@@ -14,6 +14,7 @@ import '../../app/localization.dart';
 import '../../app/theme.dart';
 import '../../core/core_gateway.dart';
 import '../../core/models.dart';
+import '../project/project_conversations_controller.dart';
 import '../workspace/workspace_controller.dart';
 import 'conversation_controller.dart';
 import 'markdown_renderer.dart';
@@ -540,6 +541,11 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       throw CoreFault('selection_changed', 'The selected conversation changed');
     }
     _activeConversationId = conversationId;
+    // The cached project list predates this conversation; fetch it again on
+    // the next visit.
+    ref
+        .read(projectConversationsProvider.notifier)
+        .invalidateProject(projectId);
     final controller = ConversationController(
       gateway: ref.read(coreGatewayProvider),
       agentId: agentId,
@@ -1565,55 +1571,56 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     await _refresh();
   }
 
-  Future<void> _showComputerStatus() async {
-    final workspace = ref.read(workspaceProvider).value;
-    final selectedId = workspace?.selectedDaemonId;
-    final daemon = workspace?.daemons
-        .where((item) => item.id == selectedId)
-        .firstOrNull;
-    final daemonOnline =
-        daemon?.phase == ConnectionPhase.online ||
-        (daemon == null && _stateOnline(_controller?.state));
-    await showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-          child: ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.computer_rounded, size: 28),
-            title: Text(daemon?.name ?? context.l10n.computer),
-            subtitle: Text(
-              daemon == null
-                  ? (_stateOnline(_controller?.state)
-                        ? context.l10n.online
-                        : context.l10n.offline)
-                  : _daemonPhaseLabel(context, daemon.phase),
-            ),
-            trailing: Container(
-              width: 10,
-              height: 10,
-              decoration: BoxDecoration(
-                color: daemonOnline ? wawGreen : Colors.grey,
-                shape: BoxShape.circle,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
+  /// Validates a conversation name the same way Desktop does: trimmed,
+  /// 1-200 characters, a single line.
+  static String? _validConversationName(String value) {
+    final name = value.trim();
+    if (name.isEmpty || name.runes.length > 200) return null;
+    if (name.contains(RegExp(r'[\u0000-\u001f\u007f]'))) return null;
+    return name;
   }
 
-  bool _stateOnline(ConversationState? state) => state?.online ?? false;
+  Future<void> _renameConversation(String currentTitle) async {
+    final threadId = _activeConversationId;
+    if (threadId == null) return;
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) =>
+          _RenameConversationDialog(initialValue: currentTitle),
+    );
+    if (name == null || name == currentTitle || !mounted) return;
+    try {
+      await ref.read(coreGatewayProvider).callFor(
+        _boundDaemonId,
+        _boundGeneration,
+        'conversation.rename',
+        {'agentId': _agentId, 'threadId': threadId, 'name': name},
+      );
+      ref
+          .read(workspaceProvider.notifier)
+          .renameConversationLocal(threadId, name);
+      ref
+          .read(projectConversationsProvider.notifier)
+          .renameLocal(threadId, name);
+      await _controller?.refreshConversation();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.l10n.renameFailed('$error'))),
+        );
+      }
+    }
+  }
 
-  String _daemonPhaseLabel(BuildContext context, ConnectionPhase phase) =>
-      switch (phase) {
-        ConnectionPhase.connecting => context.l10n.connecting,
-        ConnectionPhase.online => context.l10n.online,
-        ConnectionPhase.offline => context.l10n.offline,
-        ConnectionPhase.disabled => context.l10n.disabled,
-      };
+  Future<void> _copyConversationId() async {
+    final threadId = _activeConversationId;
+    if (threadId == null) return;
+    await Clipboard.setData(ClipboardData(text: threadId));
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(context.l10n.conversationIdCopied)));
+  }
 
   Future<void> _resolve(Map<String, dynamic> action, bool approved) async {
     final actionKey = '${action['id']}';
@@ -1735,73 +1742,109 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
           onPressed: () => Navigator.maybePop(context),
         ),
         titleSpacing: 4,
-        title: WawTitleBlock(
-          title: title,
-          pill: true,
-          titleStyle: WawCompact.conversationTitle,
-          pillMinHeight: 48,
-          pillPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-          subtitle: Semantics(
-            label:
-                '${online ? context.l10n.secureConnection : context.l10n.offline}, '
-                '$projectName, $agentName',
-            excludeSemantics: true,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 7,
-                  height: 7,
-                  decoration: BoxDecoration(
-                    color: online ? wawGreen : Colors.grey,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                const SizedBox(width: 5),
-                Flexible(
-                  child: Text(
-                    '$projectName · $agentName',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: WawCompact.metadata.copyWith(
-                      color: Theme.of(context).mutedInk,
+        title: Padding(
+          key: const Key('conversation-title-pill'),
+          // A draft has no actions yet, so the title pill reaches the edge.
+          padding: EdgeInsets.only(
+            right: _isDraft ? WawBackButton.edgePadding : 0,
+          ),
+          child: SizedBox(
+            width: double.infinity,
+            child: WawTitleBlock(
+              title: title,
+              pill: true,
+              titleStyle: WawCompact.conversationTitle,
+              pillMinHeight: 48,
+              pillPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 5,
+              ),
+              subtitle: Semantics(
+                label:
+                    '${online ? context.l10n.secureConnection : context.l10n.offline}, '
+                    '$projectName, $agentName',
+                excludeSemantics: true,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    WawStatusDot(online: online),
+                    const SizedBox(width: 5),
+                    Flexible(
+                      child: Text(
+                        '$projectName · $agentName',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: WawCompact.metadata.copyWith(
+                          color: Theme.of(context).mutedInk,
+                        ),
+                      ),
                     ),
-                  ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         ),
         actions: [
-          WawActionPill(
-            children: [
-              IconButton(
-                onPressed: _showComputerStatus,
-                tooltip: context.l10n.computer,
-                icon: const Icon(Icons.computer_rounded),
-              ),
-              PopupMenuButton<String>(
-                tooltip: context.l10n.moreActions,
-                onSelected: (value) {
-                  if (value == 'refresh') _refresh();
-                },
-                itemBuilder: (context) => [
-                  PopupMenuItem(
-                    value: 'refresh',
-                    enabled: !_isDraft,
-                    child: Row(
-                      children: [
-                        const Icon(Icons.refresh_rounded),
-                        const SizedBox(width: 10),
-                        Text(context.l10n.refresh),
-                      ],
-                    ),
+          if (!_isDraft)
+            WawActionPill(
+              children: [
+                if (agent?.capabilities.rename ?? true)
+                  IconButton(
+                    key: const Key('conversation-rename'),
+                    onPressed: online ? () => _renameConversation(title) : null,
+                    tooltip: context.l10n.renameConversation,
+                    icon: const Icon(Icons.edit_outlined),
                   ),
-                ],
-                icon: const Icon(Icons.more_vert_rounded),
-              ),
-            ],
-          ),
+                PopupMenuButton<String>(
+                  tooltip: context.l10n.moreActions,
+                  position: PopupMenuPosition.under,
+                  onSelected: (value) {
+                    if (value == 'refresh') _refresh();
+                    if (value == 'copy-id') _copyConversationId();
+                  },
+                  itemBuilder: (context) => [
+                    PopupMenuItem<String>(
+                      key: const Key('conversation-full-title'),
+                      enabled: false,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 260),
+                        child: Text(
+                          title,
+                          maxLines: 6,
+                          overflow: TextOverflow.ellipsis,
+                          style: WawCompact.metadata.copyWith(
+                            color: Theme.of(context).mutedInk,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const PopupMenuDivider(),
+                    PopupMenuItem(
+                      value: 'copy-id',
+                      child: Row(
+                        children: [
+                          const Icon(Icons.copy_rounded),
+                          const SizedBox(width: 10),
+                          Text(context.l10n.copyConversationId),
+                        ],
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 'refresh',
+                      child: Row(
+                        children: [
+                          const Icon(Icons.refresh_rounded),
+                          const SizedBox(width: 10),
+                          Text(context.l10n.refresh),
+                        ],
+                      ),
+                    ),
+                  ],
+                  icon: const Icon(Icons.more_vert_rounded),
+                ),
+              ],
+            ),
         ],
       ),
       body: Column(
@@ -1977,7 +2020,8 @@ class _ActionConfirmation extends StatelessWidget {
     final questionText = questions.firstOrNull?['question'] as String?;
     return SafeArea(
       top: false,
-      minimum: const EdgeInsets.fromLTRB(16, 6, 16, 10),
+      bottom: false,
+      minimum: EdgeInsets.fromLTRB(16, 6, 16, WawBottomInset.of(context)),
       child: ConstrainedBox(
         key: const ValueKey('action-confirmation-panel'),
         constraints: BoxConstraints(
@@ -2155,7 +2199,8 @@ class _ReadOnlyComposerNotice extends StatelessWidget {
     final muted = Theme.of(context).mutedInk;
     return SafeArea(
       top: false,
-      minimum: const EdgeInsets.fromLTRB(16, 6, 16, 10),
+      bottom: false,
+      minimum: EdgeInsets.fromLTRB(16, 6, 16, WawBottomInset.of(context)),
       child: WawFloatingSurface(
         key: const ValueKey('read-only-composer-notice'),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -2195,7 +2240,8 @@ class _PlanConfirmationPanel extends StatelessWidget {
     final hasText = controller.text.trim().isNotEmpty;
     return SafeArea(
       top: false,
-      minimum: const EdgeInsets.fromLTRB(16, 6, 16, 10),
+      bottom: false,
+      minimum: EdgeInsets.fromLTRB(16, 6, 16, WawBottomInset.of(context)),
       child: WawFloatingSurface(
         padding: const EdgeInsets.fromLTRB(16, 16, 12, 10),
         child: Column(
@@ -2559,7 +2605,8 @@ class _ComposerPanelState extends State<_ComposerPanel> {
     final expanded = _focusNode.hasFocus && widget.enabled;
     return SafeArea(
       top: false,
-      minimum: const EdgeInsets.fromLTRB(16, 6, 16, 10),
+      bottom: false,
+      minimum: EdgeInsets.fromLTRB(16, 6, 16, WawBottomInset.of(context)),
       child: WawFloatingSurface(
         child: AnimatedSize(
           duration: const Duration(milliseconds: 180),
@@ -2576,13 +2623,19 @@ class _ComposerPanelState extends State<_ComposerPanel> {
                   onRemove: widget.onRemoveImage,
                 ),
               if (!expanded)
-                Row(
-                  key: const ValueKey('composer-collapsed'),
-                  children: [
-                    _addButton(context),
-                    Expanded(child: _input(context, compact: true)),
-                    _actionButton(context),
-                  ],
+                ConstrainedBox(
+                  // Same height as the workspace search box.
+                  constraints: const BoxConstraints(
+                    minHeight: WawBottomInset.inputMinHeight,
+                  ),
+                  child: Row(
+                    key: const ValueKey('composer-collapsed'),
+                    children: [
+                      _addButton(context),
+                      Expanded(child: _input(context, compact: true)),
+                      _actionButton(context),
+                    ],
+                  ),
                 )
               else ...[
                 _input(context, compact: false),
@@ -3582,6 +3635,60 @@ class _ErrorBanner extends StatelessWidget {
         child: Text(context.l10n.copyDiagnostics),
       ),
       TextButton(onPressed: onRetry, child: Text(context.l10n.retry)),
+    ],
+  );
+}
+
+class _RenameConversationDialog extends StatefulWidget {
+  const _RenameConversationDialog({required this.initialValue});
+
+  final String initialValue;
+
+  @override
+  State<_RenameConversationDialog> createState() =>
+      _RenameConversationDialogState();
+}
+
+class _RenameConversationDialogState extends State<_RenameConversationDialog> {
+  late final _text = TextEditingController(text: widget.initialValue);
+  bool _invalid = false;
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final name = _ConversationScreenState._validConversationName(_text.text);
+    if (name == null) {
+      setState(() => _invalid = true);
+      return;
+    }
+    Navigator.of(context).pop(name);
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(context.l10n.renameConversation),
+    content: TextField(
+      key: const Key('conversation-rename-field'),
+      controller: _text,
+      autofocus: true,
+      maxLines: 1,
+      textInputAction: TextInputAction.done,
+      onSubmitted: (_) => _submit(),
+      decoration: InputDecoration(
+        labelText: context.l10n.conversationName,
+        errorText: _invalid ? context.l10n.invalidConversationName : null,
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: Text(context.l10n.cancel),
+      ),
+      FilledButton(onPressed: _submit, child: Text(context.l10n.save)),
     ],
   );
 }

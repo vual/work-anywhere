@@ -130,6 +130,7 @@ func TestQRRoundTripAndScopeAllowlist(t *testing.T) {
 	if !scopeAllows([]string{"turn.start"}, "turn.start") ||
 		!scopeAllows([]string{"turn.start"}, "plan.respond") ||
 		!scopeAllows([]string{"turn.start"}, "conversation.settings.update") ||
+		!scopeAllows([]string{"turn.start"}, "conversation.rename") ||
 		!scopeAllows([]string{"turn.start"}, "conversation.queue.add") ||
 		!scopeAllows([]string{"turn.start"}, "conversation.queue.update") ||
 		!scopeAllows([]string{"turn.start"}, "conversation.queue.delete") ||

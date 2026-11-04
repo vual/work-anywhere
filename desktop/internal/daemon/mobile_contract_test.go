@@ -1229,3 +1229,60 @@ func TestExpiredAttachmentCleanupRemovesCommittedAndPartialFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestConversationRenameForwardsCodexThreadName(t *testing.T) {
+	instance, _, cleanup := testInstance(t)
+	defer cleanup()
+	instance.manager.ctx = context.Background()
+	instance.manager.instances = map[string]*Instance{"test-instance": instance}
+	instance.state = "ready"
+
+	serverReader, serverWriter := io.Pipe()
+	defer serverReader.Close()
+	instance.stdin = serverWriter
+	var methods []string
+	var renameParams json.RawMessage
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		scanner := bufio.NewScanner(serverReader)
+		for scanner.Scan() {
+			var request struct {
+				ID     string          `json:"id"`
+				Method string          `json:"method"`
+				Params json.RawMessage `json:"params"`
+			}
+			_ = json.Unmarshal(scanner.Bytes(), &request)
+			methods = append(methods, request.Method)
+			renameParams = append(json.RawMessage(nil), request.Params...)
+			instance.handleServerFrame(instance.generation, []byte(`{"jsonrpc":"2.0","id":"`+request.ID+`","result":{}}`))
+		}
+	}()
+
+	call := func(params string) protocol.ControlResponse {
+		return instance.manager.control(protocol.ControlRequest{Type: "request", ID: "1", Method: "conversation.rename", Contract: protocol.MobileControlContract, Params: json.RawMessage(params)})
+	}
+	response := call(`{"agentId":"test-instance","threadId":"thread-1","name":"  Release notes  "}`)
+	if response.Error != nil {
+		t.Fatalf("rename error = %#v", response.Error)
+	}
+	if result, _ := response.Result.(map[string]any); result["name"] != "Release notes" {
+		t.Fatalf("rename result = %#v", response.Result)
+	}
+	if invalid := call(`{"agentId":"test-instance","threadId":"thread-1","name":"a\nb"}`); invalid.Error == nil || invalid.Error.Code != "invalid_params" {
+		t.Fatalf("multi-line name error = %#v", invalid.Error)
+	}
+	if legacy := instance.manager.control(protocol.ControlRequest{Type: "request", ID: "1", Method: "conversation.rename", Params: json.RawMessage(`{"instanceId":"test-instance","threadId":"thread-1","name":"x"}`)}); legacy.Error == nil || legacy.Error.Code != "contract_required" {
+		t.Fatalf("legacy contract error = %#v", legacy.Error)
+	}
+
+	_ = serverWriter.Close()
+	<-done
+	if fmt.Sprint(methods) != "[thread/name/set]" {
+		t.Fatalf("provider methods = %v", methods)
+	}
+	var params map[string]any
+	if err := json.Unmarshal(renameParams, &params); err != nil || params["threadId"] != "thread-1" || params["name"] != "Release notes" {
+		t.Fatalf("thread/name/set params = %s", renameParams)
+	}
+}

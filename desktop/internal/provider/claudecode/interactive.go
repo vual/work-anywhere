@@ -389,3 +389,52 @@ func (b *Backend) Models(context.Context) (provider.ModelCatalog, error) {
 func (b *Backend) PermissionModes(context.Context) ([]provider.PermissionMode, error) {
 	return permissionModes(), nil
 }
+
+// RenameConversation appends a custom-title record, the same record the
+// CLI's /rename writes, so Claude Code and Mobile show the new title. It
+// refuses while another process may be appending to the transcript.
+func (b *Backend) RenameConversation(_ context.Context, conversationID, name string) error {
+	b.mu.Lock()
+	entry := b.files[conversationID]
+	if entry == nil {
+		b.mu.Unlock()
+		return provider.NewError("not_found", "conversation not found")
+	}
+	if b.live[conversationID] {
+		b.mu.Unlock()
+		return provider.NewError("conversation_busy_external", "the conversation is open in another Claude Code process on the computer")
+	}
+	if process := b.processes[conversationID]; process != nil && (process.turnActive || len(process.requests) > 0) {
+		b.mu.Unlock()
+		return provider.NewError("conversation_busy", "a turn is already active or waiting for an action")
+	}
+	path := entry.path
+	b.mu.Unlock()
+	if err := appendCustomTitle(path, conversationID, name); err != nil {
+		return err
+	}
+	// The incremental rescan picks up the record and emits the list and
+	// conversation change events.
+	return b.refresh()
+}
+
+func appendCustomTitle(path, sessionID, name string) error {
+	record, err := json.Marshal(map[string]string{"type": "custom-title", "customTitle": name, "sessionId": sessionID})
+	if err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	// Start on a fresh line if the transcript does not end with one.
+	if info, statErr := file.Stat(); statErr == nil && info.Size() > 0 {
+		last := make([]byte, 1)
+		if _, readErr := file.ReadAt(last, info.Size()-1); readErr == nil && last[0] != '\n' {
+			record = append([]byte("\n"), record...)
+		}
+	}
+	_, err = file.Write(append(record, '\n'))
+	return err
+}

@@ -1162,6 +1162,42 @@ abstract class AppLocalizations {
   /// **'更多操作'**
   String get moreActions;
 
+  /// No description provided for @renameConversation.
+  ///
+  /// In zh, this message translates to:
+  /// **'重命名对话'**
+  String get renameConversation;
+
+  /// No description provided for @conversationName.
+  ///
+  /// In zh, this message translates to:
+  /// **'对话名称'**
+  String get conversationName;
+
+  /// No description provided for @invalidConversationName.
+  ///
+  /// In zh, this message translates to:
+  /// **'名称不能为空、不能换行且不能超过 200 个字符'**
+  String get invalidConversationName;
+
+  /// No description provided for @renameFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'无法重命名：{error}'**
+  String renameFailed(String error);
+
+  /// No description provided for @copyConversationId.
+  ///
+  /// In zh, this message translates to:
+  /// **'复制对话串ID'**
+  String get copyConversationId;
+
+  /// No description provided for @conversationIdCopied.
+  ///
+  /// In zh, this message translates to:
+  /// **'已复制对话串ID'**
+  String get conversationIdCopied;
+
   /// No description provided for @scrollToBottom.
   ///
   /// In zh, this message translates to:

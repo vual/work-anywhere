@@ -37,7 +37,7 @@ Mobile ──Relay(E2EE)──► daemon.control()
 
 | 方法 | Claude Code 行为 |
 | --- | --- |
-| `agent.list` | `{kind:"claude-code", name:"Claude Code"}`；CLI 可用时 `capabilities` 为 history、liveStream、textInput、imageInput、approval、question、interrupt、plan、createConversation、modelSelection、reasoningSelection、permissionMode、desktopMirror，`queue`/`steer` 为 false；附带活跃 Turn 与待处理请求计数 |
+| `agent.list` | `{kind:"claude-code", name:"Claude Code"}`；CLI 可用时 `capabilities` 为 history、liveStream、textInput、imageInput、approval、question、interrupt、plan、createConversation、modelSelection、reasoningSelection、permissionMode、desktopMirror、rename，`queue`/`steer` 为 false（只读降级时仍保留 history、desktopMirror、rename）；附带活跃 Turn 与待处理请求计数 |
 | `project.list` | 以转录中的真实 `cwd` 分组，只含有用户提问的会话；排序与 cursor 同 Codex |
 | `conversation.list` | `projectId`、`query`（标题子串）、`limit`（默认 20，最大 100）、cursor；`updatedAt desc, id desc`；`running`/`status`/`needsAttention` 来自 daemon 自有进程；`externallyActive` 来自活跃登记；`createdAt`/`updatedAt` 为 Unix 秒（与 Codex 一致） |
 | `conversation.read` | metadata、时间线首页、当前设置、空队列、`capabilities.queue=false`、待确认计划时的 `planConfirmation`、daemon 版本号 |
@@ -49,6 +49,7 @@ Mobile ──Relay(E2EE)──► daemon.control()
 | `turn.interrupt` | 发送 `interrupt` 控制请求；10 秒内未结束则终止进程 |
 | `action.list` / `action.resolve` | 见交互映射；第二次解析返回 `already_resolved` |
 | `plan.respond` | `implement` 批准计划，`revise` 把 `text` 作为修订意见返回模型；不另起新 Turn |
+| `conversation.rename` | 名称由 daemon 统一校验；向该会话转录以 `O_APPEND` 单次写入一行 `{"type":"custom-title","customTitle":name,"sessionId":id}`（与 CLI `/rename` 相同，最新一条生效），转录末尾不是换行时先补换行，随后增量重扫并发出列表与会话失效事件。未索引的会话（含尚未发送首个 Turn 的新会话）返回 `not_found`；电脑端其他 Claude Code 进程持有时返回 `conversation_busy_external`；本后端进程正在运行 Turn 或等待请求时返回 `conversation_busy`，避免与 CLI 并发写同一文件 |
 | `conversation.settings.update` | 校验后保存；空闲进程停止，下一 Turn 以新参数启动；运行中的 Turn 保持启动参数 |
 | `catalog.models` | `default`（CLI 配置模型）及 `opus`/`sonnet`/`haiku` 别名；别名被 `ANTHROPIC_DEFAULT_*_MODEL`（环境或用户 settings）映射时作为 description 显示；effort 为 `auto`（默认，沿用用户 Claude Code 配置，Mobile 显示为“智能”）与 low/medium/high/xhigh/max。每个模型的 `defaultReasoningEffort` 必须是 `auto`：Mobile 会把空默认值替换为列表第一项 |
 | `catalog.permissionProfiles` | `default`、`autoReview` 可用；`fullAccess` 可用且 `dangerous=true`；`readOnly` 不可用（Claude Code 无等价模式） |
@@ -109,7 +110,7 @@ Mobile ──Relay(E2EE)──► daemon.control()
 - DTO、事件与后端接口：`internal/provider/provider.go`
 - Claude Code 后端：`internal/provider/claudecode/`
   - `backend.go`：索引、活跃判定、会话状态、读方法、空闲回收
-  - `interactive.go`：新建会话、发送、中断、action、计划、设置与 catalog
+  - `interactive.go`：新建会话、发送、中断、重命名、action、计划、设置与 catalog
   - `session.go`：CLI 进程、stream-json 解析、控制请求与回复
   - `runtime.go`：CLI 解析、版本门控、环境净化、启动参数、模型与权限目录
   - `transcript.go`：转录解析与投影

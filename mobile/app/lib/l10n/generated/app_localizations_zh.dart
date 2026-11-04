@@ -603,6 +603,26 @@ class AppLocalizationsZh extends AppLocalizations {
   String get moreActions => '更多操作';
 
   @override
+  String get renameConversation => '重命名对话';
+
+  @override
+  String get conversationName => '对话名称';
+
+  @override
+  String get invalidConversationName => '名称不能为空、不能换行且不能超过 200 个字符';
+
+  @override
+  String renameFailed(String error) {
+    return '无法重命名：$error';
+  }
+
+  @override
+  String get copyConversationId => '复制对话串ID';
+
+  @override
+  String get conversationIdCopied => '已复制对话串ID';
+
+  @override
   String get scrollToBottom => '回到底部';
 
   @override

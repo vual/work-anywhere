@@ -22,6 +22,7 @@ type fakeBackend struct {
 	settings    provider.ConversationSettings
 	active      int
 	interrupted bool
+	renames     []string
 }
 
 func (*fakeBackend) Agent() provider.AgentSummary {
@@ -82,6 +83,14 @@ func (f *fakeBackend) StartTurn(_ context.Context, request provider.TurnRequest)
 }
 
 func (*fakeBackend) InterruptTurn(context.Context, string) error { return nil }
+
+func (f *fakeBackend) RenameConversation(_ context.Context, id, name string) error {
+	if id != "c1" {
+		return provider.NewError("not_found", "conversation not found")
+	}
+	f.renames = append(f.renames, id+":"+name)
+	return nil
+}
 
 func (f *fakeBackend) ActiveTurns() int { return f.active }
 
@@ -364,5 +373,24 @@ func TestShutdownAccountsForBackendTurns(t *testing.T) {
 	manager.gracefulShutdown(true)
 	if !backend.interrupted || !cancelled {
 		t.Fatalf("interrupted = %v, cancelled = %v", backend.interrupted, cancelled)
+	}
+}
+
+func TestBackendConversationRenameValidatesAndRoutes(t *testing.T) {
+	manager, backend := newBackendTestManager(t)
+	renamed := decodeResult[map[string]any](t, mobileCall(t, manager, "conversation.rename", map[string]any{"agentId": "fake:agent", "threadId": "c1", "name": "  New title  "}))
+	if renamed["name"] != "New title" || len(backend.renames) != 1 || backend.renames[0] != "c1:New title" {
+		t.Fatalf("renamed = %#v, calls %#v", renamed, backend.renames)
+	}
+	for _, name := range []string{"", "   ", "two\nlines", strings.Repeat("长", provider.MaxConversationNameRunes+1)} {
+		expectError(t, mobileCall(t, manager, "conversation.rename", map[string]any{"agentId": "fake:agent", "threadId": "c1", "name": name}), "invalid_params")
+	}
+	expectError(t, mobileCall(t, manager, "conversation.rename", map[string]any{"agentId": "fake:agent", "name": "x"}), "invalid_params")
+	expectError(t, mobileCall(t, manager, "conversation.rename", map[string]any{"agentId": "fake:agent", "threadId": "missing", "name": "x"}), "not_found")
+	if len(backend.renames) != 1 {
+		t.Fatalf("invalid names reached the backend: %#v", backend.renames)
+	}
+	if !isMutatingControlMethod("conversation.rename") {
+		t.Fatal("conversation.rename must be blocked while control is paused")
 	}
 }

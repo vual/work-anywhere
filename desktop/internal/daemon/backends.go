@@ -281,6 +281,14 @@ func (m *Manager) backendControl(backend provider.Backend, agentID string, reque
 		if err = backend.InterruptTurn(m.ctx, params.ThreadID); err == nil {
 			result = map[string]any{}
 		}
+	case "conversation.rename":
+		var threadID, name string
+		if threadID, name, err = conversationRenameParams(request.Params); err != nil {
+			break
+		}
+		if err = backend.RenameConversation(m.ctx, threadID, name); err == nil {
+			result = map[string]any{"threadId": threadID, "name": name}
+		}
 	case "action.list":
 		result = backend.Actions()
 	case "action.resolve":
@@ -586,4 +594,21 @@ func (m *Manager) backendTimelinePage(backend provider.Backend, agentID, threadI
 // backendErrorCode exposes the stable code of a typed backend error.
 func backendErrorCode(err error) (string, bool) {
 	return provider.ErrorCode(err)
+}
+
+// conversationRenameParams decodes and validates conversation.rename for
+// every agent kind so Codex and provider backends reject the same names.
+func conversationRenameParams(raw json.RawMessage) (string, string, error) {
+	var params struct {
+		ThreadID string `json:"threadId"`
+		Name     string `json:"name"`
+	}
+	if json.Unmarshal(raw, &params) != nil || params.ThreadID == "" {
+		return "", "", &mobileContractError{code: "invalid_params", message: "threadId and name are required"}
+	}
+	name, ok := provider.ValidConversationName(params.Name)
+	if !ok {
+		return "", "", &mobileContractError{code: "invalid_params", message: "name must be 1-200 characters on a single line"}
+	}
+	return params.ThreadID, name, nil
 }

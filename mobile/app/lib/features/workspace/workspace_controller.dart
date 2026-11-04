@@ -14,6 +14,21 @@ final workspaceProvider =
 
 const _keepValue = Object();
 
+/// In-memory projection of one agent's project and recent lists. It lives only
+/// for this app process and is dropped when the computer or connection
+/// generation changes; Desktop stays authoritative.
+class AgentContent {
+  const AgentContent({
+    this.projects = const [],
+    this.conversations = const [],
+    this.projectCursor,
+  });
+
+  final List<ProjectSummary> projects;
+  final List<ConversationSummary> conversations;
+  final String? projectCursor;
+}
+
 class WorkspaceState {
   const WorkspaceState({
     required this.needsPairing,
@@ -27,6 +42,7 @@ class WorkspaceState {
     this.projectCursor,
     this.searchQuery = '',
     this.syncFailed = false,
+    this.agentCache = const {},
   });
 
   final bool needsPairing;
@@ -40,6 +56,7 @@ class WorkspaceState {
   final String? projectCursor;
   final String searchQuery;
   final bool syncFailed;
+  final Map<String, AgentContent> agentCache;
 
   AgentSummary? get selectedAgent =>
       agents.where((item) => item.id == selectedAgentId).firstOrNull;
@@ -60,6 +77,7 @@ class WorkspaceState {
     Object? projectCursor = _keepValue,
     String? searchQuery,
     bool? syncFailed,
+    Map<String, AgentContent>? agentCache,
   }) => WorkspaceState(
     needsPairing: needsPairing ?? this.needsPairing,
     daemons: daemons ?? this.daemons,
@@ -80,7 +98,11 @@ class WorkspaceState {
         : projectCursor as String?,
     searchQuery: searchQuery ?? this.searchQuery,
     syncFailed: syncFailed ?? this.syncFailed,
+    agentCache: agentCache ?? this.agentCache,
   );
+
+  WorkspaceState withAgentContent(String agentId, AgentContent content) =>
+      copyWith(agentCache: {...agentCache, agentId: content});
 }
 
 class WorkspaceController extends AsyncNotifier<WorkspaceState> {
@@ -464,18 +486,24 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
         agents: const [],
         projects: const [],
         conversations: const [],
+        agentCache: const {},
       );
     }
     final stored = preferences.getString('lastAgent:${base.selectedDaemonId}');
     final selected = agentItems.any((item) => item.id == stored)
         ? stored!
         : agentItems.first.id;
+    final agentIds = agentItems.map((item) => item.id).toSet();
     final selectedBase = base.copyWith(
       agents: agentItems,
       selectedAgentId: selected,
       projects: const [],
       conversations: const [],
       projectCursor: null,
+      agentCache: {
+        for (final entry in base.agentCache.entries)
+          if (agentIds.contains(entry.key)) entry.key: entry.value,
+      },
     );
     return _loadAgentContent(selectedBase);
   }
@@ -497,34 +525,67 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
           responses[0]['result'] as Map<String, dynamic>? ?? const {};
       final conversationResult =
           responses[1]['result'] as Map<String, dynamic>? ?? const {};
-      return base.copyWith(
+      final content = AgentContent(
         projects: _projects(projectResult),
         conversations: _conversations(conversationResult),
         projectCursor: projectResult['nextCursor'] as String?,
-        syncFailed: false,
       );
+      return base
+          .copyWith(
+            projects: content.projects,
+            conversations: content.conversations,
+            projectCursor: content.projectCursor,
+            syncFailed: false,
+          )
+          .withAgentContent(selected, content);
     } catch (_) {
       return base.copyWith(syncFailed: true);
     }
   }
 
+  /// Switches agents. A previously loaded agent is shown from the in-memory
+  /// cache without a request; pull-to-refresh reloads it explicitly.
   Future<void> selectAgent(String id) async {
     if (_catalogChanges > 0) return;
     final current = state.value;
     if (current == null || current.selectedAgentId == id) return;
     final generation = ++_selectionGeneration;
+    final cached = current.agentCache[id];
     final selected = current.copyWith(
       selectedAgentId: id,
-      projects: const [],
-      conversations: const [],
-      projectCursor: null,
+      projects: cached?.projects ?? const [],
+      conversations: cached?.conversations ?? const [],
+      projectCursor: cached?.projectCursor,
       syncFailed: false,
     );
     state = AsyncData(selected);
     final preferences = await SharedPreferences.getInstance();
     await preferences.setString('lastAgent:${current.selectedDaemonId}', id);
+    if (cached != null) return;
     final loaded = await _loadAgentContent(selected);
     if (generation == _selectionGeneration) state = AsyncData(loaded);
+  }
+
+  /// Applies a confirmed rename to the visible list and every cached agent.
+  void renameConversationLocal(String id, String title) {
+    final current = state.value;
+    if (current == null) return;
+    List<ConversationSummary> rename(List<ConversationSummary> items) => [
+      for (final item in items) item.id == id ? item.withTitle(title) : item,
+    ];
+    state = AsyncData(
+      current.copyWith(
+        conversations: rename(current.conversations),
+        agentCache: {
+          for (final entry in current.agentCache.entries)
+            entry.key: AgentContent(
+              projects: entry.value.projects,
+              conversations: rename(entry.value.conversations),
+              projectCursor: entry.value.projectCursor,
+            ),
+        },
+      ),
+    );
   }
 
   Future<void> refresh() async {
@@ -551,11 +612,19 @@ class WorkspaceController extends AsyncNotifier<WorkspaceState> {
     });
     if (generation != _selectionGeneration) return;
     final result = response['result'] as Map<String, dynamic>? ?? const {};
+    final projects = [...current.projects, ..._projects(result)];
+    final cursor = result['nextCursor'] as String?;
     state = AsyncData(
-      current.copyWith(
-        projects: [...current.projects, ..._projects(result)],
-        projectCursor: result['nextCursor'] as String?,
-      ),
+      current
+          .copyWith(projects: projects, projectCursor: cursor)
+          .withAgentContent(
+            current.selectedAgentId!,
+            AgentContent(
+              projects: projects,
+              conversations: current.conversations,
+              projectCursor: cursor,
+            ),
+          ),
     );
   }
 
@@ -637,6 +706,7 @@ WorkspaceState _withCatalog({
     projects: same ? current.projects : const [],
     conversations: same ? current.conversations : const [],
     projectCursor: same ? current.projectCursor : null,
+    agentCache: same ? current.agentCache : const {},
     syncFailed: false,
   );
 }

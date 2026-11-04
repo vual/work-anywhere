@@ -120,8 +120,15 @@ class WorkspaceScreen extends ConsumerWidget {
                       else
                         SliverList.builder(
                           itemCount: projects.length,
-                          itemBuilder: (context, index) =>
-                              _ProjectRow(project: projects[index]),
+                          itemBuilder: (context, index) => _ProjectRow(
+                            project: projects[index],
+                            canCreate:
+                                data
+                                    .selectedAgent
+                                    ?.capabilities
+                                    .createConversation ??
+                                false,
+                          ),
                         ),
                       if (query.isEmpty && data.projectCursor != null)
                         SliverToBoxAdapter(
@@ -177,33 +184,45 @@ class WorkspaceScreen extends ConsumerWidget {
         ),
       ),
       bottomNavigationBar: Padding(
+        key: const Key('workspace-search-bar'),
         padding: EdgeInsets.only(
-          bottom: MediaQuery.viewInsetsOf(context).bottom,
+          bottom:
+              MediaQuery.viewInsetsOf(context).bottom +
+              WawBottomInset.of(context),
         ),
         child: SafeArea(
           top: false,
+          bottom: false,
           minimum: const EdgeInsets.fromLTRB(
             WawCompact.horizontalPadding,
             6,
             WawCompact.horizontalPadding,
-            14,
+            0,
           ),
           child: WawFloatingSurface(
-            child: TextField(
-              style: WawCompact.body,
-              onChanged: ref.read(workspaceProvider.notifier).setSearch,
-              decoration: InputDecoration(
-                filled: false,
-                isDense: true,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(
+                minHeight: WawBottomInset.inputMinHeight,
+              ),
+              child: Center(
+                heightFactor: 1,
+                child: TextField(
+                  style: WawCompact.body,
+                  onChanged: ref.read(workspaceProvider.notifier).setSearch,
+                  decoration: InputDecoration(
+                    filled: false,
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    prefixIcon: const Icon(Icons.search_rounded, size: 22),
+                    hintText: context.l10n.searchProjectsConversations,
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                  ),
                 ),
-                prefixIcon: const Icon(Icons.search_rounded, size: 22),
-                hintText: context.l10n.searchProjectsConversations,
-                border: InputBorder.none,
-                enabledBorder: InputBorder.none,
-                focusedBorder: InputBorder.none,
               ),
             ),
           ),
@@ -468,7 +487,7 @@ class _AgentRail extends ConsumerWidget {
             onSelected: (_) =>
                 ref.read(workspaceProvider.notifier).selectAgent(agent.id),
             label: Text(agent.name),
-            avatar: _AgentAvatar(agent: agent),
+            avatar: AgentIcon(kind: agent.kind, name: agent.name),
             showCheckmark: false,
             selectedColor: Theme.of(context).colorScheme.onSurface,
             labelStyle: TextStyle(
@@ -485,13 +504,15 @@ class _AgentRail extends ConsumerWidget {
 }
 
 class _ProjectRow extends StatelessWidget {
-  const _ProjectRow({required this.project});
+  const _ProjectRow({required this.project, required this.canCreate});
   final ProjectSummary project;
+  final bool canCreate;
   @override
   Widget build(BuildContext context) => ListTile(
     minTileHeight: WawCompact.listTileHeight,
-    contentPadding: const EdgeInsets.symmetric(
-      horizontal: WawCompact.horizontalPadding,
+    contentPadding: const EdgeInsets.only(
+      left: WawCompact.horizontalPadding,
+      right: WawCompact.horizontalPadding - 10,
     ),
     leading: const Icon(Icons.folder_outlined, size: 26),
     title: Text(
@@ -500,27 +521,19 @@ class _ProjectRow extends StatelessWidget {
       overflow: TextOverflow.ellipsis,
       style: WawCompact.listTitle,
     ),
-    trailing: Text(
-      _relativeTime(context, project.updatedAt),
-      style: WawCompact.metadata.copyWith(color: Theme.of(context).mutedInk),
-    ),
+    trailing: canCreate
+        ? IconButton(
+            key: Key('project-new-conversation-${project.id}'),
+            tooltip: context.l10n.newConversation,
+            constraints: const BoxConstraints.tightFor(width: 44, height: 44),
+            padding: EdgeInsets.zero,
+            icon: const Icon(Icons.edit_outlined, size: 22),
+            onPressed: () =>
+                context.push('/project/${project.id}/new', extra: project.name),
+          )
+        : null,
     onTap: () => context.push('/project/${project.id}'),
   );
-}
-
-class _AgentAvatar extends StatelessWidget {
-  const _AgentAvatar({required this.agent});
-
-  final AgentSummary agent;
-
-  @override
-  Widget build(BuildContext context) => switch (agent.kind) {
-    'codex' => const Text('C'),
-    'claude-code' => const Icon(Icons.auto_awesome_rounded, size: 16),
-    _ => Text(
-      agent.name.isEmpty ? '?' : agent.name.characters.first.toUpperCase(),
-    ),
-  };
 }
 
 class _ConversationRow extends StatelessWidget {

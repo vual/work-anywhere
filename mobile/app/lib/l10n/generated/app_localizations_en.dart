@@ -628,6 +628,27 @@ class AppLocalizationsEn extends AppLocalizations {
   String get moreActions => 'More actions';
 
   @override
+  String get renameConversation => 'Rename conversation';
+
+  @override
+  String get conversationName => 'Conversation name';
+
+  @override
+  String get invalidConversationName =>
+      'Name must be 1-200 characters on a single line';
+
+  @override
+  String renameFailed(String error) {
+    return 'Could not rename: $error';
+  }
+
+  @override
+  String get copyConversationId => 'Copy thread ID';
+
+  @override
+  String get conversationIdCopied => 'Thread ID copied';
+
+  @override
   String get scrollToBottom => 'Scroll to bottom';
 
   @override
