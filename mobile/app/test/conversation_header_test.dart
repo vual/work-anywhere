@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:work_anywhere/app/chrome.dart';
 import 'package:work_anywhere/core/core_gateway.dart';
 import 'package:work_anywhere/core/models.dart';
 import 'package:work_anywhere/features/conversation/conversation_screen.dart';
@@ -100,6 +101,7 @@ void main() {
     expect(find.byKey(const Key('conversation-title-pill')), findsOneWidget);
     expect(find.byKey(const Key('conversation-rename')), findsNothing);
     expect(find.byIcon(Icons.more_vert_rounded), findsNothing);
+    _expectTitlePillReachesMenuSlot(tester);
     await tester.pumpWidget(const SizedBox());
   });
 
@@ -160,6 +162,7 @@ void main() {
     );
     await _settle(tester);
 
+    _expectTitlePillReachesMenuSlot(tester);
     await tester.tap(find.byIcon(Icons.more_vert_rounded));
     await tester.pumpAndSettle();
     expect(
@@ -174,6 +177,8 @@ void main() {
     expect(copied, 'thread-1');
     expect(find.text('已复制对话串ID'), findsOneWidget);
 
+    await tester.tap(find.byIcon(Icons.more_vert_rounded));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('conversation-rename')));
     await tester.pumpAndSettle();
     await tester.enterText(
@@ -190,4 +195,13 @@ void main() {
     expect(find.text('Renamed topic'), findsWidgets);
     await tester.pumpWidget(const SizedBox());
   });
+}
+
+/// Draft and existing conversations must give the title pill the same width,
+/// stopping before the round menu slot at the right edge.
+void _expectTitlePillReachesMenuSlot(WidgetTester tester) {
+  final screenWidth =
+      tester.view.physicalSize.width / tester.view.devicePixelRatio;
+  final pill = tester.getRect(find.byKey(const Key('conversation-title-pill')));
+  expect(pill.right, closeTo(screenWidth - WawRoundAction.slotWidth - 4, 0.5));
 }

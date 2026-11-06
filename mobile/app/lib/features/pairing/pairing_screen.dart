@@ -67,16 +67,12 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
       return Scaffold(
         appBar: AppBar(
           automaticallyImplyLeading: false,
-          leadingWidth: 80,
-          leading: Padding(
-            padding: const EdgeInsets.only(left: 20, top: 8, bottom: 8),
-            child: WawCircleButton(
-              icon: Icons.arrow_back_rounded,
-              onPressed: () => setState(() => _scanning = false),
-            ),
+          toolbarHeight: WawBackButton.toolbarHeight,
+          leadingWidth: WawBackButton.leadingWidth,
+          leading: WawBackButton(
+            tooltip: context.l10n.back,
+            onPressed: () => setState(() => _scanning = false),
           ),
-          titleSpacing: 12,
-          title: WawTitleBlock(title: context.l10n.scanComputerQr, pill: true),
         ),
         body: Stack(
           fit: StackFit.expand,

@@ -22,11 +22,14 @@ class ComputerManagementScreen extends ConsumerWidget {
           Scaffold(body: Center(child: Text(context.l10n.loadWorkspaceFailed))),
       data: (data) => Scaffold(
         appBar: AppBar(
-          leading: WawCircleButton(
-            icon: Icons.arrow_back_rounded,
+          automaticallyImplyLeading: false,
+          toolbarHeight: WawBackButton.toolbarHeight,
+          leadingWidth: WawBackButton.leadingWidth,
+          leading: WawBackButton(
             tooltip: context.l10n.back,
             onPressed: () => context.canPop() ? context.pop() : context.go('/'),
           ),
+          titleSpacing: 4,
           title: Text(
             context.l10n.manageComputers,
             style: WawCompact.appBarTitle,

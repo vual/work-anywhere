@@ -115,21 +115,35 @@ class WawTitleBlock extends StatelessWidget {
   }
 }
 
-class WawActionPill extends StatelessWidget {
-  const WawActionPill({required this.children, super.key});
+/// A round floating button at the right edge of an app bar.
+class WawRoundAction extends StatelessWidget {
+  const WawRoundAction({required this.child, super.key});
 
-  final List<Widget> children;
+  static const double size = 48;
+
+  /// Width the action takes in an app bar, including the edge padding.
+  static const double slotWidth = size + WawBackButton.edgePadding;
+
+  final Widget child;
 
   @override
-  Widget build(BuildContext context) => Container(
-    margin: const EdgeInsets.only(right: WawBackButton.edgePadding),
-    decoration: BoxDecoration(
-      color: Theme.of(context).floatingSurface,
-      border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
-      borderRadius: BorderRadius.circular(28),
-      boxShadow: Theme.of(context).floatingShadow,
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(right: WawBackButton.edgePadding),
+    child: Center(
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: Theme.of(context).floatingSurface,
+          border: Border.all(
+            color: Theme.of(context).colorScheme.outlineVariant,
+          ),
+          shape: BoxShape.circle,
+          boxShadow: Theme.of(context).floatingShadow,
+        ),
+        child: Center(child: child),
+      ),
     ),
-    child: Row(mainAxisSize: MainAxisSize.min, children: children),
   );
 }
 

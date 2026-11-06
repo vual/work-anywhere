@@ -1742,12 +1742,8 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
           onPressed: () => Navigator.maybePop(context),
         ),
         titleSpacing: 4,
-        title: Padding(
+        title: KeyedSubtree(
           key: const Key('conversation-title-pill'),
-          // A draft has no actions yet, so the title pill reaches the edge.
-          padding: EdgeInsets.only(
-            right: _isDraft ? WawBackButton.edgePadding : 0,
-          ),
           child: SizedBox(
             width: double.infinity,
             child: WawTitleBlock(
@@ -1786,64 +1782,75 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
           ),
         ),
         actions: [
-          if (!_isDraft)
-            WawActionPill(
-              children: [
-                if (agent?.capabilities.rename ?? true)
-                  IconButton(
-                    key: const Key('conversation-rename'),
-                    onPressed: online ? () => _renameConversation(title) : null,
-                    tooltip: context.l10n.renameConversation,
-                    icon: const Icon(Icons.edit_outlined),
-                  ),
-                PopupMenuButton<String>(
-                  tooltip: context.l10n.moreActions,
-                  position: PopupMenuPosition.under,
-                  onSelected: (value) {
-                    if (value == 'refresh') _refresh();
-                    if (value == 'copy-id') _copyConversationId();
-                  },
-                  itemBuilder: (context) => [
-                    PopupMenuItem<String>(
-                      key: const Key('conversation-full-title'),
-                      enabled: false,
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 260),
-                        child: Text(
-                          title,
-                          maxLines: 6,
-                          overflow: TextOverflow.ellipsis,
-                          style: WawCompact.metadata.copyWith(
-                            color: Theme.of(context).mutedInk,
-                          ),
+          // A draft keeps the menu's slot empty so the title pill has the
+          // same width before and after the first message.
+          if (_isDraft)
+            const SizedBox(width: WawRoundAction.slotWidth)
+          else
+            WawRoundAction(
+              child: PopupMenuButton<String>(
+                tooltip: context.l10n.moreActions,
+                position: PopupMenuPosition.under,
+                onSelected: (value) {
+                  if (value == 'rename') _renameConversation(title);
+                  if (value == 'refresh') _refresh();
+                  if (value == 'copy-id') _copyConversationId();
+                },
+                itemBuilder: (context) => [
+                  PopupMenuItem<String>(
+                    key: const Key('conversation-full-title'),
+                    enabled: false,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 260),
+                      child: Text(
+                        title,
+                        maxLines: 6,
+                        overflow: TextOverflow.ellipsis,
+                        style: WawCompact.metadata.copyWith(
+                          color: Theme.of(context).mutedInk,
                         ),
                       ),
                     ),
-                    const PopupMenuDivider(),
+                  ),
+                  const PopupMenuDivider(),
+                  if (agent?.capabilities.rename ?? true)
                     PopupMenuItem(
-                      value: 'copy-id',
+                      key: const Key('conversation-rename'),
+                      value: 'rename',
+                      enabled: online,
                       child: Row(
                         children: [
-                          const Icon(Icons.copy_rounded),
+                          const Icon(Icons.edit_outlined),
                           const SizedBox(width: 10),
-                          Text(context.l10n.copyConversationId),
+                          Flexible(
+                            child: Text(context.l10n.renameConversation),
+                          ),
                         ],
                       ),
                     ),
-                    PopupMenuItem(
-                      value: 'refresh',
-                      child: Row(
-                        children: [
-                          const Icon(Icons.refresh_rounded),
-                          const SizedBox(width: 10),
-                          Text(context.l10n.refresh),
-                        ],
-                      ),
+                  PopupMenuItem(
+                    value: 'copy-id',
+                    child: Row(
+                      children: [
+                        const Icon(Icons.copy_rounded),
+                        const SizedBox(width: 10),
+                        Flexible(child: Text(context.l10n.copyConversationId)),
+                      ],
                     ),
-                  ],
-                  icon: const Icon(Icons.more_vert_rounded),
-                ),
-              ],
+                  ),
+                  PopupMenuItem(
+                    value: 'refresh',
+                    child: Row(
+                      children: [
+                        const Icon(Icons.refresh_rounded),
+                        const SizedBox(width: 10),
+                        Flexible(child: Text(context.l10n.refresh)),
+                      ],
+                    ),
+                  ),
+                ],
+                icon: const Icon(Icons.more_vert_rounded),
+              ),
             ),
         ],
       ),

@@ -68,7 +68,7 @@ Android 页面采用 edge-to-edge，顶部系统状态栏保持透明并叠加�
 └──────────────────────────────────┘
 ```
 
-底部没有导航栏；搜索框固定在工作台内容底部，但不承担页面切换或一级导航职责。搜索区域沿用页面背景，仅输入框显示浮层填充、细边框与阴影，不使用额外的 BottomSheet 圆角底板；搜索栏独立占位，列表末项不被覆盖。底部悬浮控件统一使用 `WawBottomInset`：键盘收起时距系统底部安全区 16dp，键盘展开时紧贴键盘上方 8dp，同时缩小列表可用区域；搜索框与会话 Composer 收起态最小高度均为 52dp，因此两者在同一屏幕上处于相同高度。输入文字为 16sp，搜索图标为 22dp，输入框垂直内边距为 12dp，文字垂直居中，高度随动态字体增长。项目对话列表页与具体会话页复用 WawBackButton：48dp 圆形触控区域、24dp 箭头，左侧距离页面边缘 12dp，与具体会话页右侧操作胶囊的右边距共用同一个常量，位于系统状态栏下方 72dp 高工具栏内垂直居中；两页按钮位置和大小完全一致。
+底部没有导航栏；搜索框固定在工作台内容底部，但不承担页面切换或一级导航职责。搜索区域沿用页面背景，仅输入框显示浮层填充、细边框与阴影，不使用额外的 BottomSheet 圆角底板；搜索栏独立占位，列表末项不被覆盖。底部悬浮控件统一使用 `WawBottomInset`：键盘收起时距系统底部安全区 16dp，键盘展开时紧贴键盘上方 8dp，同时缩小列表可用区域；搜索框与会话 Composer 收起态最小高度均为 52dp，因此两者在同一屏幕上处于相同高度。输入文字为 16sp，搜索图标为 22dp，输入框垂直内边距为 12dp，文字垂直居中，高度随动态字体增长。项目对话列表页、具体会话页、扫码页和管理电脑页复用 WawBackButton：48dp 圆形触控区域、24dp 箭头，左侧距离页面边缘 12dp，与具体会话页右侧圆形菜单按钮的右边距共用同一个常量，位于系统状态栏下方 72dp 高工具栏内垂直居中；各页按钮位置和大小完全一致。扫码页顶栏只有返回按钮，不显示标题。
 
 顶栏需要适配窄屏和动态字体：品牌名允许单行省略，Daemon selector 使用可收缩的有限宽度，电脑名允许视觉省略但必须保留完整无障碍朗读。顶栏采用左侧固定 App icon、中间独立活跃任务区、右侧固定 Daemon selector 的三段布局；左侧 Logo 保持 24dp 布局边距；Daemon selector 的右边距为 20dp，以补偿长圆胶囊端部弧线带来的视觉留白，任务提示不得覆盖 selector 或被 selector 遮挡。窄屏且存在运行中对话时，提示优先保留 loading icon，并在可用宽度内显示可省略的运行数量；完整语义由无障碍标签和详情页提供。
 
@@ -94,7 +94,7 @@ Android 页面采用 edge-to-edge，顶部系统状态栏保持透明并叠加�
 
 Daemon 顶栏下一行横向展示该电脑上可发现的 Agent，例如 `Codex 1`、`Codex 2`、`Claude Code`、`Hermes`、`OpenCode`、`Pi`；超出屏幕宽度时左右滑动。默认恢复“该 Daemon 上次选择的 Agent”；已不存在时选择发现列表中的第一个 Agent，不因其他 Agent 处于 ready 状态而自动切换。
 
-Agent selector 每项至少显示 display name 和 provider icon/label；当前项使用明确选中态；Codex 与 Claude Code 在名称前显示 LobeHub Icons 的彩色品牌图标（`mobile/app/assets/agents/`，MIT，来源见该目录 README），其他 Provider 取名称首字母。V1 完整适配 Codex 和 Claude Code；Agent 的 `capabilities` 缺失时按全部支持处理，`createConversation=false` 时项目页不显示新建对话按钮，`textInput=false` 时会话页用只读说明代替 Composer。Agent 列表与当前 Agent 的项目、对话同步结果分别保留；当前 Agent 内容同步失败时保留整个 selector，只清空当前 Agent 内容并显示重试提示。切换到其他 Agent 时立即更新选择；该 Agent 在本次 App 进程中已成功加载过时直接展示缓存的项目、最近对话和项目分页位置，不发起请求，否则独立加载，前一个 Agent 的迟到结果或失败不得覆盖当前 Agent。下拉刷新和 Desktop 变更事件只重新加载当前 Agent 并覆盖其缓存；Agent 已不在 `agent.list` 中时删除其缓存。切换 Daemon 或连接 generation 变化时清空全部 Agent 缓存，每个 Daemon 分别持久化上次 Agent 选择。
+Agent selector 每项至少显示 display name 和 provider icon/label；当前项使用明确选中态；Codex 在名称前显示 LobeHub Icons 的 `Codex.Avatar` 圆形头像图标，Claude Code 显示其彩色品牌图标（`mobile/app/assets/agents/`，MIT，来源见该目录 README），其他 Provider 取名称首字母。V1 完整适配 Codex 和 Claude Code；Agent 的 `capabilities` 缺失时按全部支持处理，`createConversation=false` 时项目页不显示新建对话按钮，`textInput=false` 时会话页用只读说明代替 Composer。Agent 列表与当前 Agent 的项目、对话同步结果分别保留；当前 Agent 内容同步失败时保留整个 selector，只清空当前 Agent 内容并显示重试提示。切换到其他 Agent 时立即更新选择；该 Agent 在本次 App 进程中已成功加载过时直接展示缓存的项目、最近对话和项目分页位置，不发起请求，否则独立加载，前一个 Agent 的迟到结果或失败不得覆盖当前 Agent。下拉刷新和 Desktop 变更事件只重新加载当前 Agent 并覆盖其缓存；Agent 已不在 `agent.list` 中时删除其缓存。切换 Daemon 或连接 generation 变化时清空全部 Agent 缓存，每个 Daemon 分别持久化上次 Agent 选择。
 
 Agent 内容缓存与项目对话列表缓存只保存在当前 App 进程内存（Riverpod 状态）中，不写入 SharedPreferences、文件或数据库；进程被系统回收或用户退出后首次进入重新请求。这样 Desktop 保持唯一权威来源，项目名和对话标题也不会以明文落盘。
 
@@ -162,9 +162,9 @@ Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项�
 
 ### Timeline
 
-顶部使用 72dp 的悬浮栏，返回按钮与项目对话列表页共用尺寸和位置，固定为正圆，标题和右侧操作分别使用独立胶囊；三块控件之间仅保留半透明页面底色。时间线视口延伸到顶栏背后，首屏通过可滚动顶部留白从顶栏下方开始，向上滚动后文字可透过控件间隙继续辨认。标题胶囊占满返回按钮与右侧操作胶囊之间的宽度；对话标题使用约 15sp 常规字重并单行省略，标题下方显示“项目名称 · Agent 名称”。连接状态保留为标题下方前导状态点（在线绿色、其他灰色）及完整无障碍朗读。
+顶部使用 72dp 的悬浮栏，返回按钮与项目对话列表页共用尺寸和位置，固定为正圆，标题使用独立胶囊，右侧为 48dp 圆形菜单按钮；三块控件之间仅保留半透明页面底色。时间线视口延伸到顶栏背后，首屏通过可滚动顶部留白从顶栏下方开始，向上滚动后文字可透过控件间隙继续辨认。标题胶囊占满返回按钮与右侧菜单按钮之间的宽度；对话标题使用约 15sp 常规字重并单行省略，标题下方显示“项目名称 · Agent 名称”。连接状态保留为标题下方前导状态点（在线绿色、其他灰色）及完整无障碍朗读。
 
-右侧操作胶囊依次为编辑图标和 overflow 菜单；尚未发送首条消息的新会话（草稿）不显示该胶囊，标题胶囊延伸到右侧 12dp 边距。编辑图标仅在 Agent `capabilities.rename` 不为 false 时显示，离线时禁用；点击打开“重命名对话”对话框，预填当前标题，名称去除首尾空白后须为 1–200 个字符且不含换行。保存调用 `conversation.rename`，成功后刷新会话 snapshot，并就地更新工作台最近对话和项目对话缓存中的标题；失败显示错误提示且不自动重试。overflow 菜单向下展开：首项以灰色小字显示完整对话标题（最多 6 行，不可点击），分隔线后为“复制对话串ID”（复制 thread ID 到剪贴板并提示已复制）和“刷新”。内容 block：
+右侧圆形按钮只显示 overflow（三个点）图标；尚未发送首条消息的新会话（草稿）不显示该按钮，但保留同样宽度的空位，标题胶囊宽度与已有会话一致。overflow 菜单向下展开：首项以灰色小字显示完整对话标题（最多 6 行，不可点击），分隔线后依次为“重命名对话”、“复制对话串ID”（复制 thread ID 到剪贴板并提示已复制）和“刷新”。“重命名对话”仅在 Agent `capabilities.rename` 不为 false 时显示，离线时禁用；点击打开“重命名对话”对话框，预填当前标题，名称去除首尾空白后须为 1–200 个字符且不含换行。保存调用 `conversation.rename`，成功后刷新会话 snapshot，并就地更新工作台最近对话和项目对话缓存中的标题；失败显示错误提示且不自动重试。内容 block：
 
 - user/assistant：常规气泡/正文；由 `app/lib/features/conversation/markdown_renderer.dart` 使用 GFM 安全 renderer，支持标题、强调、列表、引用、表格、任务列表、代码块和选择/复制；不解析任意 HTML，不自动加载图片；`http/https` 链接显示目标 host 并在打开前二次确认。
 - summary item：daemon 仅返回 `summaryKind + summaryValue` 和语言无关 fallback；Flutter 用 ARB 生成完整本地化句子，不使用气泡、Markdown 或全文展开，status 同样以本地化弱化文字/图标展示。`hookPrompt` 不渲染；`commandExecution` 只展示命令。
@@ -292,7 +292,7 @@ Daemon selector 底部提供“添加电脑”和“管理电脑”。管理页�
 
 ## 验证方式
 
-- 工作台验证切换到已加载 Agent 不重新请求、项目行新建对话按钮直达新会话；会话页验证草稿隐藏操作胶囊、重命名调用 `conversation.rename`、菜单显示完整标题和复制对话串 ID。
+- 工作台验证切换到已加载 Agent 不重新请求、项目行新建对话按钮直达新会话；会话页验证草稿隐藏菜单按钮且标题胶囊宽度与已有会话一致、菜单内重命名调用 `conversation.rename`、菜单显示完整标题和复制对话串 ID。
 - 每个页面覆盖 loading、empty、online、offline、stale、error、restricted 和 revoked golden/widget tests；项目页额外验证圆形图标“新建对话”按钮、重新进入使用缓存与下拉刷新重新加载、标题胶囊副标题“电脑 · Agent”、tooltip/无障碍语义、重复点击保护、创建成功跳转和创建失败提示；管理电脑页验证删除确认、取消、失败后保留列表、当前电脑切换和删除最后一台后返回配对页；Daemon 绿色/灰色状态点与两类 loading icon 都验证文本语义。
 - E2E 覆盖首次配对、拒绝/过期、恢复上次 Daemon/Agent、多 Daemon/Agent 切换、项目 10 条展开、项目会话 15 条分页、最近对话 20 条、跨项目搜索、运行中蓝色 icon、流式输出、运行中消息排队及编辑/立即引导/取消、cursor gap、action race、图片失败、interrupt race 和 push cold start。
 - Markdown widget 测试覆盖 GFM 常用格式、文本选择、代码块、链接确认入口和远程图片拦截；链接只允许 `http/https`，打开失败保留在当前页面并显示可解释提示。
