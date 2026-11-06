@@ -421,14 +421,29 @@ func (s *Service) Enroll(ctx context.Context, token, displayName string) error {
 	return err
 }
 
-func (s *Service) StartPairing(ttl time.Duration) (PairAttempt, error) {
-	s.lifecycleMu.RLock()
-	defer s.lifecycleMu.RUnlock()
+// maxRelayPairingTTL keeps the requested expiry inside the Relay window. The
+// Relay rejects pair_start beyond now+5m measured on its own clock when the
+// frame arrives, so a full 5m request fails under any latency or clock skew.
+const maxRelayPairingTTL = 5*time.Minute - 30*time.Second
+
+// pairingTTL validates the caller's TTL (0 means default; 10s to 5m accepted)
+// and returns the TTL actually used for the attempt.
+func pairingTTL(ttl time.Duration) (time.Duration, error) {
 	if ttl <= 0 {
 		ttl = 5 * time.Minute
 	}
 	if ttl < 10*time.Second || ttl > 5*time.Minute {
-		return PairAttempt{}, errors.New("pairing TTL must be between 10 seconds and 5 minutes")
+		return 0, errors.New("pairing TTL must be between 10 seconds and 5 minutes")
+	}
+	return min(ttl, maxRelayPairingTTL), nil
+}
+
+func (s *Service) StartPairing(ttl time.Duration) (PairAttempt, error) {
+	s.lifecycleMu.RLock()
+	defer s.lifecycleMu.RUnlock()
+	ttl, err := pairingTTL(ttl)
+	if err != nil {
+		return PairAttempt{}, err
 	}
 	s.mu.Lock()
 	state := s.state

@@ -26,6 +26,8 @@ Desktop daemon 主动连接 Relay，把已授权 Mobile 的 E2EE 请求交给现
 - remote.pair.start/list/resolve/cancel/revoke
 - remote.reconnect
 
+`remote.pair.start` 接受 10 秒到 5 分钟的 `ttlSeconds`（缺省 5 分钟），但实际有效期最多 4 分 30 秒（`maxRelayPairingTTL`）。Relay 收到 `pair_start` 时以自身时钟要求到期时间不晚于 now+5 分钟；若按满 5 分钟申请，网络延迟或亚秒级时钟偏差就会让 Relay 拒绝创建配对会话，而 Mobile 扫码后只会收到 `pairing_expired`。
+
 生成的 `waw://pair` URI payload 还携带配对时 daemon 所在电脑的 `computerName`，供 Mobile 在首次配对后保存显示名称；该名称不是后续连接状态的动态来源。
 
 remote.configure 接受合法的 HTTP 或 HTTPS origin，IP 和域名均可，例如 `http://172.20.31.206:18080`、`http://relay.example:18080`。HTTP 使用明文 WS，不提供传输层机密性和完整性；公网部署仍建议使用 HTTPS/WSS。remote.enroll 的一次性 token 只用于当前 HTTP(S) request，不持久化；注册生成的新 device identity 会立即关闭旧身份的 WebSocket，待 daemon 使用新身份重新连接后才允许继续配对或发送控制帧。管理页提供 Relay 地址、设备名称、enrollment token、注册/重连操作，以及生成、复制和真实 QR 展示包含 secret 的 `waw://pair` URI；QR 由受 CSRF 保护的本机 POST 端点生成并标记 `no-store`，同时保留复制链接兜底。待 Mobile proof 到达后可在页面直接 approve/reject，已提交的决定显示为等待 Relay 确认，已授权设备可直接 revoke。CLI 仍保留全部 remote 命令用于自动化和诊断。页面仅校验 URI并清零临时 secret buffer，不持久化配对 secret。

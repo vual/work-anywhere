@@ -31,3 +31,25 @@ func TestApprovalWithoutScopesSignsDesktopDefaults(t *testing.T) {
 		t.Fatal("default scope signature invalid")
 	}
 }
+
+func TestPairingTTLStaysInsideRelayWindow(t *testing.T) {
+	for _, tc := range []struct {
+		in, want time.Duration
+		ok       bool
+	}{
+		{0, maxRelayPairingTTL, true},
+		{5 * time.Minute, maxRelayPairingTTL, true},
+		{2 * time.Minute, 2 * time.Minute, true},
+		{10 * time.Second, 10 * time.Second, true},
+		{9 * time.Second, 0, false},
+		{5*time.Minute + time.Second, 0, false},
+	} {
+		got, err := pairingTTL(tc.in)
+		if (err == nil) != tc.ok || got != tc.want {
+			t.Fatalf("pairingTTL(%s) = %s, %v; want %s ok=%v", tc.in, got, err, tc.want, tc.ok)
+		}
+	}
+	if maxRelayPairingTTL >= 5*time.Minute {
+		t.Fatal("pairing TTL must leave a margin under the Relay's 5 minute limit")
+	}
+}
