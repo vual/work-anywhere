@@ -70,9 +70,32 @@ async function refresh(){
   q('daemon').textContent='运行中';
   q('pid').textContent=s.pid;
   q('uptime').textContent=Math.floor(s.uptimeSeconds/60)+' 分钟';
-  q('count').textContent=s.instances.length;
-  q('instances').innerHTML=s.instances.map(i=>`<article class="card"><div><h3>${escapeHtml(i.name||i.id.slice(0,12))}</h3><div class="meta">${escapeHtml(i.codexHome)} · ${escapeHtml(i.runtime.version||'未知版本')}</div></div><div class="state">${escapeHtml(i.state)}</div></article>`).join('')||'<div class="card meta">等待 ChatGPT Desktop 连接…</div>';
+  const agents=(Array.isArray(s.agents)?s.agents:[]).filter(a=>a.kind==='claude-code');
+  q('count').textContent=s.instances.length+agents.filter(a=>a.id).length;
+  q('claude-agents').innerHTML=agents.map(renderClaudeAgent).join('')||'<div class="card meta">未检测到 Claude Code</div>';
+  q('instances').innerHTML=s.instances.map(i=>`<article class="card"><div><h3>${escapeHtml(i.name||i.id.slice(0,12))}</h3><div class="meta">${escapeHtml(i.codexHome)} · ${escapeHtml(i.runtime.version||'未知版本')}</div></div><div class="state">${escapeHtml(i.state)}</div></article>`).join('')||'<div class="card meta">未连接 ChatGPT Desktop（可选）</div>';
+  renderStartup(s.startup||{});
   renderRemote(s.remote||{});
+}
+
+const claudeReasons={disabled:'已在设置中停用',not_found:'未找到 Claude Code 配置目录，请先安装并登录 Claude Code',start_failed:'启动失败'};
+function renderClaudeAgent(agent){
+  const claude=agent.claude||{};
+  const details=[agent.configDir,claude.runtimeVersion?`Claude ${claude.runtimeVersion}`:(claude.runtimeError?`运行时不可用：${claude.runtimeError}`:'')].filter(Boolean).map(escapeHtml).join(' · ');
+  const activity=agent.id?`活跃 Turn：${agent.activeTurn?'是':'否'} · 待处理审批：${agent.pendingActions||0}`:'';
+  const problem=[agent.reason?(claudeReasons[agent.reason]||agent.reason):'',agent.error||claude.lastProcessError||''].filter(Boolean).map(escapeHtml).join('：');
+  const ready=agent.id&&agent.status==='ready'&&!agent.reason;
+  return `<article class="card"><div><h3>${escapeHtml(agent.name||'Claude Code')}</h3><div class="meta">${details||'—'}</div>${activity?`<div class="meta">${escapeHtml(activity)}</div>`:''}${problem?`<div class="meta warn-text">${problem}</div>`:''}</div><div class="state${ready?'':' warn'}">${escapeHtml(agent.id?agent.status:'未启用')}</div></article>`;
+}
+
+function renderStartup(startup){
+  const autostart=startup.autostart||{};
+  const toggle=q('autostart');
+  toggle.disabled=!autostart.supported;
+  toggle.checked=!!autostart.enabled;
+  q('autostart-meta').textContent=startup.autostartError?`无法读取自启动设置：${startup.autostartError}`:!autostart.supported?'当前平台不支持自启动':autostart.enabled&&!autostart.current?'自启动指向其他位置的 work-anywhere.exe，取消后重新勾选即可指向当前程序':'';
+  const codex=startup.codexIntegration||{};
+  q('codex-integration').textContent=!codex.supported?'':codex.installed?'ChatGPT Codex Desktop 集成：已启用（CODEX_CLI_PATH 指向当前程序）':codex.codexCliPath?`ChatGPT Codex Desktop 集成：CODEX_CLI_PATH 指向其他程序（${codex.codexCliPath}）`:'ChatGPT Codex Desktop 集成：未启用，可运行 work-anywhere install 启用';
 }
 
 function renderRemote(remote){
@@ -121,6 +144,7 @@ function showError(error){q('error').textContent=remoteMessages[error.code]||err
 async function action(fn){q('error').textContent='';try{await fn();await refresh();}catch(error){showError(error);}}
 
 q('refresh').onclick=()=>action(async()=>{});
+q('autostart').onchange=(event)=>{const enabled=event.target.checked;action(()=>call('system.autostart.set',{enabled})).then(()=>refresh().catch(()=>{}));};
 q('relay-configure').onclick=()=>action(async()=>{const params={relayUrl:q('relay-url').value.trim(),displayName:q('relay-name').value.trim(),enabled:true};try{await call('remote.configure',params);}catch(error){if(error.code!=='relay_change_requires_reset')throw error;if(!confirm('更换 Relay 将清除当前远程身份和手机配对，继续吗？'))return;await call('remote.configure',{...params,resetIdentity:true});q('pair-uri').value='';await renderPairQR('');}});
 q('relay-enroll').onclick=()=>action(async()=>{try{await call('remote.register',{token:q('relay-token').value,displayName:q('relay-name').value.trim()});}finally{q('relay-token').value='';}});
 q('relay-legacy').onclick=()=>action(async()=>{try{await call('remote.enroll',{token:q('relay-token').value,displayName:q('relay-name').value.trim()});}finally{q('relay-token').value='';}});

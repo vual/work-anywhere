@@ -82,6 +82,22 @@ func UninstallBridge() error {
 		return err
 	}
 	defer key.Close()
+	// Codex integration is optional: leave CODEX_CLI_PATH alone unless it
+	// still points at this executable, so uninstalling never clobbers a value
+	// the user or another tool owns.
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	current, _, getErr := key.GetStringValue("CODEX_CLI_PATH")
+	if getErr != nil && !errors.Is(getErr, registry.ErrNotExist) {
+		return getErr
+	}
+	if getErr != nil || !samePath(current, self) {
+		_ = os.Remove(backupPath)
+		fmt.Println("CODEX_CLI_PATH does not point at this executable; left unchanged.")
+		return nil
+	}
 	if backup.HadValue {
 		err = key.SetStringValue("CODEX_CLI_PATH", backup.Value)
 	} else {
@@ -93,6 +109,7 @@ func UninstallBridge() error {
 	if err != nil {
 		return err
 	}
+	_ = os.Remove(backupPath)
 	broadcastEnvironmentChange()
 	fmt.Println("CODEX_CLI_PATH was restored. Restart ChatGPT Desktop to apply it.")
 	return nil
@@ -106,4 +123,28 @@ func broadcastEnvironmentChange() {
 	name, _ := syscall.UTF16PtrFromString("Environment")
 	var result uintptr
 	proc.Call(0xffff, 0x001A, 0, uintptr(unsafe.Pointer(name)), 0x0002, 2000, uintptr(unsafe.Pointer(&result)))
+}
+
+// Status reports whether the user-level CODEX_CLI_PATH points at this executable.
+func Status() (BridgeStatus, error) {
+	status := BridgeStatus{Supported: true}
+	self, err := os.Executable()
+	if err != nil {
+		return status, err
+	}
+	key, err := registry.OpenKey(registry.CURRENT_USER, `Environment`, registry.QUERY_VALUE)
+	if err != nil {
+		return status, err
+	}
+	defer key.Close()
+	current, _, err := key.GetStringValue("CODEX_CLI_PATH")
+	if errors.Is(err, registry.ErrNotExist) {
+		return status, nil
+	}
+	if err != nil {
+		return status, err
+	}
+	status.CodexCLIPath = current
+	status.Installed = samePath(current, self)
+	return status, nil
 }

@@ -19,7 +19,7 @@ Work Anywhere（WAW）让你在手机上管理电脑端的官方 ChatGPT Codex D
 
 ## 快速上手
 
-1. 安装或构建 Desktop，执行 `self-test`、`install` 后完全重启 Codex Desktop，详见[安装部署](#安装部署)。
+1. 安装或构建 Desktop；使用 Codex 时执行 `self-test`、`install` 后完全重启 Codex Desktop，只使用 Claude Code 时可跳过，详见[安装部署](#安装部署)。
 2. 使用 Docker Compose 和 PostgreSQL 部署 Relay，配置手机可访问的地址；公网部署建议使用 HTTPS，详见 [Relay 指南](relay/README.md)。
 3. 执行 `work-anywhere.exe ui` 打开电脑管理页，填写 Relay 地址并启用远程访问。默认 `invite` 模式需要邀请码；部署者可显式设置 `ENROLLMENT_MODE=self_service`，启用自动签名注册。
 4. 构建 [Android 测试应用](mobile/README.md#build-and-verification)，扫描电脑端配对二维码，再在电脑上批准手机。
@@ -140,7 +140,7 @@ Desktop 的 Windows 安装如下。Relay 的 Docker/PostgreSQL 部署、Desktop 
 ### 环境要求
 
 - Windows x64。
-- 已安装并可正常运行官方 ChatGPT Codex Desktop。
+- 使用 Codex 时需已安装并可正常运行官方 ChatGPT Codex Desktop；只使用 Claude Code 时需已安装并登录 Claude Code，不需要 ChatGPT Desktop。
 - 使用仓库内现有 EXE 时不需要安装 Go；从源码构建需要 Go 1.26.5 Windows x64 SDK。
 - 当前用户能够写入 `%LOCALAPPDATA%\WorkAnywhere`。
 
@@ -168,7 +168,12 @@ cd D:\CodeSpace\work-anywhere\desktop
 .\scripts\build-installer.ps1 -Version 0.1.0
 ```
 
-安装包输出为 `desktop\dist\windows-amd64\work-anywhere-setup-0.1.0.exe`。它使用当前用户安装模式，不需要管理员权限，安装到 `%LOCALAPPDATA%\Programs\WorkAnywhere`，安装阶段自动写入用户级 `CODEX_CLI_PATH`，备份原值，并在完成页提示完全退出后重启所有 ChatGPT Desktop 实例。卸载时会尝试停止 daemon 并恢复原环境变量，但不会删除 `%LOCALAPPDATA%\WorkAnywhere` 中的会话和配置数据。
+安装包输出为 `desktop\dist\windows-amd64\work-anywhere-setup-0.1.0.exe`。它使用当前用户安装模式，不需要管理员权限，安装到 `%LOCALAPPDATA%\Programs\WorkAnywhere`，并创建开始菜单“Work Anywhere”（打开管理页并按需启动 daemon）。安装任务包括：
+
+- “登录 Windows 时启动 Work Anywhere”：默认勾选，写入当前用户 Run 键，登录后后台运行 `daemon start --background`。
+- “集成 ChatGPT Codex Desktop”：可选，检测到 ChatGPT Codex Desktop 时首次安装默认勾选；勾选后写入用户级 `CODEX_CLI_PATH`、备份原值，并提示完全退出后重启所有 ChatGPT Desktop 实例。只使用 Claude Code 时可以不勾选。
+
+daemon 与 ChatGPT 拉起的 Bridge 在任务管理器中都显示为 `work-anywhere.exe`。卸载时依次停止 daemon、删除自启动项，并在 `CODEX_CLI_PATH` 仍指向本程序时恢复原值，但不会删除 `%LOCALAPPDATA%\WorkAnywhere` 中的会话和配置数据。
 
 ### 2. 安装前检查
 
@@ -220,7 +225,7 @@ $wa = 'D:\CodeSpace\work-anywhere\desktop\dist\windows-amd64\work-anywhere.exe'
 & $wa ui
 ```
 
-daemon 默认按需启动，不配置 Windows 登录自启动，也不会因 Desktop 窗口关闭或空闲而自动退出。`ui` 会打开仅监听 `127.0.0.1` 的本机管理页。
+daemon 可独立运行，不依赖 ChatGPT Desktop：可由登录自启动项、`ui`/`daemon start` 或 Bridge 按需启动，不会因 Desktop 窗口关闭或空闲而自动退出。`ui` 会打开仅监听 `127.0.0.1` 的本机管理页，其中展示 Claude Code 与 Codex 实例，并可在“启动设置”中开关登录自启动；CLI 等价命令为 `autostart enable|disable|status`。
 
 ### Relay 与 Mobile 联调
 

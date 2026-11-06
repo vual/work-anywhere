@@ -32,6 +32,10 @@ $iconFallback = Join-Path $repoRoot "packaging\windows\icon.png"
 $iconOutputDir = Join-Path $repoRoot "winres"
 $iconOutput = Join-Path $iconOutputDir "icon.png"
 $webIcon = Join-Path $repoRoot "internal\daemon\web\waw-app-icon.svg"
+$manifestSource = Join-Path $repoRoot "packaging\windows\work-anywhere.manifest"
+if (-not (Test-Path -LiteralPath $manifestSource)) {
+    throw "Windows application manifest is missing: $manifestSource"
+}
 if (-not (Test-Path -LiteralPath $iconSource)) {
     throw "Source icon is missing: $iconSource"
 }
@@ -72,7 +76,25 @@ try {
     $versionParts = [regex]::Matches($Version, '\d+') | ForEach-Object { $_.Value }
     while ($versionParts.Count -lt 4) { $versionParts += '0' }
     $resourceVersion = ($versionParts | Select-Object -First 4) -join '.'
-    & $goExe run github.com/tc-hib/go-winres@v0.3.3 simply --arch amd64 --out cmd/work-anywhere/rsrc --product-version $resourceVersion --file-version $resourceVersion --manifest cli --file-description "Work Anywhere Codex Bridge and Daemon" --product-name "Work Anywhere" --original-filename "work-anywhere.exe"
+    Copy-Item -LiteralPath $manifestSource -Destination (Join-Path $iconOutputDir "work-anywhere.manifest") -Force
+    $resourceDefinition = [ordered]@{
+        RT_GROUP_ICON = @{ "#1" = @{ "0000" = "icon.png" } }
+        RT_MANIFEST   = @{ "#1" = @{ "0409" = "work-anywhere.manifest" } }
+        RT_VERSION    = @{ "#1" = @{ "0000" = [ordered]@{
+            fixed = [ordered]@{ file_version = $resourceVersion; product_version = $resourceVersion }
+            info  = @{ "0409" = [ordered]@{
+                FileDescription  = "work-anywhere.exe"
+                FileVersion      = $resourceVersion
+                InternalName     = "work-anywhere"
+                OriginalFilename = "work-anywhere.exe"
+                ProductName      = "Work Anywhere"
+                ProductVersion   = $Version
+            } }
+        } } }
+    }
+    $resourceJSON = Join-Path $iconOutputDir "winres.json"
+    [System.IO.File]::WriteAllText($resourceJSON, ($resourceDefinition | ConvertTo-Json -Depth 8), [System.Text.UTF8Encoding]::new($false))
+    & $goExe run github.com/tc-hib/go-winres@v0.3.3 make --arch amd64 --in $resourceJSON --out cmd/work-anywhere/rsrc
     if ($LASTEXITCODE -ne 0) { throw "Windows resource generation failed." }
     & $goExe test ./...
     if ($LASTEXITCODE -ne 0) { throw "Tests failed." }

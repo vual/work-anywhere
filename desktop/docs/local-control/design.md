@@ -24,9 +24,9 @@ daemon 将控制方法路由到实例 supervisor。Mobile 请求的 `agentId` �
 
 当前固定控制方法：
 
-- 系统：`system.status`, `system.ui_url`, `system.control.pause`, `system.control.resume`, `system.shutdown`
+- 系统：`system.status`, `system.ui_url`, `system.control.pause`, `system.control.resume`, `system.shutdown`, `system.autostart.set`（参数 `enabled`；仅本机管理 contract，Mobile contract 调用返回错误，Relay scope 白名单不包含它）
 
-`system.status` 返回 daemon 运行电脑的 `computerName`（来自主机名）以及版本、进程、运行时长、实例和控制状态；Remote 转发给 Mobile 时仍移除 `remote` 字段。
+`system.status` 返回 daemon 运行电脑的 `computerName`（来自主机名）以及版本、进程、运行时长、实例和控制状态；Remote 转发给 Mobile 时仍移除 `remote` 字段。 本机管理 HTTP `GET /api/status` 额外附加 `agents`（backend 状态与 Claude Code 诊断、未启用原因）和 `startup`（自启动、`CODEX_CLI_PATH` 集成状态）；二者含本机路径，不进入 `system.status`，见 [管理页与生命周期](../administration-and-lifecycle/design.md)。
 - 实例：`instance.list`, `instance.get`, `instance.restart`
 - Mobile navigation：`agent.list`, `project.list`（要求 `mobile-control-v1`）
 - 会话：`conversation.list`, `conversation.read`, `conversation.timeline.list`, `conversation.content.read`, `conversation.content.resolve`, `conversation.subscribe`, `conversation.create`, `conversation.rename`, `conversation.settings.update`, `conversation.queue.add/update/delete/start`

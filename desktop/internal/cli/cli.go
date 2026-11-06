@@ -25,7 +25,7 @@ func IsCommand(args []string) bool {
 		return false
 	}
 	switch args[0] {
-	case "daemon", "status", "instance", "conversation", "turn", "action", "catalog", "traffic", "remote", "call", "ui", "self-test", "install", "uninstall", "version":
+	case "daemon", "status", "instance", "conversation", "turn", "action", "catalog", "traffic", "remote", "call", "ui", "self-test", "install", "uninstall", "autostart", "version":
 		return true
 	default:
 		return false
@@ -52,19 +52,33 @@ func Run(ctx context.Context, args []string, build appinfo.BuildInfo) error {
 		fmt.Printf("work-anywhere %s (%s, %s)\n", build.Version, build.Commit, build.Date)
 		return nil
 	}
+	if args[0] == "autostart" {
+		return runAutostart(args[1:])
+	}
 	if args[0] == "daemon" && len(args) > 1 && args[1] == "start" {
-		if _, err := dial(ctx, false); err == nil {
-			fmt.Println("daemon is already running")
-			return nil
-		}
-		if err := startDaemon(); err != nil {
+		background, err := parseDaemonStart(args[2:])
+		if err != nil {
 			return err
 		}
-		_, err := waitForDaemon(ctx)
-		if err == nil {
+		if conn, dialErr := dial(ctx, false); dialErr == nil {
+			conn.Close()
+			if !background {
+				fmt.Println("daemon is already running")
+			}
+			return nil
+		}
+		if err = startDaemon(); err != nil {
+			return err
+		}
+		conn, err := waitForDaemon(ctx)
+		if err != nil {
+			return err
+		}
+		conn.Close()
+		if !background {
 			fmt.Println("daemon started")
 		}
-		return err
+		return nil
 	}
 	method, params, start, err := parse(args)
 	if err != nil {
@@ -381,5 +395,5 @@ func printJSON(value any) error {
 }
 
 func usage() error {
-	return errors.New("usage: work-anywhere daemon <run|start|status|stop|force-stop> | status | instance <list|get|restart> | conversation list | action list | catalog <models|permissions> | remote <status|configure|register|enroll|pair|reconnect> | call <method> [json] | ui | install | uninstall | self-test | version")
+	return errors.New("usage: work-anywhere daemon <run|start|status|stop|force-stop> | status | instance <list|get|restart> | conversation list | action list | catalog <models|permissions> | remote <status|configure|register|enroll|pair|reconnect> | call <method> [json] | ui | install | uninstall | autostart <enable|disable|status> | self-test | version")
 }

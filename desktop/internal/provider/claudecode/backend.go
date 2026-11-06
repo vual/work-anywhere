@@ -782,3 +782,29 @@ func decodeListCursor(value string) (int64, string, error) {
 }
 
 var _ provider.Backend = (*Backend)(nil)
+
+// Diagnostics is the local administration view of the backend. It contains
+// local paths, so the daemon only exposes it to local (non-Mobile) callers.
+type Diagnostics struct {
+	ConfigDir        string `json:"configDir"`
+	Executable       string `json:"executable,omitempty"`
+	RuntimeVersion   string `json:"runtimeVersion,omitempty"`
+	RuntimeResolved  bool   `json:"runtimeResolved"`
+	RuntimeError     string `json:"runtimeError,omitempty"`
+	Processes        int    `json:"processes"`
+	LastProcessError string `json:"lastProcessError,omitempty"`
+}
+
+func (b *Backend) Diagnostics() Diagnostics {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return Diagnostics{
+		ConfigDir:        b.configDir,
+		Executable:       b.runtime.Executable,
+		RuntimeVersion:   b.runtime.Version,
+		RuntimeResolved:  b.runtimeReady,
+		RuntimeError:     b.runtimeError,
+		Processes:        len(b.processes),
+		LastProcessError: b.lastProcessError,
+	}
+}

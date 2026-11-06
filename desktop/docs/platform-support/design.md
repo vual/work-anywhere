@@ -37,6 +37,7 @@ internal/platform
   secrets        current-user key protection
   tray           native tray behind a Controller interface
   installation   platform bridge installation
+  autostart      per-user login autostart (HKCU Run)
 ```
 
 `packaging/<platform>/` 只保存安装、签名、图标和发行配置，不承载运行时业务代码。Windows 构建生成的 `.syso` 必须位于 Go command package，因此它是由构建脚本产生的中间资源，不代表平台逻辑回流到共享层。

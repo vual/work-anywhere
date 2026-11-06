@@ -37,10 +37,16 @@ func (m *Manager) startBackends() {
 		}
 	}
 	if settings.Enabled != nil && !*settings.Enabled {
+		m.setClaudeCodeInactive(claudeCodeDisabled, "", "")
 		return
 	}
 	configDir, err := claudecode.ResolveConfigDir(settings.ConfigDir)
-	if err != nil || (settings.Enabled == nil && !claudecode.Available(configDir)) {
+	if err != nil {
+		m.setClaudeCodeInactive(claudeCodeStartFailed, "", err.Error())
+		return
+	}
+	if settings.Enabled == nil && !claudecode.Available(configDir) {
+		m.setClaudeCodeInactive(claudeCodeNotFound, configDir, "")
 		return
 	}
 	options := claudecode.Options{ConfigDir: configDir, Executable: settings.Executable}
@@ -55,6 +61,9 @@ func (m *Manager) startBackends() {
 	backend, err := claudecode.New(options)
 	if err == nil {
 		err = m.registerBackend(backend)
+	}
+	if err != nil {
+		m.setClaudeCodeInactive(claudeCodeStartFailed, configDir, err.Error())
 	}
 	if err != nil && m.log != nil {
 		m.log.Event("claude_code.start_failed", map[string]any{"error": err.Error()})

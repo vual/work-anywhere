@@ -45,7 +45,14 @@ To create a per-user Windows installer, install Inno Setup 6 and run:
 .\scripts\build-installer.ps1 -Version 0.1.0
 ```
 
-The installer is written to `dist\windows-amd64\work-anywhere-setup-0.1.0.exe`. It installs under `%LOCALAPPDATA%\Programs\WorkAnywhere`, writes the user-level `CODEX_CLI_PATH`, preserves the previous value for uninstall, and prompts you to fully restart ChatGPT Desktop when setup finishes.
+The installer is written to `dist\windows-amd64\work-anywhere-setup-0.1.0.exe`. It installs under `%LOCALAPPDATA%\Programs\WorkAnywhere`, adds a Start menu "Work Anywhere" entry (opens the admin page and starts the daemon), enables login autostart by default, and optionally integrates ChatGPT Codex Desktop by writing the user-level `CODEX_CLI_PATH` (the previous value is preserved for uninstall, and you are prompted to fully restart ChatGPT Desktop). The daemon runs on its own, so Claude Code-only setups do not need ChatGPT Desktop. In Task Manager both the daemon and any ChatGPT-launched bridge appear as `work-anywhere.exe`. See the [installer design](docs/windows-installer/design.md).
+
+Login autostart can also be managed from the admin page or the CLI:
+
+```powershell
+.\dist\windows-amd64\work-anywhere.exe autostart enable|disable|status
+.\dist\windows-amd64\work-anywhere.exe daemon start --background
+```
 
 ## Try it without installing
 
@@ -68,7 +75,7 @@ Relay 使用 `self_service` 模式时，点击“启用远程访问”自动登�
 .\dist\windows-amd64\work-anywhere.exe install
 ```
 
-This backs up the current user-level `CODEX_CLI_PATH`, points it at the Go bridge, and broadcasts the Windows environment change. Restart each ChatGPT Desktop instance afterward. To restore the previous value:
+This backs up the current user-level `CODEX_CLI_PATH`, points it at the Go bridge, and broadcasts the Windows environment change. Restart each ChatGPT Desktop instance afterward. This step is only needed for Codex; Claude Code works without it. To restore the previous value (only applied while `CODEX_CLI_PATH` still points at this executable):
 
 ```powershell
 .\dist\windows-amd64\work-anywhere.exe uninstall

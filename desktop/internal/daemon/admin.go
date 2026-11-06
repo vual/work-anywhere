@@ -142,7 +142,14 @@ func (a *adminServer) status(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", 401)
 		return
 	}
-	writeJSON(w, a.manager.control(protocol.ControlRequest{Type: "request", ID: "http", Method: "system.status", Params: json.RawMessage(`{}`)}))
+	response := a.manager.control(protocol.ControlRequest{Type: "request", ID: "http", Method: "system.status", Params: json.RawMessage(`{}`)})
+	// Agent diagnostics and startup settings contain local paths; they are
+	// added only for the loopback administration page, not system.status.
+	if result, ok := response.Result.(map[string]any); ok && response.Error == nil {
+		result["agents"] = a.manager.agentSnapshots()
+		result["startup"] = startupSnapshot()
+	}
+	writeJSON(w, response)
 }
 
 func (a *adminServer) ws(w http.ResponseWriter, r *http.Request) {

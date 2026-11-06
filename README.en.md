@@ -19,7 +19,7 @@ The main Windows Desktop → Relay → Android control flow is implemented. The 
 
 ## Getting started
 
-1. Install or build Desktop, run `self-test`, then run `install` and fully restart Codex Desktop. See [Desktop installation](#installation-and-deployment).
+1. Install or build Desktop. For Codex, run `self-test`, then run `install` and fully restart Codex Desktop; Claude Code-only setups can skip this. See [Desktop installation](#installation-and-deployment).
 2. Deploy Relay with Docker Compose and PostgreSQL. Use a phone-reachable origin; public deployments should use HTTPS. See the [Relay guide](relay/README.md).
 3. Open the Desktop administration page with `work-anywhere.exe ui`, enter the Relay origin, and enable remote access. The default `invite` mode requires an invitation token; deployers can explicitly enable `ENROLLMENT_MODE=self_service` for automatic signed enrollment.
 4. Build the [Android test app](mobile/README.md#build-and-verification), scan the Desktop pairing QR, and approve the phone on the computer.
@@ -140,7 +140,7 @@ The Windows Desktop installation follows. For Docker/PostgreSQL Relay deployment
 ### Requirements
 
 - Windows x64.
-- A working installation of the official ChatGPT Codex Desktop.
+- For Codex, a working installation of the official ChatGPT Codex Desktop; for Claude Code only, an installed and signed-in Claude Code (ChatGPT Desktop is not required).
 - Go is not required when using an existing binary. Building from source requires the Go 1.26.5 Windows x64 SDK.
 - The current user must be able to write to `%LOCALAPPDATA%\WorkAnywhere`.
 
@@ -168,7 +168,12 @@ cd D:\CodeSpace\work-anywhere\desktop
 .\scripts\build-installer.ps1 -Version 0.1.0
 ```
 
-The installer is written to `desktop\dist\windows-amd64\work-anywhere-setup-0.1.0.exe`. It uses a per-user installation with no administrator privileges, installs under `%LOCALAPPDATA%\Programs\WorkAnywhere`, sets the current user's `CODEX_CLI_PATH`, backs up the previous value, and prompts you to fully exit and restart every ChatGPT Desktop instance after setup. Uninstallation attempts to stop the daemon and restore the previous environment variable, but leaves session and configuration data under `%LOCALAPPDATA%\WorkAnywhere` intact.
+The installer is written to `desktop\dist\windows-amd64\work-anywhere-setup-0.1.0.exe`. It uses a per-user installation with no administrator privileges, installs under `%LOCALAPPDATA%\Programs\WorkAnywhere`, and creates a Start menu "Work Anywhere" entry (opens the admin page and starts the daemon on demand). Setup tasks:
+
+- "Start Work Anywhere when I sign in to Windows": checked by default; writes the current user's Run key so `daemon start --background` runs at sign-in.
+- "Integrate ChatGPT Codex Desktop": optional, pre-checked on a fresh install when ChatGPT Codex Desktop is detected. It sets the current user's `CODEX_CLI_PATH`, backs up the previous value, and prompts you to fully exit and restart every ChatGPT Desktop instance. Claude Code-only setups can leave it unchecked.
+
+Both the daemon and the ChatGPT-launched bridge appear as `work-anywhere.exe` in Task Manager. Uninstallation stops the daemon, removes the autostart entry, and restores the previous `CODEX_CLI_PATH` only if it still points at this program, but leaves session and configuration data under `%LOCALAPPDATA%\WorkAnywhere` intact.
 
 ### 2. Run pre-installation checks
 
@@ -220,7 +225,7 @@ $wa = 'D:\CodeSpace\work-anywhere\desktop\dist\windows-amd64\work-anywhere.exe'
 & $wa ui
 ```
 
-The daemon starts on demand. It does not configure Windows login startup and does not exit automatically when Desktop closes or becomes idle. `ui` opens a local administration page bound only to `127.0.0.1`.
+The daemon runs on its own and does not depend on ChatGPT Desktop. It starts from the login autostart entry, from `ui`/`daemon start`, or on demand from the bridge, and does not exit automatically when Desktop closes or becomes idle. `ui` opens a local administration page bound only to `127.0.0.1`; it shows Claude Code and Codex instances and lets you toggle login autostart under "启动设置" (startup settings). The CLI equivalent is `autostart enable|disable|status`.
 
 ### Relay and Mobile integration
 

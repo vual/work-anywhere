@@ -17,6 +17,7 @@ import (
 	"github.com/hurf/work-anywhere/desktop/internal/config"
 	"github.com/hurf/work-anywhere/desktop/internal/ipc"
 	"github.com/hurf/work-anywhere/desktop/internal/logging"
+	"github.com/hurf/work-anywhere/desktop/internal/platform/autostart"
 	"github.com/hurf/work-anywhere/desktop/internal/platform/identity"
 	"github.com/hurf/work-anywhere/desktop/internal/platform/localipc"
 	"github.com/hurf/work-anywhere/desktop/internal/platform/paths"
@@ -29,39 +30,40 @@ import (
 )
 
 type Manager struct {
-	ctx               context.Context
-	cancel            context.CancelFunc
-	version           string
-	startedAt         time.Time
-	listener          net.Listener
-	job               *platformprocess.Group
-	admin             *adminServer
-	stopTray          func()
-	settings          *config.Store
-	configWriteMu     sync.Mutex
-	configWrites      sync.WaitGroup
-	syncEpoch         string
-	mu                sync.RWMutex
-	instances         map[string]*Instance
-	nextConn          atomic.Uint64
-	stopping          atomic.Bool
-	controlPaused     atomic.Bool
-	eventMu           sync.Mutex
-	subscribers       map[uint64]chan protocol.Event
-	nextSubscriber    uint64
-	eventPayloadBytes atomic.Int64
-	uploadMu          sync.Mutex
-	uploads           map[string]*attachmentUpload
-	attachments       map[string]*attachmentUpload
-	imageEncode       chan struct{}
-	contentRefMu      sync.Mutex
-	contentRefs       map[string]mobileContentRef
-	traffic           *traffic.Recorder
-	remote            *remote.Service
-	log               *logging.Logger
-	backendMu         sync.Mutex
-	backends          map[string]provider.Backend
-	backendVersions   map[string]*backendVersion
+	ctx                context.Context
+	cancel             context.CancelFunc
+	version            string
+	startedAt          time.Time
+	listener           net.Listener
+	job                *platformprocess.Group
+	admin              *adminServer
+	stopTray           func()
+	settings           *config.Store
+	configWriteMu      sync.Mutex
+	configWrites       sync.WaitGroup
+	syncEpoch          string
+	mu                 sync.RWMutex
+	instances          map[string]*Instance
+	nextConn           atomic.Uint64
+	stopping           atomic.Bool
+	controlPaused      atomic.Bool
+	eventMu            sync.Mutex
+	subscribers        map[uint64]chan protocol.Event
+	nextSubscriber     uint64
+	eventPayloadBytes  atomic.Int64
+	uploadMu           sync.Mutex
+	uploads            map[string]*attachmentUpload
+	attachments        map[string]*attachmentUpload
+	imageEncode        chan struct{}
+	contentRefMu       sync.Mutex
+	contentRefs        map[string]mobileContentRef
+	traffic            *traffic.Recorder
+	remote             *remote.Service
+	log                *logging.Logger
+	backendMu          sync.Mutex
+	backends           map[string]provider.Backend
+	backendVersions    map[string]*backendVersion
+	claudeCodeInactive *inactiveBackend
 }
 
 const maxEventPayloadMemory = int64(32 << 20)
@@ -476,6 +478,27 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 		response.Result = map[string]any{"version": m.version, "pid": os.Getpid(), "computerName": computerName, "uptimeSeconds": int64(time.Since(m.startedAt).Seconds()), "controlPaused": m.controlPaused.Load(), "instances": m.instanceSnapshots(), "remote": m.remote.Status()}
 	case "system.ui_url":
 		response.Result = map[string]string{"url": m.admin.OneTimeURL()}
+	case "system.autostart.set":
+		if request.Contract == protocol.MobileControlContract {
+			response.Error = &protocol.ControlError{Code: "forbidden", Message: "system.autostart.set is local only"}
+			break
+		}
+		var params struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if json.Unmarshal(request.Params, &params) != nil || params.Enabled == nil {
+			response.Error = &protocol.ControlError{Code: "invalid_params", Message: "enabled is required"}
+			break
+		}
+		setAutostart := autostart.Disable
+		if *params.Enabled {
+			setAutostart = autostart.Enable
+		}
+		if err := setAutostart(); err != nil {
+			response.Error = &protocol.ControlError{Code: "autostart_failed", Message: err.Error()}
+			break
+		}
+		response.Result = startupSnapshot()
 	case "system.control.pause":
 		m.controlPaused.Store(true)
 		response.Result = map[string]any{"paused": true}

@@ -97,6 +97,7 @@ Mobile ──Relay(E2EE)──► daemon.control()
 - **daemon 退出**：`system.shutdown` 的活跃 Turn 计数和托盘退出确认都包含 Claude Code Turn；确认中断后对每个活跃 Turn 发送 `interrupt`，与 Codex 共用最多 10 秒的等待，再终止进程。
 - **权限**：`fullAccess` 映射到 Claude Code 的 bypass 模式并在 catalog 中标记 `dangerous`；`readOnly` 不可选，避免把非只读模式伪装为只读。
 - 读取错误返回 `provider_error`，不影响 Codex 路径；大内容遵循与 Codex 相同的 contentRef 和响应上限。
+- **本机诊断**：`Backend.Diagnostics()` 返回配置目录、CLI 路径与版本、运行时解析错误、活跃进程数和最近进程错误；daemon 在 `startBackends()` 中记录未注册原因（`disabled` 设置停用、`not_found` 未找到配置目录、`start_failed` 启动失败）。两者只出现在本机管理页 `/api/status` 的 `agents` 字段，不进入 `provider.AgentSummary` 或 Mobile 投影。
 
 ## Invariants and non-goals
 
@@ -114,6 +115,7 @@ Mobile ──Relay(E2EE)──► daemon.control()
   - `session.go`：CLI 进程、stream-json 解析、控制请求与回复
   - `runtime.go`：CLI 解析、版本门控、环境净化、启动参数、模型与权限目录
   - `transcript.go`：转录解析与投影
+- 管理页 Agent 快照与未启用原因：`internal/daemon/admin_agents.go`
 - daemon 路由、版本、事件与附件：`internal/daemon/backends.go`，共享附件存储 `beginAttachment`（`internal/daemon/daemon.go`）
 - 进程存活检查：`internal/platform/processinfo/alive_*.go`
 - 测试数据：`testdata/claude-code/transcripts/`（合成转录）、`testdata/claude-code/<version>/`（headless 协议录制，见 [`protocol.md`](protocol.md)）

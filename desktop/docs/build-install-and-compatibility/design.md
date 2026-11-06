@@ -14,9 +14,9 @@ desktop/dist/windows-amd64/work-anywhere.exe
 
 `scripts/build.ps1 -OutputDirectory <绝对目录>` 可把同样的测试、资源和构建流程输出到候选目录，默认输出位置不变。正在使用的 EXE 不覆盖；候选自检及隔离测试通过后，在所有 Turn/action 空闲且旧 daemon 正常停止后替换，保留原 EXE 供回滚。
 
-一个 EXE 同时包含 Bridge、daemon 和 CLI。版本、commit 和 UTC build date 通过 linker flags 写入；PE resource 保存 file/product version。
+一个 EXE 同时包含 Bridge、daemon 和 CLI。版本、commit 和 UTC build date 通过 linker flags 写入。`build.ps1` 生成 `winres/winres.json` 并调用 `go-winres make`，写入 icon、version 与 manifest resource：version resource 的 `FileDescription` 为 `work-anywhere.exe`（任务管理器中 Bridge 与 daemon 都显示该名称，不含 Codex 字样），`ProductName` 为 `Work Anywhere`；manifest 来自 [`packaging/windows/work-anywhere.manifest`](../../packaging/windows/work-anywhere.manifest)，声明 `asInvoker`、supportedOS 和 `consoleAllocationPolicy=detached`。Windows 11 24H2 / Server 2025 起，资源管理器、开始菜单和登录自启动不会为 EXE 分配控制台，终端中运行时仍继承控制台、ChatGPT Desktop 管道启动的 Bridge stdio 不受影响；旧系统忽略该元素，自启动时会短暂闪现控制台窗口。
 
-Windows 分发安装包由 `scripts/build-installer.ps1` 调用 Inno Setup 6 生成。安装包采用当前用户模式，默认目录为 `%LOCALAPPDATA%\Programs\WorkAnywhere`，不申请管理员权限；安装器在文件复制完成后调用同一个 EXE 的 `install` 命令完成 `CODEX_CLI_PATH` 写入，卸载时调用 `uninstall` 恢复原值。
+Windows 分发安装包由 `scripts/build-installer.ps1` 调用 Inno Setup 6 生成。安装包采用当前用户模式，默认目录为 `%LOCALAPPDATA%\Programs\WorkAnywhere`，不申请管理员权限；安装器在文件复制完成后按所选任务调用同一个 EXE 的 `autostart enable` 与可选的 `install`，卸载时依次调用 `daemon stop`、`autostart disable`、`uninstall`，详见 [Windows installer](../windows-installer/design.md)。
 
 ## Installation interfaces
 
@@ -27,7 +27,7 @@ work-anywhere.exe install
 work-anywhere.exe uninstall
 ```
 
-`install` 备份当前用户级 `CODEX_CLI_PATH`，把它指向当前 EXE，并广播 Windows environment change。`uninstall` 恢复备份值。正在运行的 ChatGPT Desktop 不会自动继承新环境，安装/卸载后需要重启相关 Desktop 实例。
+`install` 备份当前用户级 `CODEX_CLI_PATH`，把它指向当前 EXE，并广播 Windows environment change。`uninstall` 仅在该变量仍指向当前 EXE 时恢复备份值（无备份则删除），否则保持不变。只使用 Claude Code 时不需要 `install`。正在运行的 ChatGPT Desktop 不会自动继承新环境，安装/卸载后需要重启相关 Desktop 实例。
 
 安装包构建接口为：
 

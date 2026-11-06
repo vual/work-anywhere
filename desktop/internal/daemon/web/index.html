@@ -11,8 +11,14 @@
 <body>
   <main>
     <header><div class="brand"><img src="/waw-app-icon.svg" alt="Work Anywhere icon"><div><p class="eyebrow">LOCAL CONTROL PLANE</p><h1>Work Anywhere</h1></div></div><span id="daemon" class="badge">连接中</span></header>
-    <section class="summary"><div><small>Daemon PID</small><strong id="pid">—</strong></div><div><small>运行时间</small><strong id="uptime">—</strong></div><div><small>Codex 实例</small><strong id="count">—</strong></div></section>
-    <section><div class="section-title"><h2>Codex 实例</h2><button id="refresh">刷新</button></div><div id="instances" class="instances"></div></section>
+    <section class="summary"><div><small>Daemon PID</small><strong id="pid">—</strong></div><div><small>运行时间</small><strong id="uptime">—</strong></div><div><small>Agent 实例</small><strong id="count">—</strong></div></section>
+    <section><div class="section-title"><h2>Agent 实例</h2><button id="refresh">刷新</button></div><h3 class="group-title">Claude Code</h3><div id="claude-agents" class="instances"></div><h3 class="group-title">Codex</h3><div id="instances" class="instances"></div></section>
+    <section class="panel">
+      <div class="section-title"><div><h2>启动设置</h2><p class="meta">Work Anywhere 可独立运行，不依赖 ChatGPT Desktop</p></div></div>
+      <label class="toggle"><input id="autostart" type="checkbox">登录 Windows 时启动 Work Anywhere</label>
+      <p id="autostart-meta" class="meta"></p>
+      <p id="codex-integration" class="meta"></p>
+    </section>
     <section class="panel">
       <div class="section-title"><div><h2>Relay 连接</h2><p class="meta">配置 Relay 并完成 Desktop 与移动端配对</p></div><span id="relay-connection" class="state">未连接</span></div>
       <div class="form-grid">
