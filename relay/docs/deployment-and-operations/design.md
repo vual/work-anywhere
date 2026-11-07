@@ -16,7 +16,15 @@ V1 只有一个 Relay 节点。不能横向复制容器：在线 device registry
 
 ## Build and artifacts
 
-Relay 与 Desktop 都声明 `go 1.26.0`、固定 `toolchain go1.27.3`。[`scripts/build.ps1`](../../scripts/build.ps1) 构建本地 binary；[`Dockerfile`](../../Dockerfile) 使用 Go 1.27.3 builder、`CGO_ENABLED=0` 和 distroless nonroot runtime。生产镜像只包含 `relay`，不包含 dev simulator。
+Relay 与 Desktop 都声明 `go 1.26.0`、固定 `toolchain go1.27.3`。[`scripts/build.ps1`](../../scripts/build.ps1) 构建本地 binary；[`Dockerfile`](../../Dockerfile) 使用 Go 1.27.3 builder、`CGO_ENABLED=0` 和 distroless nonroot runtime。生产镜像只包含 `relay`，不包含 dev simulator。builder 阶段以 `$BUILDPLATFORM` 原生运行，并按 `TARGETOS`/`TARGETARCH` 交叉编译（未使用 buildx 时默认 linux/amd64）。runtime 阶段不执行任何命令，因此多架构构建不需要 QEMU。
+
+发布 GitHub Release（或通过 `workflow_dispatch` 指定已有 tag）时，[release.yml](../../../.github/workflows/release.yml) 的 `relay-image` job 用 buildx 构建 linux/amd64 + linux/arm64 镜像，并推送到 `ghcr.io/<owner>/work-anywhere-relay`：
+
+- tag 为 `<version>`（去掉前缀 `v`）和 `<major>.<minor>`；非预发布 semver 版本同时更新 `latest`。
+- build args 写入 version、tag 对应的 commit 和 UTC 构建时间，可通过 `buildinfo` 查看。
+- GHCR 包首次推送后默认为 private，需要在包设置中改为 public 才能匿名拉取。
+
+[`compose.yaml`](../../compose.yaml) 的 relay/migrate 服务使用 `image: ${RELAY_IMAGE:-work-anywhere-relay:local}`：未设置时从本地构建，设置后可以 `docker compose pull` 并以 `up --no-build` 运行已发布的镜像。镜像目前不做签名、SBOM 或漏洞扫描。
 
 ## Runtime configuration
 
@@ -81,6 +89,7 @@ V1 不要求 Kubernetes、Redis、NATS、Kafka、对象存储或多区域数据�
 - process/config/server：`cmd/relay/`, `internal/config/`, `internal/server/`
 - schema/migration：`migrations/`, `internal/store/`
 - image/dev stack：`Dockerfile`, `.dockerignore`, `compose.yaml`
+- release image publishing：`.github/workflows/release.yml`（`relay-image` job）
 - build/schema scripts：`scripts/`
 
 ## 验证方式

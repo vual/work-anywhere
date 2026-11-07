@@ -15,6 +15,7 @@ services:
 
   migrate:
     build: .
+    image: ${RELAY_IMAGE:-work-anywhere-relay:local}
     command: ["migrate", "up"]
     environment: &relay-env
       RELAY_PUBLIC_URL: ${RELAY_PUBLIC_URL:-http://127.0.0.1:18080}
@@ -30,6 +31,7 @@ services:
 
   relay:
     build: .
+    image: ${RELAY_IMAGE:-work-anywhere-relay:local}
     ports:
       - "${RELAY_HOST_BIND_IP:-127.0.0.1}:${RELAY_HOST_PORT:-18080}:8080"
     environment:

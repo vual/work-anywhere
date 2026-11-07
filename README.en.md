@@ -186,7 +186,7 @@ cd <repo>\desktop
 
 The build script uses the pinned Go 1.27.3 toolchain under `desktop\.tools\go-sdk\go`, runs the tests, and produces a single Windows x64 executable.
 
-Publishing a GitHub Release triggers the [`Release` workflow](.github/workflows/release.yml), which builds the Desktop EXE, the Windows installer, and the Android APK and attaches them to that release. See the [Mobile guide](mobile/README.md) for the secrets required for Android release signing.
+Publishing a GitHub Release triggers the [`Release` workflow](.github/workflows/release.yml), which builds the Desktop EXE, the Windows installer, and the Android APK and attaches them to that release. It also pushes the Relay image to `ghcr.io/vual/work-anywhere-relay` (see the [Relay guide](relay/README.md)). See the [Mobile guide](mobile/README.md) for the secrets required for Android release signing.
 
 To create a distributable Windows installer, install Inno Setup 6 and run:
 
