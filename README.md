@@ -5,9 +5,9 @@
   <p><strong>简体中文</strong> | <a href="README.en.md">English</a></p>
 </div>
 
-Work Anywhere（WAW）让你在手机上管理电脑端的官方 ChatGPT Codex Desktop：查看任务进度、继续会话、在已有项目中新建对话，以及处理审批和问题，离开电脑也能继续推进工作。
+Work Anywhere（WAW）让你在手机上管理电脑端的官方 ChatGPT Codex Desktop 和本机 Claude Code：查看任务进度、继续会话、在已有项目中新建对话，以及处理审批和问题，离开电脑也能继续推进工作。
 
-**Windows Desktop → Relay → Android 的主要远程控制功能已实现。** 电脑端继续使用官方 Codex Desktop，WAW 提供本机 Bridge、加密中继和手机工作台。无需注册 WAW 账号；Codex 的认证和服务访问仍由官方 Desktop 的配置决定。
+**Windows Desktop → Relay → Android 的主要远程控制功能已实现。** 电脑端继续使用官方 Codex Desktop 或 Claude Code，WAW 提供本机 Bridge、加密中继和手机工作台。无需注册 WAW 账号；Codex 的认证和服务访问仍由官方 Desktop 的配置决定，Claude Code 使用电脑上已登录的 Claude Code 配置。
 
 ## 界面预览
 
@@ -26,9 +26,9 @@ Work Anywhere（WAW）让你在手机上管理电脑端的官方 ChatGPT Codex D
 
 | 模块 | 已实现能力 | 当前状态 |
 | --- | --- | --- |
-| [Desktop](desktop/README.md) | 官方 App Server 托管、多实例、本机管理页与托盘、远程控制、二维码配对 | 支持 Windows x64 |
+| [Desktop](desktop/README.md) | 官方 App Server 托管、多实例、Claude Code 接入、独立 daemon 与登录自启动、本机管理页与托盘、远程控制、二维码配对 | 支持 Windows x64 |
 | [Relay](relay/README.md) | 设备认证、邀请/自助注册、配对、密文路由、PostgreSQL 持久化 | 单节点 V1 已实现，可通过 Docker Compose 部署 |
-| [Mobile](mobile/README.md) | 多电脑工作台、项目与会话、实时时间线、文字/图片输入、问题与审批、消息排队 | Android 实现和测试 APK 构建已提供，发布验收尚未完成 |
+| [Mobile](mobile/README.md) | 多电脑工作台、Codex/Claude Code 切换、项目与会话、对话重命名、实时时间线、文字/图片输入、问题与审批、消息排队 | Android 实现和测试 APK 构建已提供，发布验收尚未完成 |
 
 ## 快速上手
 
@@ -66,10 +66,12 @@ Relay V1 提供：
 Android Mobile 提供：
 
 - 多电脑扫码配对与切换，以及排序、启用/禁用、名称和 Relay 地址管理。
+- 在 Codex 与 Claude Code 之间切换；已加载的 Agent、项目和项目对话列表缓存在 App 进程内存中，切回时无需重新请求，下拉刷新重新加载。
 - 项目与会话浏览、搜索、实时增量更新、历史分页和大内容按需读取。
-- 在已有 Codex 项目中新建对话、发送文字/图片和中断 Turn。
+- 在已有 Codex 或 Claude Code 项目中新建对话、发送文字/图片和中断 Turn；电脑端正在使用的 Claude Code 会话只读显示。
+- 会话菜单支持重命名对话、复制对话串 ID 和刷新。
 - 按会话选择计划模式、模型、思考等级和执行权限。
-- 在 Turn 运行中继续输入，并按 provider 支持编辑、立即引导或取消排队消息。
+- 在 Turn 运行中继续输入，并按 provider 支持编辑、立即引导或取消排队消息（Claude Code 不支持运行中排队）。
 - 多问题回答弹窗、待处理提醒和命令审批的允许/拒绝操作。
 - 中英文界面，以及 Android Keystore 保护的配对凭据存储。
 
@@ -86,11 +88,11 @@ ChatGPT Desktop B ─► Bridge B ─┼─────────────�
                                │                              ▼
 Local CLI / Admin page ────────┘                       Desktop daemon
                                                              │
-                                      ┌──────────────────────┼─────────────────────┐
-                                      ▼                      ▼                     ▼
-                              Codex App Server A      Codex App Server B      Bounded memory + JSON config
-                                      │                      │
-                                      └──── official Codex sessions ────┘
+              ┌──────────────────────┬───────────────────────┼──────────────────────┐
+              ▼                      ▼                       ▼                      ▼
+     Codex App Server A     Codex App Server B      Claude Code backend   Bounded memory + JSON config
+              │                      │                 │           │
+              └─── Codex sessions ───┘            claude.exe ~/.claude/projects
 
 Mobile / dev simulator ◄════ Noise E2EE over WSS ════► Relay ◄════ outbound WSS ════► daemon
 ```
@@ -104,7 +106,9 @@ work-anywhere.exe <command>        本机控制 CLI
 其他 Codex 参数                    透传给真实 codex.exe
 ```
 
-正式长驻链路使用官方 App Server 的 stdio JSONL。`app-server --print-startup-config`（含 `--startup-sign-out`）、帮助、schema、daemon/proxy 和非 stdio transport 原样透传官方 CLI，不接入 WAW daemon；未知命令形态也透传，由官方校验。官方 Desktop 在 `app-server` 前附加 `-c key=value` 等全局参数时，Bridge 仍能正确识别并保留这些参数。Bridge 与 daemon 之间使用带版本和长度前缀的 WAI1 Named Pipe 协议；daemon 负责 JSON-RPC ID 隔离、初始化虚拟化、审批仲裁、App Server 生命周期和本机控制 API。
+Claude Code 不经过 Bridge：daemon 只读扫描 `~/.claude/projects` 中的会话转录，并在 Mobile 发送时为每个会话启动一个 headless `claude.exe`（stream-json stdio），详见 [Claude Code provider 设计](desktop/docs/claude-code-provider/design.md)。
+
+Codex 的正式长驻链路使用官方 App Server 的 stdio JSONL。`app-server --print-startup-config`（含 `--startup-sign-out`）、帮助、schema、daemon/proxy 和非 stdio transport 原样透传官方 CLI，不接入 WAW daemon；未知命令形态也透传，由官方校验。官方 Desktop 在 `app-server` 前附加 `-c key=value` 等全局参数时，Bridge 仍能正确识别并保留这些参数。Bridge 与 daemon 之间使用带版本和长度前缀的 WAI1 Named Pipe 协议；daemon 负责 JSON-RPC ID 隔离、初始化虚拟化、审批仲裁、App Server 生命周期和本机控制 API。
 
 ## 仓库结构
 
@@ -129,9 +133,9 @@ work-anywhere/
 │  │  ├─ daemon/                App Server supervisor 和控制面
 │  │  ├─ codex/                 Codex runtime、实例和参数处理
 │  │  ├─ jsonrpc/               JSON-RPC envelope 与 ID
-│  │  ├─ provider/              可扩展 Provider 接口
+│  │  ├─ provider/              可扩展 Provider 接口与 Claude Code 后端（claudecode/）
 │  │  ├─ config/                DPAPI 保护的 JSON 配置
-│  │  └─ platform/              Windows/macOS/Linux 平台适配边界
+│  │  └─ platform/              Windows/macOS/Linux 平台适配边界（含登录自启动）
 │  ├─ packaging/                各平台安装、签名和发行配置
 │  ├─ docs/                     当前状态设计文档
 │  ├─ scripts/                  构建脚本
@@ -148,7 +152,7 @@ work-anywhere/
 
 ## 安装部署
 
-Desktop 的 Windows 安装如下。Relay 的 Docker/PostgreSQL 部署、Desktop 配对和 Mobile 联调步骤见 [`relay/README.md`](relay/README.md)；Mobile 的构建与验证步骤见 [`mobile/README.md`](mobile/README.md)。
+Desktop 的 Windows 安装如下。Relay 的 Docker/PostgreSQL 部署、Desktop 配对和 Mobile 联调步骤见 [`relay/README.md`](relay/README.md)；Mobile 的构建与验证步骤见 [`mobile/README.md`](mobile/README.md)。下文命令中的 `<repo>` 表示本仓库的本地克隆目录。
 
 ### 环境要求
 
@@ -168,7 +172,7 @@ desktop\dist\windows-amd64\work-anywhere.exe
 从源码重新构建：
 
 ```powershell
-cd D:\CodeSpace\work-anywhere\desktop
+cd <repo>\desktop
 .\scripts\build.ps1
 ```
 
@@ -177,7 +181,7 @@ cd D:\CodeSpace\work-anywhere\desktop
 如果需要生成可分发的 Windows 安装包，请先安装 Inno Setup 6，然后执行：
 
 ```powershell
-cd D:\CodeSpace\work-anywhere\desktop
+cd <repo>\desktop
 .\scripts\build-installer.ps1 -Version 0.1.0
 ```
 
@@ -191,7 +195,7 @@ daemon 与 ChatGPT 拉起的 Bridge 在任务管理器中都显示为 `work-anyw
 ### 2. 安装前检查
 
 ```powershell
-cd D:\CodeSpace\work-anywhere\desktop
+cd <repo>\desktop
 .\dist\windows-amd64\work-anywhere.exe version
 .\dist\windows-amd64\work-anywhere.exe self-test
 .\dist\windows-amd64\work-anywhere.exe self-test --protocol
@@ -232,7 +236,7 @@ $env:WORK_ANYWHERE_INSTANCE_NAME = 'work'
 打开 ChatGPT Desktop 后执行：
 
 ```powershell
-$wa = 'D:\CodeSpace\work-anywhere\desktop\dist\windows-amd64\work-anywhere.exe'
+$wa = '<repo>\desktop\dist\windows-amd64\work-anywhere.exe'
 & $wa daemon status
 & $wa instance list
 & $wa ui
@@ -245,7 +249,7 @@ daemon 可独立运行，不依赖 ChatGPT Desktop：可由登录自启动项、
 完成 Desktop 安装后，可使用 Relay 和 Android-first Mobile 测试客户端验证远程链路：
 
 ```powershell
-cd D:\CodeSpace\work-anywhere\relay
+cd <repo>\relay
 Copy-Item .env.example .env
 # 按 relay/README.md 生成 RELAY_DATA_KEY 后启动
 docker compose up --build -d
@@ -260,7 +264,7 @@ docker compose exec relay /relay enrollment create --ttl 24h --uses 1
 以下示例假设：
 
 ```powershell
-$wa = 'D:\CodeSpace\work-anywhere\desktop\dist\windows-amd64\work-anywhere.exe'
+$wa = '<repo>\desktop\dist\windows-amd64\work-anywhere.exe'
 ```
 
 ### daemon 和实例
@@ -313,14 +317,14 @@ $wa = 'D:\CodeSpace\work-anywhere\desktop\dist\windows-amd64\work-anywhere.exe'
 %LOCALAPPDATA%\WorkAnywhere
 ```
 
-- 实例、会话、Turn、Timeline、pending action 和附件索引只存在 daemon 的有界内存中；重启后从官方 Codex session 重新读取。
+- 实例、会话、Turn、Timeline、pending action 和附件索引只存在 daemon 的有界内存中；重启后从官方 Codex session 和 Claude Code 转录重新读取。
 - Relay 身份、配对和 thread 设置保存在 `%USERPROFILE%\.work-anywhere\config.json`，配置值由当前 Windows 用户的 DPAPI 保护并原子替换。
 - 远程图片附件使用项目目录的 `.work-anywhere-remote-attachments` 作为临时 spool；明确受理后删除，失败或结果未知时最多保留 24 小时。
 - 每会话事件回放、全局 payload、Delta 聚合、远端发送队列和 Mobile 流式正文均有固定内存上限；慢设备通过失效提示和快照收敛。
 - Bridge 与 daemon 的 Named Pipe 使用当前用户 SID ACL。
 - 管理页只监听随机 loopback 端口，并使用一次性 token、SameSite session、Origin 和 CSRF 校验。
 - 完整进程环境和普通消息正文不落盘；完整 JSONL 流量默认不记录。
-- 官方 Codex session 文件仍是完整会话的唯一权威数据源，Work Anywhere 不维护消息历史数据库。
+- 官方 Codex session 文件和 Claude Code 转录（`~/.claude/projects/*/*.jsonl`）是各自会话的唯一权威数据源，Work Anywhere 不维护消息历史数据库。daemon 只在重命名 Claude Code 会话时向转录追加一行 `custom-title`（与 CLI `/rename` 相同），其余内容由 `claude.exe` 自身写入。
 
 ## 停止与卸载
 
@@ -342,7 +346,13 @@ $wa = 'D:\CodeSpace\work-anywhere\desktop\dist\windows-amd64\work-anywhere.exe'
 & $wa uninstall
 ```
 
-卸载会恢复安装时备份的用户级 `CODEX_CLI_PATH`。之后同样需要完全重启 ChatGPT Desktop。
+卸载会恢复安装时备份的用户级 `CODEX_CLI_PATH`。之后同样需要完全重启 ChatGPT Desktop。`uninstall` 不会删除登录自启动项；不再需要 daemon 随登录启动时另行执行：
+
+```powershell
+& $wa autostart disable
+```
+
+使用安装包安装时，通过 Windows“已安装的应用”卸载会自动停止 daemon、删除自启动项并恢复 `CODEX_CLI_PATH`。
 
 ## 故障排查
 
@@ -370,7 +380,7 @@ $wa = 'D:\CodeSpace\work-anywhere\desktop\dist\windows-amd64\work-anywhere.exe'
 ## 开发与验证
 
 ```powershell
-cd D:\CodeSpace\work-anywhere\desktop
+cd <repo>\desktop
 .\.tools\go-sdk\go\bin\go.exe test ./...
 .\.tools\go-sdk\go\bin\go.exe vet ./...
 .\scripts\build.ps1
@@ -386,7 +396,7 @@ cd D:\CodeSpace\work-anywhere\desktop
 - Mobile 尚未完成真机和生产发布验收；浏览器 Mobile simulator 仅用于协议联调，不是生产客户端。
 - Relay 已实现 APNs/FCM provider 和 River 队列，但真实 Apple sandbox/FCM 项目验证需要部署者提供凭据。
 - Relay V1 只支持单节点在线路由，不提供离线命令、多节点路由或 Work Anywhere 用户账号。
-- 当前只有 Codex Provider；Claude Code、OpenCode、Hermes、Pi 等 driver 尚未实现。
+- 当前支持 Codex 和 Claude Code 两个 Provider；OpenCode、Hermes、Pi 等 driver 尚未实现。Claude Code 不支持运行中排队或引导消息，电脑端正在使用的 Claude Code 会话只读。
 - `CODEX_CLI_PATH` 是当前可用的 Desktop 接入点，但不保证官方永久保持兼容。
 - 实验性 WebSocket 仅由 `app-server --standalone-ws` 用于诊断，正式 daemon 链路始终使用 stdio。
 - 仓库中的 `desktop/codex-stdio-ws-bridge` 是旧 C# 回滚版本，不参与当前 Go 构建。

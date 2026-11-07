@@ -282,7 +282,7 @@ Daemon selector 底部提供“添加电脑”和“管理电脑”。管理页�
 - 不显示超出 scope 的可操作按钮，不在离线时接受会稍后发送的输入。
 - App 不使用底部导航；Daemon 与 Agent 选择是工作台上下文，不是独立 tab。
 - V1 优先适配 Codex；Hermes 使用 Bot 而非项目的能力模型已保留，但 Bot UI/协议尚未实现。Claude Code、OpenCode、Pi 等同样不得显示为已支持。
-- V1 不提供通知内 action、不持久化草稿/正文、不支持多选批量审批；Agent 项目/最近对话缓存与项目对话列表缓存只存在于当前 App 进程内存，不写入本地存储或数据库，冷启动和离线时不提供缓存列表；搜索只覆盖项目 metadata 与对话可搜索字段，不承诺本地全文索引。新建 thread 仅支持当前已同步的 Codex 项目，不提供独立于项目的空白 thread。
+- V1 不提供通知内 action、不持久化草稿/正文、不支持多选批量审批；Agent 项目/最近对话缓存与项目对话列表缓存只存在于当前 App 进程内存，不写入本地存储或数据库，冷启动和离线时不提供缓存列表；搜索只覆盖项目 metadata 与对话可搜索字段，不承诺本地全文索引。新建 thread 仅支持当前已同步的 Codex 或 Claude Code 项目（Agent `capabilities.createConversation` 不为 false），不提供独立于项目的空白 thread。
 
 ## 代码归属
 

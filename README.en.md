@@ -5,9 +5,9 @@
   <p><strong>English</strong> | <a href="README.md">简体中文</a></p>
 </div>
 
-Work Anywhere (WAW) lets you manage the official ChatGPT Codex Desktop from your phone: follow running tasks, continue conversations, create conversations within existing projects, and respond to approvals and questions while away from your computer.
+Work Anywhere (WAW) lets you manage the official ChatGPT Codex Desktop and your local Claude Code from your phone: follow running tasks, continue conversations, create conversations within existing projects, and respond to approvals and questions while away from your computer.
 
-The main Windows Desktop → Relay → Android control flow is implemented. The official Codex Desktop remains the desktop interface; WAW adds a local Bridge, an encrypted relay, and a mobile workspace. You do not need a WAW account. Codex authentication and service access still depend on your official Desktop configuration.
+The main Windows Desktop → Relay → Android control flow is implemented. The official Codex Desktop or Claude Code remains the desktop interface; WAW adds a local Bridge, an encrypted relay, and a mobile workspace. You do not need a WAW account. Codex authentication and service access still depend on your official Desktop configuration, and Claude Code uses the signed-in Claude Code configuration on the computer.
 
 ## Screenshots
 
@@ -26,9 +26,9 @@ The main Windows Desktop → Relay → Android control flow is implemented. The 
 
 | Module | Implemented capabilities | Status |
 | --- | --- | --- |
-| [Desktop](desktop/README.md) | Official App Server supervision, multiple instances, local administration and tray, remote control, QR pairing | Windows x64 supported |
+| [Desktop](desktop/README.md) | Official App Server supervision, multiple instances, Claude Code integration, standalone daemon with login autostart, local administration and tray, remote control, QR pairing | Windows x64 supported |
 | [Relay](relay/README.md) | Device authentication, invitation/self-service enrollment, pairing, encrypted routing, PostgreSQL persistence | Single-node V1 implemented; Docker Compose deployment |
-| [Mobile](mobile/README.md) | Multi-computer workspace, projects and conversations, live timeline, text/image input, questions, approvals, and queued messages | Android implementation and tester APK build available; release validation incomplete |
+| [Mobile](mobile/README.md) | Multi-computer workspace, Codex/Claude Code switching, projects and conversations, conversation rename, live timeline, text/image input, questions, approvals, and queued messages | Android implementation and tester APK build available; release validation incomplete |
 
 ## Getting started
 
@@ -66,10 +66,12 @@ Relay V1 provides:
 Mobile for Android provides:
 
 - Pairing with multiple computers, switching between them, and managing their order, enabled state, names, and Relay origins.
+- Switching between Codex and Claude Code. Loaded agent, project, and project-conversation lists are cached in app-process memory, so switching back does not refetch them; pull-to-refresh reloads.
 - Project and conversation navigation, search, live updates, paginated history, and on-demand large-content loading.
-- New conversations within existing Codex projects, text/image input, and Turn interruption.
+- New conversations within existing Codex or Claude Code projects, text/image input, and Turn interruption. Claude Code sessions open on the computer are shown read-only.
+- A conversation menu to rename the conversation, copy its thread ID, and refresh.
 - Per-conversation plan mode, model, reasoning effort, and execution permissions.
-- Queued input during running Turns, including edit, guide-now, and cancel where supported by the provider.
+- Queued input during running Turns, including edit, guide-now, and cancel where supported by the provider (Claude Code does not support queueing during a running Turn).
 - Multi-question response dialogs, pending-action indicators, and allow/deny command approvals.
 - Chinese and English UI, with pairing credentials protected by Android Keystore.
 
@@ -86,11 +88,11 @@ ChatGPT Desktop B ─► Bridge B ─┼─────────────�
                                │                              ▼
 Local CLI / Admin page ────────┘                       Desktop daemon
                                                              │
-                                      ┌──────────────────────┼─────────────────────┐
-                                      ▼                      ▼                     ▼
-                              Codex App Server A      Codex App Server B      Bounded memory + JSON config
-                                      │                      │
-                                      └──── official Codex sessions ────┘
+              ┌──────────────────────┬───────────────────────┼──────────────────────┐
+              ▼                      ▼                       ▼                      ▼
+     Codex App Server A     Codex App Server B      Claude Code backend   Bounded memory + JSON config
+              │                      │                 │           │
+              └─── Codex sessions ───┘            claude.exe ~/.claude/projects
 
 Mobile / dev simulator ◄════ Noise E2EE over WSS ════► Relay ◄════ outbound WSS ════► daemon
 ```
@@ -104,7 +106,9 @@ work-anywhere.exe <command>        Local control CLI
 other Codex arguments              Passed through to the real codex.exe
 ```
 
-The supervised long-running path uses the official App Server stdio JSONL transport. One-shot startup policy checks (`app-server --print-startup-config`, including `--startup-sign-out`), help, schema commands, daemon/proxy, explicit non-stdio transports, and unknown command shapes pass directly to the official CLI. They do not start the WAW daemon. If Desktop prepends global options such as `-c key=value` before the `app-server` subcommand, the Bridge still recognizes and preserves them. Bridge and daemon communicate through the versioned, length-prefixed WAI1 Named Pipe protocol. The daemon owns JSON-RPC ID isolation, initialize virtualization, approval arbitration, App Server lifecycle, and the local control API.
+Claude Code does not go through the Bridge: the daemon scans session transcripts under `~/.claude/projects` read-only and, when Mobile sends a message, starts one headless `claude.exe` per conversation (stream-json stdio). See the [Claude Code provider design](desktop/docs/claude-code-provider/design.md).
+
+The supervised long-running Codex path uses the official App Server stdio JSONL transport. One-shot startup policy checks (`app-server --print-startup-config`, including `--startup-sign-out`), help, schema commands, daemon/proxy, explicit non-stdio transports, and unknown command shapes pass directly to the official CLI. They do not start the WAW daemon. If Desktop prepends global options such as `-c key=value` before the `app-server` subcommand, the Bridge still recognizes and preserves them. Bridge and daemon communicate through the versioned, length-prefixed WAI1 Named Pipe protocol. The daemon owns JSON-RPC ID isolation, initialize virtualization, approval arbitration, App Server lifecycle, and the local control API.
 
 ## Repository layout
 
@@ -129,9 +133,9 @@ work-anywhere/
 │  │  ├─ daemon/                App Server supervisor and control plane
 │  │  ├─ codex/                 Codex runtime, instance, and argument handling
 │  │  ├─ jsonrpc/               JSON-RPC envelopes and IDs
-│  │  ├─ provider/              Extensible Provider interface
+│  │  ├─ provider/              Extensible Provider interface and Claude Code backend (claudecode/)
 │  │  ├─ config/                DPAPI-protected JSON configuration
-│  │  └─ platform/              Windows/macOS/Linux platform boundary
+│  │  └─ platform/              Windows/macOS/Linux platform boundary, including login autostart
 │  ├─ packaging/                Platform installation, signing, and release assets
 │  ├─ docs/                     Current-state design documentation
 │  ├─ scripts/                  Build scripts
@@ -148,7 +152,7 @@ Shared Bridge and daemon business logic is not copied per operating system. OS-s
 
 ## Installation and deployment
 
-The Windows Desktop installation follows. For Docker/PostgreSQL Relay deployment, Desktop pairing, and Mobile integration, see [`relay/README.md`](relay/README.md); for Mobile build and verification, see [`mobile/README.md`](mobile/README.md).
+The Windows Desktop installation follows. For Docker/PostgreSQL Relay deployment, Desktop pairing, and Mobile integration, see [`relay/README.md`](relay/README.md); for Mobile build and verification, see [`mobile/README.md`](mobile/README.md). In the commands below, `<repo>` is your local clone of this repository.
 
 ### Requirements
 
@@ -168,7 +172,7 @@ desktop\dist\windows-amd64\work-anywhere.exe
 To build from source:
 
 ```powershell
-cd D:\CodeSpace\work-anywhere\desktop
+cd <repo>\desktop
 .\scripts\build.ps1
 ```
 
@@ -177,7 +181,7 @@ The build script uses the pinned Go 1.27.3 toolchain under `desktop\.tools\go-sd
 To create a distributable Windows installer, install Inno Setup 6 and run:
 
 ```powershell
-cd D:\CodeSpace\work-anywhere\desktop
+cd <repo>\desktop
 .\scripts\build-installer.ps1 -Version 0.1.0
 ```
 
@@ -191,13 +195,13 @@ Both the daemon and the ChatGPT-launched bridge appear as `work-anywhere.exe` in
 ### 2. Run pre-installation checks
 
 ```powershell
-cd D:\CodeSpace\work-anywhere\desktop
+cd <repo>\desktop
 .\dist\windows-amd64\work-anywhere.exe version
 .\dist\windows-amd64\work-anywhere.exe self-test
 .\dist\windows-amd64\work-anywhere.exe self-test --protocol
 ```
 
-`self-test` should report `"ok": true` and show the discovered official Codex path, version, SHA256, `CODEX_HOME`, and user-data directory. If the official executable cannot be found, override it for the current environment:
+`self-test` performs discovery checks only (`protocolVerified: false`). `self-test --protocol` also runs the official startup policy check through the WAW entrypoint using the current account/network configuration, then verifies initialize, initialized, and a read-only query in a temporary `CODEX_HOME`. It makes no model requests, never signs out, and exits nonzero on failure. Plain `self-test` should report `"ok": true` and show the discovered official Codex path, version, SHA256, `CODEX_HOME`, and user-data directory. If the official executable cannot be found, override it for the current environment:
 
 ```powershell
 $env:WORK_ANYWHERE_CODEX_EXE = 'C:\path\to\ChatGPT\resources\codex.exe'
@@ -232,7 +236,7 @@ $env:WORK_ANYWHERE_INSTANCE_NAME = 'work'
 After opening ChatGPT Desktop:
 
 ```powershell
-$wa = 'D:\CodeSpace\work-anywhere\desktop\dist\windows-amd64\work-anywhere.exe'
+$wa = '<repo>\desktop\dist\windows-amd64\work-anywhere.exe'
 & $wa daemon status
 & $wa instance list
 & $wa ui
@@ -245,7 +249,7 @@ The daemon runs on its own and does not depend on ChatGPT Desktop. It starts fro
 After installing Desktop, use Relay and the Android-first Mobile test client to verify the remote path:
 
 ```powershell
-cd D:\CodeSpace\work-anywhere\relay
+cd <repo>\relay
 Copy-Item .env.example .env
 # Generate RELAY_DATA_KEY as described in relay/README.md, then start Relay.
 docker compose up --build -d
@@ -260,7 +264,7 @@ Configure the Relay origin in the Desktop administration page and enable remote 
 The following examples assume:
 
 ```powershell
-$wa = 'D:\CodeSpace\work-anywhere\desktop\dist\windows-amd64\work-anywhere.exe'
+$wa = '<repo>\desktop\dist\windows-amd64\work-anywhere.exe'
 ```
 
 ### Daemon and instances
@@ -313,14 +317,14 @@ Runtime data is stored under:
 %LOCALAPPDATA%\WorkAnywhere
 ```
 
-- Instance, conversation, Turn, Timeline, pending-action, and attachment-index projections live only in bounded daemon memory and are rebuilt from official Codex sessions after restart.
+- Instance, conversation, Turn, Timeline, pending-action, and attachment-index projections live only in bounded daemon memory and are rebuilt from official Codex sessions and Claude Code transcripts after restart.
 - Relay identity, pairings, and per-thread settings are stored in `%USERPROFILE%\.work-anywhere\config.json`; values are protected by current-user Windows DPAPI and replaced atomically.
 - Remote image attachments use each project's `.work-anywhere-remote-attachments` as transient spool storage; accepted files are removed, while failed or ambiguous submissions expire after 24 hours.
 - Per-conversation replay, global payloads, delta aggregation, remote send queues, and Mobile streaming text all have fixed memory limits; slow clients converge through invalidation and snapshots.
 - The Bridge/daemon Named Pipe is protected by a current-user SID ACL.
 - The administration page binds to a random loopback port and uses a one-time token, SameSite session, Origin checks, and CSRF protection.
 - Full process environments and ordinary message bodies are not persisted, and complete JSONL traffic is not recorded by default.
-- Official Codex session files remain the sole authoritative source for complete conversations. Work Anywhere does not maintain a message-history database.
+- Official Codex session files and Claude Code transcripts (`~/.claude/projects/*/*.jsonl`) are the sole authoritative sources for their conversations. Work Anywhere does not maintain a message-history database. The daemon writes to a Claude Code transcript only when renaming the conversation, appending one `custom-title` line exactly like the CLI `/rename`; everything else is written by `claude.exe` itself.
 
 ## Stopping and uninstalling
 
@@ -342,7 +346,13 @@ Uninstall the Bridge:
 & $wa uninstall
 ```
 
-Uninstall restores the user-level `CODEX_CLI_PATH` backed up during installation. Fully restart ChatGPT Desktop afterward.
+Uninstall restores the user-level `CODEX_CLI_PATH` backed up during installation. Fully restart ChatGPT Desktop afterward. `uninstall` does not remove the login autostart entry; if you no longer want the daemon to start at sign-in, also run:
+
+```powershell
+& $wa autostart disable
+```
+
+For installer-based setups, uninstalling from Windows "Installed apps" stops the daemon, removes the autostart entry, and restores `CODEX_CLI_PATH` automatically.
 
 ## Troubleshooting
 
@@ -370,7 +380,7 @@ Run `self-test` again and inspect the discovered path and version. Idle instance
 ## Development and verification
 
 ```powershell
-cd D:\CodeSpace\work-anywhere\desktop
+cd <repo>\desktop
 .\.tools\go-sdk\go\bin\go.exe test ./...
 .\.tools\go-sdk\go\bin\go.exe vet ./...
 .\scripts\build.ps1
@@ -386,9 +396,7 @@ See [`AGENTS.md`](AGENTS.md) for repository development rules, [`desktop/docs/RE
 - Mobile has not completed physical-device and production release validation. The browser Mobile simulator is a protocol-development tool, not a production client.
 - Relay includes APNs/FCM providers and River jobs, but live Apple sandbox/FCM project verification requires operator credentials.
 - Relay V1 is single-node and online-only; it does not provide offline commands, multi-node routing, or Work Anywhere user accounts.
-- Codex is the only Provider. Claude Code, OpenCode, Hermes, Pi, and other drivers are not implemented.
+- Codex and Claude Code are the supported Providers; OpenCode, Hermes, Pi, and other drivers are not implemented. Claude Code does not support queued or steering input during a running Turn, and Claude Code sessions open on the computer are read-only.
 - `CODEX_CLI_PATH` is the currently available Desktop integration point, but it is not guaranteed to remain compatible forever.
 - Experimental WebSocket transport is available only through `app-server --standalone-ws` diagnostics. The production daemon path always uses stdio.
 - `desktop/codex-stdio-ws-bridge` is the previous C# rollback implementation and is not part of the current Go build.
-
-`self-test` performs discovery checks only (`protocolVerified: false`). `self-test --protocol` also runs the official startup policy check through the WAW entrypoint using the current account/network configuration, then verifies initialize, initialized, and a read-only query in a temporary `CODEX_HOME`. It makes no model requests, never signs out, and exits nonzero on failure.
