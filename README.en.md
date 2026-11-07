@@ -34,9 +34,17 @@ The main Windows Desktop → Relay → Android control flow is implemented. The 
 
 1. Install or build Desktop. For Codex, run `self-test`, then run `install` and fully restart Codex Desktop; Claude Code-only setups can skip this. See [Desktop installation](#installation-and-deployment).
 2. Deploy Relay with Docker Compose and PostgreSQL. Use a phone-reachable origin; public deployments should use HTTPS. See the [Relay guide](relay/README.md).
-3. Open the Desktop administration page with `work-anywhere.exe ui`, enter the Relay origin, and enable remote access. Relay defaults to `self_service` mode with automatic signed enrollment and no invitation token; deployers can explicitly set `ENROLLMENT_MODE=invite` to require invitation tokens.
+3. Once the Work Anywhere daemon is running, right-click the Work Anywhere icon in the system tray and choose "打开管理页" (Open administration page); you can also run `work-anywhere.exe ui`. On the administration page, enter the Relay origin, and enable remote access. Relay defaults to `self_service` mode with automatic signed enrollment and no invitation token; deployers can explicitly set `ENROLLMENT_MODE=invite` to require invitation tokens.
 4. Build the [Android test app](mobile/README.md#build-and-verification), scan the Desktop pairing QR, and approve the phone on the computer.
 5. Select a computer and project on your phone to view tasks, continue a conversation, or create a new one.
+
+> [!WARNING]
+> To try the project before deploying your own Relay, you can use the public test Relay in step 3:
+>
+> - Relay origin: `https://relay-test.annyun.cn`
+> - Invitation token: `5ab5GOrmSHjLnbf9QTvm0czyFhduddnDkn-o6ZA4Bvc`
+>
+> This service is for testing only. It is not guaranteed to be stable and may be reset or taken offline at any time. For regular use, deploy your own Relay by following the [Relay guide](relay/README.md).
 
 ## Current capabilities
 
@@ -400,3 +408,7 @@ See [`AGENTS.md`](AGENTS.md) for repository development rules, [`desktop/docs/RE
 - `CODEX_CLI_PATH` is the currently available Desktop integration point, but it is not guaranteed to remain compatible forever.
 - Experimental WebSocket transport is available only through `app-server --standalone-ws` diagnostics. The production daemon path always uses stdio.
 - `desktop/codex-stdio-ws-bridge` is the previous C# rollback implementation and is not part of the current Go build.
+
+## Contact
+
+For questions and feedback, reach out on WeChat: `822784588`.

@@ -34,9 +34,17 @@ Work Anywhere（WAW）让你在手机上管理电脑端的官方 ChatGPT Codex D
 
 1. 安装或构建 Desktop；使用 Codex 时执行 `self-test`、`install` 后完全重启 Codex Desktop，只使用 Claude Code 时可跳过，详见[安装部署](#安装部署)。
 2. 使用 Docker Compose 和 PostgreSQL 部署 Relay，配置手机可访问的地址；公网部署建议使用 HTTPS，详见 [Relay 指南](relay/README.md)。
-3. 执行 `work-anywhere.exe ui` 打开电脑管理页，填写 Relay 地址并启用远程访问。Relay 默认 `self_service` 模式自动签名注册，无需邀请码；部署者可显式设置 `ENROLLMENT_MODE=invite` 改为邀请码登记。
+3. Work Anywhere daemon 启动后，右键系统托盘中的 Work Anywhere 图标，选择“打开管理页”；也可以执行 `work-anywhere.exe ui` 打开。在管理页填写 Relay 地址并启用远程访问。Relay 默认 `self_service` 模式自动签名注册，无需邀请码；部署者可显式设置 `ENROLLMENT_MODE=invite` 改为邀请码登记。
 4. 构建 [Android 测试应用](mobile/README.md#build-and-verification)，扫描电脑端配对二维码，再在电脑上批准手机。
 5. 在手机上选择电脑和项目，查看任务、继续会话或新建对话。
+
+> [!WARNING]
+> 想先体验、暂不自行部署时，可在第 3 步使用公共测试 Relay：
+>
+> - Relay 地址：`https://relay-test.annyun.cn`
+> - 邀请码：`5ab5GOrmSHjLnbf9QTvm0czyFhduddnDkn-o6ZA4Bvc`
+>
+> 该服务仅供测试使用，不保证稳定性，可能随时重置或下线。日常使用建议按 [Relay 指南](relay/README.md) 自行部署 Relay 服务。
 
 ## 当前能力
 
@@ -400,3 +408,7 @@ cd <repo>\desktop
 - `CODEX_CLI_PATH` 是当前可用的 Desktop 接入点，但不保证官方永久保持兼容。
 - 实验性 WebSocket 仅由 `app-server --standalone-ws` 用于诊断，正式 daemon 链路始终使用 stdio。
 - 仓库中的 `desktop/codex-stdio-ws-bridge` 是旧 C# 回滚版本，不参与当前 Go 构建。
+
+## 交流与联系
+
+欢迎交流使用问题和建议，微信：`822784588`。
