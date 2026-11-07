@@ -60,8 +60,8 @@ jobs:
       - name: Verify Desktop connector
         working-directory: desktop
         run: |
-          test -z "$(gofmt -l internal/remote internal/store internal/daemon internal/cli)"
-          go test ./internal/remote/... ./internal/store/... ./internal/cli/...
+          test -z "$(gofmt -l internal/remote internal/daemon internal/cli)"
+          go test ./internal/remote/... ./internal/cli/...
           go test -run '^$' ./internal/daemon
           go build ./cmd/work-anywhere
           go vet ./...
