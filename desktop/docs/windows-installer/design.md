@@ -53,7 +53,7 @@ cd desktop
 
 ### GitHub Release automation
 
-[`.github/workflows/release.yml`](../../../.github/workflows/release.yml) 在 GitHub Release `published` 时触发，也可以通过 `workflow_dispatch` 输入已有 tag 重新构建。`desktop-windows` job 检出该 tag，用 `actions/setup-go` 安装 Go 1.27.3；缺少 Inno Setup 6 时通过 Chocolatey 安装。随后执行 `build-installer.ps1 -Version <去掉前缀 v 的 tag> -Commit <sha>` 和 `self-test`，并用 `--clobber` 上传以下文件：
+[`.github/workflows/release.yml`](../../../.github/workflows/release.yml) 在 GitHub Release `published` 时触发，也可以通过 `workflow_dispatch` 输入已有 tag 重新构建。`desktop-windows` job 检出该 tag，用 `actions/setup-go` 安装 Go 1.27.3；缺少 Inno Setup 6 时通过 Chocolatey 安装。随后执行 `build-installer.ps1 -Version <去掉前缀 v 的 tag> -Commit <sha>`。之后用 `work-anywhere.exe version` 做冒烟检查，确认 EXE 能启动且输出的版本号与 tag 一致；不运行 `self-test`，因为它需要官方 `codex.exe`，runner 上没有。检查通过后用 `--clobber` 上传以下文件：
 
 - `work-anywhere-<version>-windows-amd64.exe`
 - `work-anywhere-setup-<version>.exe`
