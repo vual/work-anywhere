@@ -26,6 +26,8 @@
 
 Android/iOS 启动图标以 [`app/branding/launcher-icon.svg`](../../app/branding/launcher-icon.svg) 为源：白色背景、黑色 WAW 连线、绿色中心点。Android 的 `mipmap-*/ic_launcher.png` 和 iOS 的 `AppIcon.appiconset` 均由该图形按平台要求输出。应用内配对页、工作台顶栏和空白会话使用独立的 [`app/assets/waw-app-icon.svg`](../../app/assets/waw-app-icon.svg)，保持黑底白色连线；更改启动图标时不改变应用内页面。发布前需在 Android 启动器及 iOS 主屏幕核对图标的背景、颜色和裁切。
 
+安装后启动器/主屏幕图标下的应用名称统一显示为 `WAW`，由 Android [`AndroidManifest.xml`](../../app/android/app/src/main/AndroidManifest.xml) 的 `android:label` 和 iOS [`Info.plist`](../../app/ios/Runner/Info.plist) 的 `CFBundleDisplayName` 定义；应用内标题（`appTitle`）与系统权限说明文案不随该名称变化。
+
 ## 信息架构
 
 App 不使用底部导航栏。无 pairing 时根页面是添加配对；至少一个 pairing 后根页面是单一工作台，详情使用系统返回栈逐级下钻：
