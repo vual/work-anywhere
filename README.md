@@ -141,7 +141,7 @@ Desktop 的 Windows 安装如下。Relay 的 Docker/PostgreSQL 部署、Desktop 
 
 - Windows x64。
 - 使用 Codex 时需已安装并可正常运行官方 ChatGPT Codex Desktop；只使用 Claude Code 时需已安装并登录 Claude Code，不需要 ChatGPT Desktop。
-- 使用仓库内现有 EXE 时不需要安装 Go；从源码构建需要 Go 1.26.5 Windows x64 SDK。
+- 使用仓库内现有 EXE 时不需要安装 Go；从源码构建需要 Go 1.27.3 Windows x64 SDK。
 - 当前用户能够写入 `%LOCALAPPDATA%\WorkAnywhere`。
 
 ### 1. 获取或构建 EXE
@@ -159,7 +159,7 @@ cd D:\CodeSpace\work-anywhere\desktop
 .\scripts\build.ps1
 ```
 
-构建脚本使用 `desktop\.tools\go-sdk\go` 中固定的 Go 1.26.5，运行测试后生成 Windows x64 单文件 EXE。
+构建脚本使用 `desktop\.tools\go-sdk\go` 中固定的 Go 1.27.3，运行测试后生成 Windows x64 单文件 EXE。
 
 如果需要生成可分发的 Windows 安装包，请先安装 Inno Setup 6，然后执行：
 

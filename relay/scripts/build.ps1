@@ -13,7 +13,7 @@ $goExe = Join-Path $repositoryRoot 'desktop\.tools\go-sdk\go\bin\go.exe'
 $outputDir = Join-Path $relayRoot 'dist\linux-amd64'
 
 if (-not (Test-Path -LiteralPath $goExe)) {
-    throw "Go 1.26.5 toolchain was not found at $goExe"
+    throw "Go 1.27.3 toolchain was not found at $goExe"
 }
 
 Push-Location $relayRoot

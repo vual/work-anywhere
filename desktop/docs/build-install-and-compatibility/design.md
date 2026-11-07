@@ -6,7 +6,7 @@
 
 ## Current architecture and data flow
 
-Desktop 是独立 Go module：`github.com/hurf/work-anywhere/desktop`。仓库根 `go.work` 引用该 module。构建脚本固定使用 `desktop/.tools/go-sdk/go` 中的 Go 1.26.5，设置 `CGO_ENABLED=0`、`GOOS=windows`、`GOARCH=amd64`，运行测试、生成 Windows version/manifest resource，再输出：
+Desktop 是独立 Go module：`github.com/hurf/work-anywhere/desktop`。仓库根 `go.work` 引用该 module。构建脚本固定使用 `desktop/.tools/go-sdk/go` 中的 Go 1.27.3，设置 `CGO_ENABLED=0`、`GOOS=windows`、`GOARCH=amd64`，运行测试、生成 Windows version/manifest resource，再输出：
 
 ```text
 desktop/dist/windows-amd64/work-anywhere.exe

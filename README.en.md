@@ -141,7 +141,7 @@ The Windows Desktop installation follows. For Docker/PostgreSQL Relay deployment
 
 - Windows x64.
 - For Codex, a working installation of the official ChatGPT Codex Desktop; for Claude Code only, an installed and signed-in Claude Code (ChatGPT Desktop is not required).
-- Go is not required when using an existing binary. Building from source requires the Go 1.26.5 Windows x64 SDK.
+- Go is not required when using an existing binary. Building from source requires the Go 1.27.3 Windows x64 SDK.
 - The current user must be able to write to `%LOCALAPPDATA%\WorkAnywhere`.
 
 ### 1. Obtain or build the executable
@@ -159,7 +159,7 @@ cd D:\CodeSpace\work-anywhere\desktop
 .\scripts\build.ps1
 ```
 
-The build script uses the pinned Go 1.26.5 toolchain under `desktop\.tools\go-sdk\go`, runs the tests, and produces a single Windows x64 executable.
+The build script uses the pinned Go 1.27.3 toolchain under `desktop\.tools\go-sdk\go`, runs the tests, and produces a single Windows x64 executable.
 
 To create a distributable Windows installer, install Inno Setup 6 and run:
 

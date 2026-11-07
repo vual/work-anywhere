@@ -2,7 +2,7 @@ module github.com/hurf/work-anywhere/desktop
 
 go 1.26.0
 
-toolchain go1.26.5
+toolchain go1.27.3
 
 require (
 	github.com/Microsoft/go-winio v0.6.2

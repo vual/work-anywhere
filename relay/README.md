@@ -28,7 +28,7 @@ V1 不提供 Work Anywhere 用户账号、多节点路由、离线命令 mailbox
 
 ## 技术栈
 
-Relay 与 Desktop 都声明 `go 1.26.0`、固定 `toolchain go1.26.5`。主要依赖为 `net/http`、`coder/websocket`、Protocol Buffers、PostgreSQL/pgx、Goose 和 River。生产镜像使用无发行版运行时镜像，V1 服务拓扑只有一个 Relay 进程和 PostgreSQL。
+Relay 与 Desktop 都声明 `go 1.26.0`、固定 `toolchain go1.27.3`。主要依赖为 `net/http`、`coder/websocket`、Protocol Buffers、PostgreSQL/pgx、Goose 和 River。生产镜像使用无发行版运行时镜像，V1 服务拓扑只有一个 Relay 进程和 PostgreSQL。
 
 选型权衡见 [`docs/technology-selection/design.md`](docs/technology-selection/design.md)，全部功能文档见 [`docs/README.md`](docs/README.md)。
 

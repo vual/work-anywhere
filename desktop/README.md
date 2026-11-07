@@ -23,7 +23,7 @@ The current design, feature ownership, protocol boundaries, and documentation ma
 
 ## Build
 
-The repository pins Go 1.26.5. Place the Windows x64 SDK at `.tools\go-sdk\go`, then run:
+The repository pins Go 1.27.3. Place the Windows x64 SDK at `.tools\go-sdk\go`, then run:
 
 ```powershell
 .\scripts\build.ps1 -Version 0.1.0

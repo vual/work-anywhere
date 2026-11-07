@@ -10,7 +10,7 @@ Relay 的主要负载是长期 WSS、连接状态、短消息转发、配对事�
 
 V1 采用：
 
-- Go 1.26.5，与 Desktop daemon 的仓库工具链完全一致；Relay `go.mod` 使用 `go 1.26.0` 和 `toolchain go1.26.5`，CI 和镜像也锁定 1.26.5。
+- Go 1.27.3，与 Desktop daemon 的仓库工具链完全一致；Relay `go.mod` 使用 `go 1.26.0` 和 `toolchain go1.27.3`，CI 和镜像也锁定 1.27.3。
 - 标准库 `net/http`、`context`、`crypto/*`、`log/slog` 和 `runtime/metrics`。
 - `github.com/coder/websocket` 处理 WSS；业务层禁止压缩并设置显式 read/write limit、deadline 和 close code。
 - `google.golang.org/protobuf` + Buf 管理公开 schema、lint 和生成代码；针对已发布基线的 breaking check 尚未接入。

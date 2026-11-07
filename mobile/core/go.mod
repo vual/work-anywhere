@@ -2,7 +2,7 @@ module github.com/hurf/work-anywhere/mobile/core
 
 go 1.26.0
 
-toolchain go1.26.5
+toolchain go1.27.3
 
 require github.com/vual/work-anywhere/relay v0.0.0
 

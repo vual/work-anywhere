@@ -33,7 +33,7 @@ func run(args []string) error {
 	}
 	switch args[0] {
 	case "version":
-		fmt.Printf("work-anywhere-relay %s revision=%s built=%s go=1.26.5\n", buildinfo.Version, buildinfo.Revision, buildinfo.BuildTime)
+		fmt.Printf("work-anywhere-relay %s revision=%s built=%s go=1.27.3\n", buildinfo.Version, buildinfo.Revision, buildinfo.BuildTime)
 		return nil
 	case "serve":
 		return serve()

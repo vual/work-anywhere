@@ -16,7 +16,7 @@ V1 只有一个 Relay 节点。不能横向复制容器：在线 device registry
 
 ## Build and artifacts
 
-Relay 与 Desktop 都声明 `go 1.26.0`、固定 `toolchain go1.26.5`。[`scripts/build.ps1`](../../scripts/build.ps1) 构建本地 binary；[`Dockerfile`](../../Dockerfile) 使用 Go 1.26.5 builder、`CGO_ENABLED=0` 和 distroless nonroot runtime。生产镜像只包含 `relay`，不包含 dev simulator。
+Relay 与 Desktop 都声明 `go 1.26.0`、固定 `toolchain go1.27.3`。[`scripts/build.ps1`](../../scripts/build.ps1) 构建本地 binary；[`Dockerfile`](../../Dockerfile) 使用 Go 1.27.3 builder、`CGO_ENABLED=0` 和 distroless nonroot runtime。生产镜像只包含 `relay`，不包含 dev simulator。
 
 ## Runtime configuration
 

@@ -5,7 +5,7 @@ $toolBin = Join-Path $relayRoot '.tools\bin'
 $goExe = Join-Path (Split-Path -Parent $relayRoot) 'desktop\.tools\go-sdk\go\bin\go.exe'
 
 if (-not (Test-Path -LiteralPath $goExe)) {
-    throw "Go 1.26.5 toolchain was not found at $goExe"
+    throw "Go 1.27.3 toolchain was not found at $goExe"
 }
 
 New-Item -ItemType Directory -Force -Path $toolBin | Out-Null
