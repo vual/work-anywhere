@@ -32,7 +32,7 @@ RELAY_DATA_KEY or RELAY_DATA_KEY_FILE
 
 ```text
 RELAY_LISTEN_ADDR=:8080
-ENROLLMENT_MODE=invite|self_service|open|disabled
+ENROLLMENT_MODE=self_service|invite|open|disabled
 RELAY_MAX_DAEMONS=10000
 LOG_LEVEL=info
 RELAY_SHUTDOWN_TIMEOUT=20s
@@ -44,9 +44,9 @@ FCM_CREDENTIALS_FILE
 
 `RELAY_PUBLIC_URL` 接受 HTTP 或 HTTPS 的 IP/域名 origin，但 HTTP 不提供传输层机密性和完整性，公网部署应使用 HTTPS/WSS。`RELAY_DATA_KEY` 解码后必须恰好 32 bytes。生产应使用 `RELAY_DATA_KEY_FILE` 和 read-only secret mount；该 key 必须稳定备份，否则已有 push token 无法解密。当前没有 KMS adapter。APNs 三个参数必须同时设置。
 
-`RELAY_MAX_CONNECTIONS` 限制 authenticated registry 中的设备连接数；认证前连接限制由反向代理承担。`TRUSTED_PROXY_CIDRS` 接入受信任 X-Forwarded-For 链解析，未配置时只使用 socket IP。`RELAY_MAX_DAEMONS` 限制 active/revoked daemon 登记总量，签名恢复不占新增额度。Compose 使用环境中的注册模式，默认 invite；公共服务明确设置 self_service。
+`RELAY_MAX_CONNECTIONS` 限制 authenticated registry 中的设备连接数；认证前连接限制由反向代理承担。`TRUSTED_PROXY_CIDRS` 接入受信任 X-Forwarded-For 链解析，未配置时只使用 socket IP。`RELAY_MAX_DAEMONS` 限制 active/revoked daemon 登记总量，签名恢复不占新增额度。Relay 与 Compose 未设置 `ENROLLMENT_MODE` 时默认 `self_service`，daemon 无需邀请码即可签名注册；需要运维逐台发 token 的部署必须显式设置 `invite`。
 
-设备注册、恢复和迁移升级步骤见 [自助注册设计](../daemon-enrollment/design.md)。先备份数据库、升级 Relay 并迁移，保留 invite，再升级 Desktop、验证扫码闭环后开启 self_service。重复 daemon 身份会使 migration 失败，须人工解决冲突后重试。
+设备注册、恢复和迁移升级步骤见 [自助注册设计](../daemon-enrollment/design.md)。先备份数据库，再升级 Relay 并迁移。未设置 `ENROLLMENT_MODE` 的既有部署升级后会直接进入 `self_service` 并接受新 daemon 注册；若需继续限制新增，升级前显式设置 `invite`，升级 Desktop 并验证扫码闭环后再切换为 `self_service`。重复 daemon 身份会使 migration 失败，须人工解决冲突后重试。
 
 ## Commands, migrations, and health
 

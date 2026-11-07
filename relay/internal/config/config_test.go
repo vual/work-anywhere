@@ -20,6 +20,20 @@ func TestLoad(t *testing.T) {
 	}
 }
 
+func TestLoadDefaultsToSelfServiceEnrollment(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://localhost/waw")
+	t.Setenv("RELAY_PUBLIC_URL", "https://relay.example.test")
+	t.Setenv("RELAY_DATA_KEY", base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	t.Setenv("ENROLLMENT_MODE", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.EnrollmentMode != "self_service" {
+		t.Fatalf("expected self_service default, got %q", cfg.EnrollmentMode)
+	}
+}
+
 func TestLoadAllowsHTTPIPAndDomain(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://localhost/waw")
 	t.Setenv("RELAY_PUBLIC_URL", "http://relay.example.test")

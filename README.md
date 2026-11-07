@@ -34,7 +34,7 @@ Work Anywhere（WAW）让你在手机上管理电脑端的官方 ChatGPT Codex D
 
 1. 安装或构建 Desktop；使用 Codex 时执行 `self-test`、`install` 后完全重启 Codex Desktop，只使用 Claude Code 时可跳过，详见[安装部署](#安装部署)。
 2. 使用 Docker Compose 和 PostgreSQL 部署 Relay，配置手机可访问的地址；公网部署建议使用 HTTPS，详见 [Relay 指南](relay/README.md)。
-3. 执行 `work-anywhere.exe ui` 打开电脑管理页，填写 Relay 地址并启用远程访问。默认 `invite` 模式需要邀请码；部署者可显式设置 `ENROLLMENT_MODE=self_service`，启用自动签名注册。
+3. 执行 `work-anywhere.exe ui` 打开电脑管理页，填写 Relay 地址并启用远程访问。Relay 默认 `self_service` 模式自动签名注册，无需邀请码；部署者可显式设置 `ENROLLMENT_MODE=invite` 改为邀请码登记。
 4. 构建 [Android 测试应用](mobile/README.md#build-and-verification)，扫描电脑端配对二维码，再在电脑上批准手机。
 5. 在手机上选择电脑和项目，查看任务、继续会话或新建对话。
 

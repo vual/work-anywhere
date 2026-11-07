@@ -2,7 +2,7 @@
 
 ## 目标与范围
 
-设备通过 `daemon-enrollment-v1` 签名注册，无需管理员逐人发 token。`self_service/open` 允许新增，`invite` 要求邀请码，`disabled` 只允许已登记 active 身份的签名恢复。注册资格不授予手机控制权限，手机仍须扫码并由 Desktop 批准。
+设备通过 `daemon-enrollment-v1` 签名注册，无需管理员逐人发 token。未设置 `ENROLLMENT_MODE` 时默认 `self_service`。`self_service/open` 允许新增，`invite` 要求邀请码，`disabled` 只允许已登记 active 身份的签名恢复。注册资格不授予手机控制权限，手机仍须扫码并由 Desktop 批准。
 
 ## 架构、接口与协议
 

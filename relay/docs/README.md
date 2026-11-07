@@ -32,7 +32,7 @@
 ## Current invariants
 
 - 双端主动 WS(S)；家庭网络不需要端口映射。
-- 无 WAW 用户账号；设备 Ed25519 公钥是服务身份，daemon 可显式启用自助签名注册，默认邀请登记仍由 enrollment token 约束。
+- 无 WAW 用户账号；设备 Ed25519 公钥是服务身份，daemon 默认通过自助签名注册登记，显式 `invite` 模式由 enrollment token 约束。
 - 每条 daemon—Mobile pairing 独立授权，天然支持多对多。
 - 在线业务 payload 使用双方静态身份绑定的 Noise KK 端到端加密；Relay 不持有解密 key。
 - Relay 不保存会话 payload，也不提供离线写命令。

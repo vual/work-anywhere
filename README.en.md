@@ -34,7 +34,7 @@ The main Windows Desktop → Relay → Android control flow is implemented. The 
 
 1. Install or build Desktop. For Codex, run `self-test`, then run `install` and fully restart Codex Desktop; Claude Code-only setups can skip this. See [Desktop installation](#installation-and-deployment).
 2. Deploy Relay with Docker Compose and PostgreSQL. Use a phone-reachable origin; public deployments should use HTTPS. See the [Relay guide](relay/README.md).
-3. Open the Desktop administration page with `work-anywhere.exe ui`, enter the Relay origin, and enable remote access. The default `invite` mode requires an invitation token; deployers can explicitly enable `ENROLLMENT_MODE=self_service` for automatic signed enrollment.
+3. Open the Desktop administration page with `work-anywhere.exe ui`, enter the Relay origin, and enable remote access. Relay defaults to `self_service` mode with automatic signed enrollment and no invitation token; deployers can explicitly set `ENROLLMENT_MODE=invite` to require invitation tokens.
 4. Build the [Android test app](mobile/README.md#build-and-verification), scan the Desktop pairing QR, and approve the phone on the computer.
 5. Select a computer and project on your phone to view tasks, continue a conversation, or create a new one.
 

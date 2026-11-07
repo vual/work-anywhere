@@ -35,7 +35,7 @@ func Load() (Config, error) {
 		ListenAddr:         envDefault("RELAY_LISTEN_ADDR", ":8080"),
 		PublicURL:          strings.TrimSpace(os.Getenv("RELAY_PUBLIC_URL")),
 		DatabaseURL:        strings.TrimSpace(os.Getenv("DATABASE_URL")),
-		EnrollmentMode:     envDefault("ENROLLMENT_MODE", "invite"),
+		EnrollmentMode:     envDefault("ENROLLMENT_MODE", "self_service"),
 		LogLevel:           envDefault("LOG_LEVEL", "info"),
 		ShutdownTimeout:    20 * time.Second,
 		ACLCacheTTL:        30 * time.Second,

@@ -50,11 +50,9 @@ Invoke-RestMethod http://127.0.0.1:18080/health/ready
 
 Compose 默认只把端口绑定到 loopback，适合本机联调。需要从其他机器访问时，在 `.env` 设置 `RELAY_HOST_BIND_IP=0.0.0.0`，并确保防火墙放行 `RELAY_HOST_PORT`。`RELAY_PUBLIC_URL` 接受 HTTP 或 HTTPS 的 IP/域名 origin；HTTP 是明文连接，公网部署仍建议使用受信任 TLS/WSS。PostgreSQL、`/metrics` 和管理命令不得暴露公网。生产环境应通过 read-only secret 文件提供 `RELAY_DATA_KEY_FILE`、APNs 和 FCM 凭据，不能把 `.env` 提交到仓库。
 
-创建一次性 daemon enrollment token：
+Relay 默认使用自助模式（`ENROLLMENT_MODE=self_service`），无需邀请码。Desktop 管理页填写与 `RELAY_PUBLIC_URL` 相同的规范化 origin，点击“启用远程访问”即可自动签名注册，然后扫码并在电脑批准手机。需要逐台授权新增设备时，在 `.env` 中设置 `ENROLLMENT_MODE=invite` 并重建 Compose，再用下方命令创建邀请码。`open` 仍供可信开发环境使用，`disabled` 拒绝新设备但允许签名恢复已有 active 身份。协议见 [Daemon 自助注册](docs/daemon-enrollment/design.md)。
 
-公共 Relay 可以显式使用自助模式。在 `.env` 中设置 `ENROLLMENT_MODE=self_service` 后启动或重建 Compose；默认 `invite` 不会因升级自动开放。Desktop 管理页填写与 `RELAY_PUBLIC_URL` 相同的规范化 origin，点击“启用远程访问”即可自动签名注册，然后扫码并在电脑批准手机。自助模式无需执行下方 token 创建命令。`open` 仍供可信开发环境使用，`disabled` 拒绝新设备但允许签名恢复已有 active 身份。协议见 [Daemon 自助注册](docs/daemon-enrollment/design.md)。
-
-升级顺序：先备份 PostgreSQL，执行 `migrate up` 并升级 Relay（保留 `invite`），再升级 Desktop，通过联调后开启 `self_service`。迁移检测到重复 daemon 公钥会报告设备 ID 并停止，必须人工处理，不自动删除身份或配对。`RELAY_MAX_DAEMONS` 默认 10,000，包含 revoked 登记；恢复原身份不占新增额度。
+升级顺序：先备份 PostgreSQL，执行 `migrate up` 并升级 Relay。未设置 `ENROLLMENT_MODE` 的既有部署升级后会直接开放自助注册；若要继续限制新增，升级前显式设置 `invite`，升级 Desktop 并联调后再切换为 `self_service`。迁移检测到重复 daemon 公钥会报告设备 ID 并停止，必须人工处理，不自动删除身份或配对。`RELAY_MAX_DAEMONS` 默认 10,000，包含 revoked 登记；恢复原身份不占新增额度。
 
 真实 PostgreSQL 注册测试通过 `RELAY_TEST_DATABASE_URL` 指向测试数据库后运行 `go test ./internal/store`，测试使用独立随机 schema，不修改既有表。未提供该变量时测试会明确跳过。
 
