@@ -13,7 +13,7 @@ daemon 有三种启动入口：登录自启动项（HKCU `Software\Microsoft\Win
 - 原生 `Shell_NotifyIcon` 托盘图标；图标来自仓库根目录 `waw-app-icon.svg`，构建时优先用 Chrome 原生 SVG 透明背景渲染，缺少 Chrome 时使用透明背景的 `packaging/windows/icon.png` fallback，再编译为 Windows PE icon resource。托盘通过 `LoadImageW` 显式加载 48×48 资源以保证缩放清晰度；最终显示尺寸仍由 Windows 托盘和 DPI 设置决定。
 - 用于托管官方 App Server、Claude 会话和诊断子树的 Windows Job 集合，每个受管根进程拥有独立 Job。
 
-托盘菜单包括打开管理页、查看实例状态、暂停/恢复本机控制、重启错误实例和退出。管理页展示同一 `waw-app-icon.svg`、daemon、Agent 实例（Claude Code 与 Codex 分组）、runtime、日志和连接状态，以及“启动设置”（登录自启动开关、ChatGPT Codex Desktop 集成状态），并提供 Relay 配置、enrollment、配对 URI 复制、配对审批/取消/撤销；不展示聊天 Timeline 或 Prompt 输入。页面同时将该 SVG 作为浏览器页签 favicon。
+托盘菜单包括打开管理页、查看实例状态、暂停/恢复本机控制、重启错误实例和退出。管理页展示同一 `waw-app-icon.svg`、daemon、Agent 实例（Claude Code 与 Codex 分组）、runtime、日志和连接状态，以及“启动设置”（登录自启动开关、ChatGPT Codex Desktop 集成状态），并提供 Relay 配置、enrollment、配对 URI 复制、配对审批/取消/撤销；不展示聊天 Timeline 或 Prompt 输入。页面同时将该 SVG 作为浏览器页签 favicon。页头标题 “Work Anywhere” 右侧显示内联 SVG 的 GitHub 图标，链接到仓库 `https://github.com/vual/work-anywhere`，以新页签打开（`rel="noopener noreferrer"`），不加载外部资源，也不放宽管理页 CSP。
 
 ## Interfaces
 
