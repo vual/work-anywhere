@@ -1,0 +1,145 @@
+name: Release
+
+# Builds Desktop EXE, Windows installer and Android APK, then attaches them to
+# the GitHub Release. Re-run for an existing release via workflow_dispatch.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to (re)build, e.g. v0.2.0"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  desktop-windows:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.3"
+          cache-dependency-path: |
+            desktop/go.sum
+            relay/go.sum
+
+      - name: Ensure Inno Setup 6
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path -LiteralPath $iscc)) {
+            choco install innosetup --no-progress -y
+            if ($LASTEXITCODE -ne 0) { throw "Inno Setup install failed" }
+          }
+
+      - name: Build EXE and installer
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          $version = $env:TAG -replace '^v', ''
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          .\scripts\build-installer.ps1 -Version $version -Commit $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw "Installer build failed" }
+
+      - name: Self-test
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          .\dist\windows-amd64\work-anywhere.exe self-test
+          if ($LASTEXITCODE -ne 0) { throw "self-test failed" }
+
+      - name: Upload release assets
+        working-directory: desktop/dist/windows-amd64
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $exe = "work-anywhere-$env:VERSION-windows-amd64.exe"
+          $setup = "work-anywhere-setup-$env:VERSION.exe"
+          Copy-Item work-anywhere.exe $exe -Force
+          $assets = @($exe, $setup)
+          foreach ($f in $assets) {
+            $hash = (Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $f" | Out-File -FilePath "$f.sha256" -Encoding ascii -NoNewline
+            $assets += "$f.sha256"
+          }
+          gh release upload $env:TAG @assets --clobber --repo $env:GITHUB_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { throw "Release upload failed" }
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.3"
+          cache-dependency-path: |
+            relay/go.sum
+            mobile/core/go.sum
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.47.2"
+          channel: stable
+          cache: true
+
+      - name: Build Android Go Core
+        working-directory: mobile/core
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20260908204917-8b95e45f8d3e
+          go install golang.org/x/mobile/cmd/gobind@v0.0.0-20260908204917-8b95e45f8d3e
+          gomobile init
+          mkdir -p ../app/android/app/libs
+          gomobile bind -target=android -androidapi 29 -o ../app/android/app/libs/mobilecore.aar ./mobilecore
+
+      - name: Prepare release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.WAW_ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "WAW_ANDROID_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          else
+            echo "::warning::WAW_ANDROID_KEYSTORE_BASE64 is not set; the APK is signed with debug keys."
+          fi
+
+      - name: Build release APK
+        working-directory: mobile/app
+        env:
+          WAW_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.WAW_ANDROID_KEYSTORE_PASSWORD }}
+          WAW_ANDROID_KEY_ALIAS: ${{ secrets.WAW_ANDROID_KEY_ALIAS }}
+          WAW_ANDROID_KEY_PASSWORD: ${{ secrets.WAW_ANDROID_KEY_PASSWORD }}
+        run: |
+          VERSION="${TAG#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          flutter pub get
+          flutter test
+          flutter build apk --release --build-name="$VERSION" --build-number="${{ github.run_number }}"
+
+      - name: Upload release assets
+        working-directory: mobile/app/build/app/outputs/flutter-apk
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK="work-anywhere-$VERSION-android.apk"
+          cp app-release.apk "$APK"
+          sha256sum "$APK" > "$APK.sha256"
+          gh release upload "$TAG" "$APK" "$APK.sha256" --clobber --repo "$GITHUB_REPOSITORY"

@@ -102,7 +102,14 @@ cd mobile
 .\scripts\build-android.ps1 -Mode debug
 ```
 
-CI 的 `Mobile` workflow 执行 endpoint/Core tests、Pigeon no-diff、Flutter analyze/test，并构建 debug-signed tester APK。正式 release signing 尚未配置。
+CI 的 `Mobile` workflow 执行 endpoint/Core tests、Pigeon no-diff、Flutter analyze/test，并构建 debug-signed tester APK。
+
+发布 GitHub Release 时，[`Release` workflow](../.github/workflows/release.yml) 的 `android` job 会构建 release APK：`--build-name` 取去掉前缀 `v` 的 tag，`--build-number` 取 workflow run number。构建完成后上传 `work-anywhere-<version>-android.apk` 及对应的 `.sha256`。Release 签名从环境变量读取（见 [`build.gradle.kts`](app/android/app/build.gradle.kts)），CI 中需要配置以下仓库 secrets：
+
+- `WAW_ANDROID_KEYSTORE_BASE64`：keystore 文件的 base64 编码
+- `WAW_ANDROID_KEYSTORE_PASSWORD`、`WAW_ANDROID_KEY_ALIAS`、`WAW_ANDROID_KEY_PASSWORD`
+
+未配置 keystore 时，release APK 会回退为 debug 签名，workflow 会给出警告。debug 签名的 APK 不能被正式签名版本覆盖升级，只能卸载后重装。
 
 ### 真机扫码排查
 

@@ -51,6 +51,16 @@ cd desktop
 - 卸载顺序：`daemon stop` → `autostart disable` → `uninstall`。`uninstall` 只在 `CODEX_CLI_PATH` 仍指向该 EXE 时恢复备份值（无备份则删除），否则保持不变。
 - 卸载不删除 `%LOCALAPPDATA%\WorkAnywhere`，避免误删会话、附件、日志和环境变量备份。
 
+### GitHub Release automation
+
+[`.github/workflows/release.yml`](../../../.github/workflows/release.yml) 在 GitHub Release `published` 时触发，也可以通过 `workflow_dispatch` 输入已有 tag 重新构建。`desktop-windows` job 检出该 tag，用 `actions/setup-go` 安装 Go 1.27.3；缺少 Inno Setup 6 时通过 Chocolatey 安装。随后执行 `build-installer.ps1 -Version <去掉前缀 v 的 tag> -Commit <sha>` 和 `self-test`，并用 `--clobber` 上传以下文件：
+
+- `work-anywhere-<version>-windows-amd64.exe`
+- `work-anywhere-setup-<version>.exe`
+- 每个文件对应的 `.sha256`
+
+EXE 和安装包目前没有 Authenticode 签名，Windows SmartScreen 可能提示“未知发布者”。
+
 ## State and persistence
 
 安装器自身不保存会话数据，只在 Inno Setup 卸载信息中记录 `CodexTaskChosen`，用于区分首次安装与升级。`work-anywhere.exe install` 使用 `%LOCALAPPDATA%\WorkAnywhere\install\codex-cli-path-backup.json` 保存原始用户级环境变量，`uninstall` 恢复后删除该文件。自启动保存在 HKCU `Software\Microsoft\Windows\CurrentVersion\Run` 的 `WorkAnywhere` 值。
@@ -74,6 +84,7 @@ cd desktop
 - Inno Setup 定义：[`desktop/packaging/windows/installer.iss`](../../packaging/windows/installer.iss)
 - 安装包构建入口：[`desktop/scripts/build-installer.ps1`](../../scripts/build-installer.ps1)
 - EXE 构建入口：[`desktop/scripts/build.ps1`](../../scripts/build.ps1)
+- Release 自动打包：[`.github/workflows/release.yml`](../../../.github/workflows/release.yml)
 - 环境变量安装/卸载：[`desktop/internal/platform/installation/installation_windows.go`](../../internal/platform/installation/installation_windows.go)
 - 登录自启动：[`desktop/internal/platform/autostart/`](../../internal/platform/autostart/)
 - 使用说明：[`desktop/README.md`](../../README.md)、仓库 [`README.md`](../../../README.md) 和 [`README.en.md`](../../../README.en.md)
@@ -105,4 +116,4 @@ $wa = "$env:LOCALAPPDATA\Programs\WorkAnywhere\work-anywhere.exe"
 
 ## Documentation update triggers
 
-修改安装目录、安装权限、安装任务及默认值、自启动键值、环境变量备份格式、安装/卸载命令或顺序、重启提示、Inno Setup 参数或发布输出路径时，必须同步更新本文档、Windows packaging README、Desktop README 和仓库中英文 README。
+修改安装目录、安装权限、安装任务及默认值、自启动键值、环境变量备份格式、安装/卸载命令或顺序、重启提示、Inno Setup 参数、发布输出路径或 Release workflow 产物命名时，必须同步更新本文档、Windows packaging README、Desktop README 和仓库中英文 README。

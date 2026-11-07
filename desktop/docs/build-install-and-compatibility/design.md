@@ -6,7 +6,7 @@
 
 ## Current architecture and data flow
 
-Desktop 是独立 Go module：`github.com/hurf/work-anywhere/desktop`。仓库根 `go.work` 引用该 module。构建脚本固定使用 `desktop/.tools/go-sdk/go` 中的 Go 1.27.3，设置 `CGO_ENABLED=0`、`GOOS=windows`、`GOARCH=amd64`，运行测试、生成 Windows version/manifest resource，再输出：
+Desktop 是独立 Go module：`github.com/hurf/work-anywhere/desktop`。仓库根 `go.work` 引用该 module。构建脚本固定使用 `desktop/.tools/go-sdk/go` 中的 Go 1.27.3（该目录不存在时改用 `PATH` 上的 `go.exe`，供 CI 中的 `actions/setup-go` 使用；版本仍必须是 go1.27.3 windows/amd64），设置 `CGO_ENABLED=0`、`GOOS=windows`、`GOARCH=amd64`，运行测试、生成 Windows version/manifest resource，再输出：
 
 ```text
 desktop/dist/windows-amd64/work-anywhere.exe
@@ -37,6 +37,8 @@ scripts/build-installer.ps1 -Version 0.1.0 -SkipBuild
 ```
 
 该接口要求 Windows 环境安装 Inno Setup 6；已安装到非默认目录时通过 `-IsccPath` 指定 `ISCC.exe`。
+
+GitHub Release 发布后，[Release workflow](../windows-installer/design.md#github-release-automation) 会在 `windows-latest` 上调用同一接口并上传产物。
 
 显式 runtime 覆盖使用 `WORK_ANYWHERE_CODEX_EXE`；`CODEX_REAL_EXE` 仅用于旧 Bridge 兼容。Bridge 启动真实 Codex 时覆盖子进程 `CODEX_CLI_PATH`，避免递归。
 

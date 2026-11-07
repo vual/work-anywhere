@@ -11,7 +11,12 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $workspaceRoot = Split-Path -Parent $repoRoot
 $goExe = Join-Path $repoRoot ".tools\go-sdk\go\bin\go.exe"
 if (-not (Test-Path -LiteralPath $goExe)) {
-    throw "Pinned Go 1.27.3 toolchain is missing. Install it at .tools\go-sdk\go first."
+    # CI (actions/setup-go) puts the same pinned version on PATH instead of .tools.
+    $goCommand = Get-Command go.exe -ErrorAction SilentlyContinue
+    if (-not $goCommand) {
+        throw "Pinned Go 1.27.3 toolchain is missing. Install it at .tools\go-sdk\go first."
+    }
+    $goExe = $goCommand.Source
 }
 $actualVersion = & $goExe version
 if ($actualVersion -notmatch "go1\.27\.3 windows/amd64") {

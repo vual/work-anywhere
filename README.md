@@ -186,6 +186,8 @@ cd <repo>\desktop
 
 构建脚本使用 `desktop\.tools\go-sdk\go` 中固定的 Go 1.27.3，运行测试后生成 Windows x64 单文件 EXE。
 
+在 GitHub 上发布 Release 后，[`Release` workflow](.github/workflows/release.yml) 会自动构建 Desktop EXE、Windows 安装包和 Android APK，并附加到该 Release。Android 正式签名所需的 secrets 见 [Mobile 指南](mobile/README.md)。
+
 如果需要生成可分发的 Windows 安装包，请先安装 Inno Setup 6，然后执行：
 
 ```powershell
