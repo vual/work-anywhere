@@ -9,6 +9,19 @@ Work Anywhere（WAW）让你在手机上管理电脑端的官方 ChatGPT Codex D
 
 **Windows Desktop → Relay → Android 的主要远程控制功能已实现。** 电脑端继续使用官方 Codex Desktop，WAW 提供本机 Bridge、加密中继和手机工作台。无需注册 WAW 账号；Codex 的认证和服务访问仍由官方 Desktop 的配置决定。
 
+## 界面预览
+
+<table>
+  <tr>
+    <td align="center" width="50%"><img src="designs/screenshots/mobile-home.jpg" alt="Work Anywhere 手机首页" width="300" /></td>
+    <td align="center" width="50%"><img src="designs/screenshots/mobile-conversation.jpg" alt="Work Anywhere 手机会话页" width="300" /></td>
+  </tr>
+  <tr>
+    <td valign="top"><strong>首页工作台</strong>：右上角切换已配对的电脑并显示在线状态；顶部在 Codex 和 Claude Code 之间切换；“项目”列出电脑上的工作目录，可直接进入或重命名；“最近”按时间展示会话；底部搜索框同时检索项目和对话。</td>
+    <td valign="top"><strong>会话页</strong>：标题栏显示会话名、所属项目、Agent 和电脑在线状态；时间线实时展示用户消息、可展开的思考过程和 Markdown 渲染的回复；输入框支持添加图片、选择模型与思考等级，发送后由电脑上的 Agent 继续执行。</td>
+  </tr>
+</table>
+
 ## 模块状态
 
 | 模块 | 已实现能力 | 当前状态 |

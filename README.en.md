@@ -9,6 +9,19 @@ Work Anywhere (WAW) lets you manage the official ChatGPT Codex Desktop from your
 
 The main Windows Desktop → Relay → Android control flow is implemented. The official Codex Desktop remains the desktop interface; WAW adds a local Bridge, an encrypted relay, and a mobile workspace. You do not need a WAW account. Codex authentication and service access still depend on your official Desktop configuration.
 
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center" width="50%"><img src="designs/screenshots/mobile-home.jpg" alt="Work Anywhere mobile home screen" width="300" /></td>
+    <td align="center" width="50%"><img src="designs/screenshots/mobile-conversation.jpg" alt="Work Anywhere mobile conversation screen" width="300" /></td>
+  </tr>
+  <tr>
+    <td valign="top"><strong>Home workspace</strong>: switch between paired computers and see their online status in the top-right corner; switch between Codex and Claude Code at the top; <em>Projects</em> lists working directories on the computer, which you can open or rename; <em>Recent</em> lists conversations by time; the search bar at the bottom searches both projects and conversations.</td>
+    <td valign="top"><strong>Conversation</strong>: the title bar shows the conversation name, project, agent, and computer status; the timeline streams user messages, expandable reasoning, and Markdown-rendered replies in real time; the composer supports image attachments plus model and reasoning-effort selection, and the agent on your computer continues the work after you send.</td>
+  </tr>
+</table>
+
 ## Module status
 
 | Module | Implemented capabilities | Status |
