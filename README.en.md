@@ -9,6 +9,16 @@ Work Anywhere (WAW) lets you manage the official ChatGPT Codex Desktop and your 
 
 The main Windows Desktop → Relay → Android control flow is implemented. The official Codex Desktop or Claude Code remains the desktop interface; WAW adds a local Bridge, an encrypted relay, and a mobile workspace. You do not need a WAW account. Codex authentication and service access still depend on your official Desktop configuration, and Claude Code uses the signed-in Claude Code configuration on the computer.
 
+## Highlights
+
+Unlike approaches that build their own desktop or web client to replace the official tools, WAW focuses only on mobile and keeps the official tools on the computer:
+
+- **Does not replace the official desktop client**: keep using the official ChatGPT Codex Desktop or Claude Code on your computer with your existing interface, habits, and configuration; WAW only adds remote control from your phone.
+- **Shared sessions with the computer**: the phone shows and continues the same projects and conversations as the computer, with nothing to import or migrate.
+- **Follows official upgrades**: WAW discovers the `codex.exe` used by the official Desktop, so official upgrades do not wait for WAW to adapt a new interface; if the daemon is unavailable, requests pass straight through to the official Codex so the desktop keeps working.
+- **No WAW account**: authentication reuses the official tools' signed-in configuration; there is no separate sign-up or model sign-in in WAW.
+- **End-to-end encryption**: the phone and computer communicate over Noise end-to-end encryption, and Relay forwards only ciphertext; you can also self-host Relay.
+
 ## Screenshots
 
 <table>
