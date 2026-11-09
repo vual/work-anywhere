@@ -17,7 +17,7 @@ daemon 有三种启动入口：登录自启动项（HKCU `Software\Microsoft\Win
 
 ## Interfaces
 
-管理页“启用远程访问”保存地址后自动注册和连接，按 Relay 模式显示邀请码或旧版注册入口。状态展示注册阶段与重试时间，仅连接成功时允许生成二维码。切换地址和重置远程身份需要本机确认，清除配对 URI/QR 和旧身份后重新注册。管理权限与 CSRF/Origin 校验沿用下述本机边界。
+管理页 Relay 区只有一个“启用远程访问”主按钮：保存地址后自动注册和连接；Relay 为 `invite` 模式时显示邀请码输入框，已填写时同一按钮在保存地址后用邀请码调用 `remote.register`，未填写则提示先填写。旧版注册入口仅在 `relay_upgrade_required` 时显示。状态展示注册阶段与重试时间，仅连接成功时允许生成二维码。操作结果与错误以页面顶部弹出提示显示：错误提示保留到用户关闭，成功提示数秒后自动关闭，相同内容不重复堆叠；Relay 状态错误同时在 Relay 区内联显示，且仅在错误内容变化时弹出，周期刷新不会重复弹出。切换地址和重置远程身份需要本机确认，清除配对 URI/QR 和旧身份后重新注册。管理权限与 CSRF/Origin 校验沿用下述本机边界。
 
 - `work-anywhere.exe daemon start|status|stop|force-stop`
 - `work-anywhere.exe ui`

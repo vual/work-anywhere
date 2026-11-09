@@ -4,9 +4,10 @@ let socketPromise=null;
 let sequence=0;
 let pairQrObjectUrl='';
 let pairQrGeneration=0;
-let remoteErrorText='';
+let remoteErrorShown=null;
 let remoteIdentity=null;
-const remoteMessages={relay_upgrade_required:'Relay 版本不支持自动注册，请升级 Relay 或使用旧版邀请码注册。',invite_required:'此 Relay 需要邀请码，请输入后完成注册。',invalid_invite:'邀请码无效或已过期。',enrollment_disabled:'Relay 已暂停新设备注册。',device_revoked:'设备已被 Relay 撤销，请联系部署者。',identity_conflict:'设备身份或 Relay 地址不匹配，请检查地址；需要恢复时可明确重置远程身份。',auth_failed:'设备认证失败，请检查 Relay 配置或联系部署者。',daemon_capacity_reached:'Relay 登记设备数量已达上限，请联系部署者。',rate_limited:'请求过于频繁，稍后将重试。',temporarily_unavailable:'暂时无法连接 Relay，将自动重试。'};
+let remotePhase='';
+const remoteMessages={relay_upgrade_required:'Relay 版本不支持自动注册，请升级 Relay 或使用旧版邀请码注册。',invite_required:'此 Relay 需要邀请码，请填写邀请码后点击“启用远程访问”。',invalid_invite:'邀请码无效或已过期。',enrollment_disabled:'Relay 已暂停新设备注册。',device_revoked:'设备已被 Relay 撤销，请联系部署者。',identity_conflict:'设备身份或 Relay 地址不匹配，请检查地址；需要恢复时可明确重置远程身份。',auth_failed:'设备认证失败，请检查 Relay 配置或联系部署者。',daemon_capacity_reached:'Relay 登记设备数量已达上限，请联系部署者。',rate_limited:'请求过于频繁，稍后将重试。',temporarily_unavailable:'暂时无法连接 Relay，将自动重试。'};
 const pending=new Map();
 const q=(id)=>document.getElementById(id);
 
@@ -102,17 +103,23 @@ function renderRemote(remote){
   const identity=`${remote.relayUrl||''}:${remote.deviceId||''}`;
   if(remoteIdentity!==null&&remoteIdentity!==identity){q('pair-uri').value='';renderPairQR('').catch(showError);}
   remoteIdentity=identity;
+  remotePhase=remote.phase||'';
   if(document.activeElement!==q('relay-url'))q('relay-url').value=remote.relayUrl||'';
   q('relay-connection').textContent=remote.connected?'已连接':'未连接';
   q('relay-connection').className=remote.connected?'state':'state warn';
   q('relay-fingerprint').textContent=remote.fingerprint||'—';
   q('relay-device').textContent=remote.deviceId||'—';
-  const phases={unconfigured:'请填写 Relay 地址',disabled:'远程访问已停用',pending_registration:'等待注册',registering:'正在注册',invite_required:'请输入邀请码完成注册',connecting:'正在连接',connected:'已连接，可以配对手机',needs_attention:'连接需要处理，请重试或检查配置'};
+  const phases={unconfigured:'请填写 Relay 地址',disabled:'远程访问已停用',pending_registration:'等待注册',registering:'正在注册',invite_required:'请填写邀请码后点击“启用远程访问”',connecting:'正在连接',connected:'已连接，可以配对手机',needs_attention:'连接需要处理，请重试或检查配置'};
   q('relay-progress').textContent=(phases[remote.phase]||'')+(remote.nextRetryAt&&Date.parse(remote.nextRetryAt)>Date.now()?`，下次重试：${new Date(remote.nextRetryAt).toLocaleTimeString()}`:'');
   q('relay-token-label').hidden=remote.registrationMode!=='invite'&&remote.lastErrorCode!=='relay_upgrade_required';
   q('relay-legacy').hidden=remote.lastErrorCode!=='relay_upgrade_required';
   q('pair-start').disabled=!remote.connected;
-  if(remote.lastError){remoteErrorText=remoteMessages[remote.lastErrorCode]||remote.lastError;q('error').textContent=remoteErrorText;}else if(q('error').textContent===remoteErrorText){q('error').textContent='';remoteErrorText='';}
+  const remoteError=remote.lastError?(remoteMessages[remote.lastErrorCode]||remote.lastError):'';
+  q('relay-error').textContent=remoteError;
+  q('relay-error').hidden=!remoteError;
+  // Pop up only when the error changes, not on every periodic refresh.
+  if(remoteError&&remoteError!==remoteErrorShown)notify(remoteError);
+  remoteErrorShown=remoteError;
   const attempts=Array.isArray(remote.pairAttempts)?remote.pairAttempts:[];
   if(!q('pair-uri').value&&attempts[0]&&attempts[0].uri){q('pair-uri').value=attempts[0].uri;renderPairQR(attempts[0].uri).catch(showError);}
   q('pair-attempts').innerHTML=attempts.map(attempt=>{
@@ -140,19 +147,48 @@ async function renderPairQR(uri){
 }
 
 function escapeHtml(v){return String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));}
-function showError(error){q('error').textContent=remoteMessages[error.code]||error.message||String(error);}
-async function action(fn){q('error').textContent='';try{await fn();await refresh();}catch(error){showError(error);}}
+// notify shows a popup at the top of the page. Errors stay until closed so they
+// are not missed; other notices close themselves. Identical visible notices are
+// not stacked.
+function notify(message,kind='error'){
+  if(!message)return;
+  const box=q('toasts');
+  for(const existing of box.children){if(existing.dataset.message===message)existing.remove();}
+  const toast=document.createElement('div');
+  toast.className=`toast ${kind}`;
+  toast.dataset.message=message;
+  toast.setAttribute('role',kind==='error'?'alert':'status');
+  const text=document.createElement('span');
+  text.textContent=message;
+  const close=document.createElement('button');
+  close.type='button';close.className='toast-close';close.textContent='×';close.setAttribute('aria-label','关闭提示');
+  close.onclick=()=>toast.remove();
+  toast.append(text,close);
+  box.append(toast);
+  while(box.children.length>4)box.firstElementChild.remove();
+  if(kind!=='error')setTimeout(()=>toast.remove(),4000);
+}
+function showError(error){notify(remoteMessages[error.code]||error.message||String(error));}
+async function action(fn){try{await fn();await refresh();}catch(error){showError(error);}}
 
 q('refresh').onclick=()=>action(async()=>{});
 q('autostart').onchange=(event)=>{const enabled=event.target.checked;action(()=>call('system.autostart.set',{enabled})).then(()=>refresh().catch(()=>{}));};
-q('relay-configure').onclick=()=>action(async()=>{const params={relayUrl:q('relay-url').value.trim(),displayName:q('relay-name').value.trim(),enabled:true};try{await call('remote.configure',params);}catch(error){if(error.code!=='relay_change_requires_reset')throw error;if(!confirm('更换 Relay 将清除当前远程身份和手机配对，继续吗？'))return;await call('remote.configure',{...params,resetIdentity:true});q('pair-uri').value='';await renderPairQR('');}});
-q('relay-enroll').onclick=()=>action(async()=>{try{await call('remote.register',{token:q('relay-token').value,displayName:q('relay-name').value.trim()});}finally{q('relay-token').value='';}});
-q('relay-legacy').onclick=()=>action(async()=>{try{await call('remote.enroll',{token:q('relay-token').value,displayName:q('relay-name').value.trim()});}finally{q('relay-token').value='';}});
+// One button saves the Relay address and registers; when the Relay requires an
+// invite code it is submitted in the same step.
+q('relay-configure').onclick=()=>action(async()=>{
+  const params={relayUrl:q('relay-url').value.trim(),displayName:q('relay-name').value.trim(),enabled:true};
+  const token=q('relay-token-label').hidden?'':q('relay-token').value.trim();
+  if(!q('relay-token-label').hidden&&!token&&remotePhase==='invite_required'){q('relay-token').focus();throw new Error('请先填写邀请码');}
+  try{await call('remote.configure',params);}catch(error){if(error.code!=='relay_change_requires_reset')throw error;if(!confirm('更换 Relay 将清除当前远程身份和手机配对，继续吗？'))return;await call('remote.configure',{...params,resetIdentity:true});q('pair-uri').value='';await renderPairQR('');}
+  if(token){try{await call('remote.register',{token,displayName:params.displayName});}finally{q('relay-token').value='';}}
+  notify(token?'邀请码已提交，正在连接 Relay':'Relay 设置已保存，正在注册和连接','success');
+});
+q('relay-legacy').onclick=()=>action(async()=>{try{await call('remote.enroll',{token:q('relay-token').value.trim(),displayName:q('relay-name').value.trim()});}finally{q('relay-token').value='';}});
 q('relay-reset').onclick=()=>{if(!confirm('重置会删除远程身份和所有手机配对，需要重新扫码，继续吗？'))return;action(async()=>{await call('remote.configure',{relayUrl:q('relay-url').value.trim(),enabled:true,resetIdentity:true});q('pair-uri').value='';await renderPairQR('');});};
 q('relay-reconnect').onclick=()=>action(()=>call('remote.reconnect'));
 q('pair-start').onclick=()=>action(async()=>{const result=await call('remote.pair.start',{ttlSeconds:300});if(result&&result.uri){q('pair-uri').value=result.uri;await renderPairQR(result.uri);}});
 q('pair-refresh').onclick=()=>action(()=>call('remote.pair.list'));
-q('pair-copy').onclick=async()=>{try{await navigator.clipboard.writeText(q('pair-uri').value);q('error').textContent='配对 URI 已复制';}catch(error){showError(new Error('复制失败，请手动复制 URI'));}};
+q('pair-copy').onclick=async()=>{try{await navigator.clipboard.writeText(q('pair-uri').value);notify('配对 URI 已复制','success');}catch(error){showError(new Error('复制失败，请手动复制 URI'));}};
 q('pair-attempts').onclick=(event)=>{const button=event.target.closest('[data-pair-action]');if(!button)return;const id=button.dataset.pairId;const operation=button.dataset.pairAction;action(async()=>{if(operation==='approve'||operation==='reject'){if(operation==='reject'&&!confirm('确定拒绝这个移动端配对请求吗？'))return;await call('remote.pair.resolve',{pairingId:id,approved:operation==='approve'});}else if(operation==='cancel'){if(!confirm('确定取消这个待处理的配对请求吗？'))return;await call('remote.pair.cancel',{pairingId:id});}});};
 q('pairings').onclick=(event)=>{const button=event.target.closest('[data-pair-action="revoke"]');if(!button)return;if(!confirm('撤销后该移动端将无法继续访问此 Desktop，确定继续吗？'))return;action(()=>call('remote.pair.revoke',{pairingId:button.dataset.pairId}));};
 

@@ -67,7 +67,7 @@ $env:WORK_ANYWHERE_CODEX_EXE = 'C:\path\to\official\resources\codex.exe'
 
 管理页直接提供 Relay 地址、Desktop 注册、重新连接、生成/复制移动端配对 URI、批准/拒绝配对请求和撤销已授权设备。CLI 命令仍保留，适合脚本、无界面环境和诊断。
 
-Relay 使用 `self_service` 模式时，点击“启用远程访问”自动登记并连接，无需 token；`invite` 模式会提示输入邀请码。旧 Relay 可主动使用“旧版邀请码注册”，不会自动降级。CLI 使用 `remote configure <origin>` 后自动登记，可通过 `remote register [display-name]` 重试；邀请码可通过本机 `remote.register` 的 `token` 参数提交。配置切换或身份损坏时必须明确重置，`remote configure <origin> --reset-identity` 会清除远程身份和全部手机配对，随后需要重新扫码。
+Relay 使用 `self_service` 模式时，点击“启用远程访问”自动登记并连接，无需 token；`invite` 模式会显示邀请码输入框，填写后再次点击“启用远程访问”提交。旧 Relay 可主动使用“旧版邀请码注册”，不会自动降级。CLI 使用 `remote configure <origin>` 后自动登记，可通过 `remote register [display-name]` 重试；邀请码可通过本机 `remote.register` 的 `token` 参数提交。配置切换或身份损坏时必须明确重置，`remote configure <origin> --reset-identity` 会清除远程身份和全部手机配对，随后需要重新扫码。
 
 ## Install for ChatGPT Desktop
 
