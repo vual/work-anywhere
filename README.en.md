@@ -424,3 +424,7 @@ See [`AGENTS.md`](AGENTS.md) for repository development rules, [`desktop/docs/RE
 ## Contact
 
 For questions and feedback, reach out on WeChat: `822784588`.
+
+## Community
+
+Thanks to the [LINUX DO](https://linux.do/) community for its support. You are welcome to join the community to share your experience and report issues.
