@@ -52,7 +52,7 @@ Work Anywhere（WAW）让你在手机上管理电脑端的官方 ChatGPT Codex D
 > 想先体验、暂不自行部署时，可在第 3 步使用公共测试 Relay：
 >
 > - Relay 地址：`https://relay-test.annyun.cn`
-> - 邀请码：`5ab5GOrmSHjLnbf9QTvm0czyFhduddnDkn-o6ZA4Bvc`
+> - 邀请码：`hZqvxh8UgArP2ar86UM_nT-EI4MKBls1ebAWY0LwjQQ`
 >
 > 该服务仅供测试使用，不保证稳定性，可能随时重置或下线。日常使用建议按 [Relay 指南](relay/README.md) 自行部署 Relay 服务。
 
