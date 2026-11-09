@@ -16,8 +16,8 @@ Inno Setup installer
     ├─ PrepareToInstall: existing work-anywhere.exe daemon stop
     ├─ %LOCALAPPDATA%\Programs\WorkAnywhere\work-anywhere.exe
     ├─ Start menu "Work Anywhere" → work-anywhere.exe ui
-    ├─ task autostart (default checked) → work-anywhere.exe autostart enable
-    │                       (unchecked)  → work-anywhere.exe autostart disable
+    ├─ task autostart (default checked) → [Registry] HKCU Run:WorkAnywhere = "<exe>" daemon start --background
+    │                       (unchecked)  → RegDeleteValue HKCU Run:WorkAnywhere
     ├─ task codex (optional) → work-anywhere.exe install
     │      ├─ backup current HKCU\Environment\CODEX_CLI_PATH
     │      ├─ set HKCU\Environment\CODEX_CLI_PATH to installed EXE
@@ -25,7 +25,7 @@ Inno Setup installer
     └─ finish page "立即启动 Work Anywhere" → work-anywhere.exe daemon start --background
 ```
 
-安装目录使用 `{localappdata}\Programs\WorkAnywhere`，`PrivilegesRequired=lowest`，因此不需要管理员权限。自启动键值由 [`internal/platform/autostart`](../../internal/platform/autostart/) 管理，环境变量写入、原值备份和卸载恢复由 `internal/platform/installation` 负责，安装器只调用 EXE 命令，不重复实现这些规则。
+安装目录使用 `{localappdata}\Programs\WorkAnywhere`，`PrivilegesRequired=lowest`，因此不需要管理员权限。自启动键值格式由 [`internal/platform/autostart`](../../internal/platform/autostart/) 定义（`"<exe>" daemon start --background`），安装器在 `[Registry]` 中直接写入同一值，不启动刚解压的未签名 EXE，避免首次执行被安全软件拦截或延迟时自启动设置失败；修改该格式时必须同步 `installer.iss`。环境变量写入、原值备份和卸载恢复由 `internal/platform/installation` 负责，安装器调用 `install` 命令，不重复实现这些规则。
 
 ## Interfaces
 
@@ -40,14 +40,14 @@ cd desktop
 
 安装器任务（`[Tasks]`）：
 
-- `autostart`：“登录 Windows 时启动 Work Anywhere”，默认勾选。勾选时执行 `autostart enable`，取消时执行 `autostart disable`。
+- `autostart`：“登录 Windows 时启动 Work Anywhere”，默认勾选。勾选时由 `[Registry]` 写入 HKCU Run 的 `WorkAnywhere` 值（卸载时删除），取消时删除该值。
 - `codex`：“集成 ChatGPT Codex Desktop”。首次安装且检测到 `%LOCALAPPDATA%\OpenAI\Codex` 时在任务页预先勾选，否则默认不勾；升级沿用上次选择。勾选时执行 `install` 并提示完全重启 ChatGPT Desktop；不勾选时不修改 `CODEX_CLI_PATH`。静默安装不显示任务页，因此只启用默认勾选的 `autostart`。
 
 其他行为：
 
 - 开始菜单 “Work Anywhere” 运行 `work-anywhere.exe ui`，daemon 未运行时自动启动并打开管理页。
 - 完成页 “立即启动 Work Anywhere” 默认勾选，运行 `daemon start --background`。
-- 任一步骤失败时汇总显示错误和可手动重试的命令，已安装文件保留。
+- `install` 失败时汇总显示错误详情（启动失败的系统错误或非零退出码，并写入 Inno Setup 日志）和可手动重试的命令，已安装文件保留。
 - 卸载顺序：`daemon stop` → `autostart disable` → `uninstall`。`uninstall` 只在 `CODEX_CLI_PATH` 仍指向该 EXE 时恢复备份值（无备份则删除），否则保持不变。
 - 卸载不删除 `%LOCALAPPDATA%\WorkAnywhere`，避免误删会话、附件、日志和环境变量备份。
 

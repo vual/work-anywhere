@@ -49,6 +49,11 @@ Name: "codex"; Description: "集成 ChatGPT Codex Desktop（写入 CODEX_CLI_PAT
 [Files]
 Source: "..\..\dist\windows-amd64\work-anywhere.exe"; DestDir: "{app}"; Flags: ignoreversion
 
+[Registry]
+; Written by Setup itself (same value as `autostart enable`) so login autostart
+; does not depend on launching the freshly installed, unsigned EXE.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "WorkAnywhere"; ValueData: """{app}\{#AppExeName}"" daemon start --background"; Tasks: autostart; Flags: uninsdeletevalue
+
 [Icons]
 Name: "{group}\Work Anywhere"; Filename: "{app}\{#AppExeName}"; Parameters: "ui"; WorkingDir: "{app}"
 Name: "{group}\卸载 Work Anywhere"; Filename: "{uninstallexe}"
@@ -70,12 +75,25 @@ begin
   Result := DirExists(ExpandConstant('{localappdata}\OpenAI\Codex'));
 end;
 
-function RunApp(const Parameters: String): Boolean;
+function RunApp(const Parameters: String; var Detail: String): Boolean;
 var
   ResultCode: Integer;
 begin
-  Result := Exec(ExpandConstant('{app}\{#AppExeName}'), Parameters, ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Result := Result and (ResultCode = 0);
+  Detail := '';
+  if not Exec(ExpandConstant('{app}\{#AppExeName}'), Parameters, ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    Detail := '无法启动程序：' + SysErrorMessage(ResultCode) + ' (' + IntToStr(ResultCode) + ')';
+    Result := False;
+  end
+  else if ResultCode <> 0 then
+  begin
+    Detail := '退出码 ' + IntToStr(ResultCode);
+    Result := False;
+  end
+  else
+    Result := True;
+  if not Result then
+    Log('work-anywhere.exe ' + Parameters + ' failed: ' + Detail);
 end;
 
 procedure CurPageChanged(CurPageID: Integer);
@@ -112,24 +130,22 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   Problems: String;
+  Detail: String;
 begin
   if CurStep <> ssPostInstall then
     exit;
   Problems := '';
-  if WizardIsTaskSelected('autostart') then
-  begin
-    if not RunApp('autostart enable') then
-      Problems := Problems + #13#10 + '登录自启动设置失败，可稍后执行：' + #13#10 + ExpandConstant('{app}\{#AppExeName}') + ' autostart enable';
-  end
-  else
-    RunApp('autostart disable');
+  { The autostart Run value itself is written by the [Registry] section; an
+    unchecked task removes an entry left by a previous install or the UI. }
+  if not WizardIsTaskSelected('autostart') then
+    RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Run', 'WorkAnywhere');
   if WizardIsTaskSelected('codex') then
   begin
-    if RunApp('install') then
+    if RunApp('install', Detail) then
       SuppressibleMsgBox('ChatGPT Codex Desktop 集成已启用。' + #13#10#13#10 +
         '请完全退出并重新启动所有 ChatGPT Desktop 实例，使 CODEX_CLI_PATH 配置生效。', mbInformation, MB_OK, IDOK)
     else
-      Problems := Problems + #13#10 + 'CODEX_CLI_PATH 写入失败，可稍后执行：' + #13#10 + ExpandConstant('{app}\{#AppExeName}') + ' install';
+      Problems := Problems + #13#10 + 'CODEX_CLI_PATH 写入失败（' + Detail + '），可稍后执行：' + #13#10 + ExpandConstant('{app}\{#AppExeName}') + ' install';
   end;
   if Problems <> '' then
     SuppressibleMsgBox('程序文件已安装，但以下步骤未完成：' + #13#10 + Problems, mbError, MB_OK, IDOK);
