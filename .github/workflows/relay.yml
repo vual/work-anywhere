@@ -83,7 +83,7 @@ jobs:
         run: |
           trap 'docker compose --project-name enrollment-smoke logs; docker compose --project-name enrollment-smoke down --volumes' EXIT
           docker compose --project-name enrollment-smoke up --build --detach
-          curl --fail --retry 30 --retry-delay 2 --retry-connrefused http://127.0.0.1:18080/health/ready
+          curl --fail --retry 30 --retry-delay 2 --retry-connrefused --retry-all-errors http://127.0.0.1:18080/health/ready
           docker compose --project-name enrollment-smoke exec --no-TTY relay /relay migrate status
           curl --fail http://127.0.0.1:18080/v1/enrollment/policy | jq -e '.protocol == "daemon-enrollment-v1" and .mode == "self_service"'
 
