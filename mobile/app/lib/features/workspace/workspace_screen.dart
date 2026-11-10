@@ -2,7 +2,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/theme.dart';
@@ -10,6 +9,7 @@ import '../../app/chrome.dart';
 import '../../app/localization.dart';
 import '../../core/models.dart';
 import '../pairing/pairing_screen.dart';
+import 'app_drawer.dart';
 import 'workspace_controller.dart';
 
 const _workspaceLogoSize = 44.0;
@@ -51,6 +51,7 @@ class WorkspaceScreen extends ConsumerWidget {
               .where((item) => item.title.toLowerCase().contains(query))
               .toList();
     return Scaffold(
+      drawer: const AppDrawer(),
       body: SafeArea(
         child: Column(
           children: [
@@ -269,12 +270,13 @@ class _TopBar extends ConsumerWidget {
             height: math.max(60, 60 + (scaledTitle - 16) * 2),
             child: Row(
               children: [
-                SvgPicture.asset(
-                  'assets/waw-app-icon.svg',
-                  width: _workspaceLogoSize,
-                  height: _workspaceLogoSize,
+                // The 48dp hit area is centred on the logo, so pull it back by
+                // the extra margin to keep the logo where it was.
+                Transform.translate(
+                  offset: const Offset(-(48 - _workspaceLogoSize) / 2, 0),
+                  child: const AppMenuLogo(size: _workspaceLogoSize),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 8 - (48 - _workspaceLogoSize)),
                 Expanded(
                   key: const Key('workspace-running-indicator'),
                   child: data.attentionCount == 0 && data.runningCount == 0

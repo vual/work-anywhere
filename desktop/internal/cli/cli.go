@@ -25,7 +25,7 @@ func IsCommand(args []string) bool {
 		return false
 	}
 	switch args[0] {
-	case "daemon", "status", "instance", "conversation", "turn", "action", "catalog", "traffic", "remote", "call", "ui", "self-test", "install", "uninstall", "autostart", "version":
+	case "daemon", "status", "update", "instance", "conversation", "turn", "action", "catalog", "traffic", "remote", "call", "ui", "self-test", "install", "uninstall", "autostart", "version":
 		return true
 	default:
 		return false
@@ -51,6 +51,9 @@ func Run(ctx context.Context, args []string, build appinfo.BuildInfo) error {
 	if args[0] == "version" {
 		fmt.Printf("work-anywhere %s (%s, %s)\n", build.Version, build.Commit, build.Date)
 		return nil
+	}
+	if args[0] == "update" {
+		return runUpdate(ctx, args[1:], os.Stdin, os.Stdout)
 	}
 	if args[0] == "autostart" {
 		return runAutostart(args[1:])
@@ -89,15 +92,39 @@ func Run(ctx context.Context, args []string, build appinfo.BuildInfo) error {
 		return err
 	}
 	defer conn.Close()
+	result, err := callDaemon(conn, method, params)
+	if err != nil {
+		return err
+	}
+	if args[0] == "ui" {
+		data, _ := json.Marshal(result)
+		var decoded struct {
+			URL string `json:"url"`
+		}
+		if json.Unmarshal(data, &decoded) != nil || decoded.URL == "" {
+			return errors.New("daemon did not return a management URL")
+		}
+		if err := platformprocess.OpenURL(decoded.URL); err != nil {
+			return err
+		}
+		fmt.Println(decoded.URL)
+		return nil
+	}
+	return printJSON(result)
+}
+
+// callDaemon sends one control request on an established connection and
+// returns its result.
+func callDaemon(conn net.Conn, method string, params json.RawMessage) (any, error) {
 	request := protocol.ControlRequest{Type: "request", ID: fmt.Sprintf("cli-%d", time.Now().UnixNano()), Method: method, Params: params}
 	data, _ := json.Marshal(request)
-	if err = ipc.WriteFrame(conn, ipc.Frame{Kind: ipc.KindControlRequest, Payload: data}); err != nil {
-		return err
+	if err := ipc.WriteFrame(conn, ipc.Frame{Kind: ipc.KindControlRequest, Payload: data}); err != nil {
+		return nil, err
 	}
 	for {
 		frame, readErr := ipc.ReadFrame(conn)
 		if readErr != nil {
-			return readErr
+			return nil, readErr
 		}
 		if frame.Kind != ipc.KindControlResponse {
 			continue
@@ -107,23 +134,9 @@ func Run(ctx context.Context, args []string, build appinfo.BuildInfo) error {
 			continue
 		}
 		if response.Error != nil {
-			return fmt.Errorf("%s: %s", response.Error.Code, response.Error.Message)
+			return nil, &controlError{Code: response.Error.Code, Message: response.Error.Message}
 		}
-		if args[0] == "ui" {
-			data, _ := json.Marshal(response.Result)
-			var result struct {
-				URL string `json:"url"`
-			}
-			if json.Unmarshal(data, &result) != nil || result.URL == "" {
-				return errors.New("daemon did not return a management URL")
-			}
-			if err := platformprocess.OpenURL(result.URL); err != nil {
-				return err
-			}
-			fmt.Println(result.URL)
-			return nil
-		}
-		return printJSON(response.Result)
+		return response.Result, nil
 	}
 }
 
@@ -395,5 +408,5 @@ func printJSON(value any) error {
 }
 
 func usage() error {
-	return errors.New("usage: work-anywhere daemon <run|start|status|stop|force-stop> | status | instance <list|get|restart> | conversation list | action list | catalog <models|permissions> | remote <status|configure|register|enroll|pair|reconnect> | call <method> [json] | ui | install | uninstall | autostart <enable|disable|status> | self-test | version")
+	return errors.New("usage: work-anywhere daemon <run|start|status|stop|force-stop> | status | instance <list|get|restart> | conversation list | action list | catalog <models|permissions> | remote <status|configure|register|enroll|pair|reconnect> | update <status|check|apply [--yes] [--interrupt]|cancel> | call <method> [json] | ui | install | uninstall | autostart <enable|disable|status> | self-test | version")
 }

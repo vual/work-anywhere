@@ -27,6 +27,7 @@ import (
 	"github.com/hurf/work-anywhere/desktop/internal/provider"
 	"github.com/hurf/work-anywhere/desktop/internal/remote"
 	"github.com/hurf/work-anywhere/desktop/internal/traffic"
+	"github.com/hurf/work-anywhere/desktop/internal/update"
 )
 
 type Manager struct {
@@ -64,6 +65,8 @@ type Manager struct {
 	backends           map[string]provider.Backend
 	backendVersions    map[string]*backendVersion
 	claudeCodeInactive *inactiveBackend
+	update             *update.Service
+	manualUpdateCheck  atomic.Bool
 }
 
 const maxEventPayloadMemory = int64(32 << 20)
@@ -228,6 +231,7 @@ func Run(ctx context.Context, version string) error {
 	m.remote = remoteService
 	go remoteService.Run(ctx)
 	m.log.Event("daemon.started", map[string]any{"version": version, "pid": os.Getpid()})
+	m.startUpdates(ctx, dataDir)
 	admin, err := startAdmin(m)
 	if err != nil {
 		listener.Close()
@@ -442,6 +446,10 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 	}
 	if m.controlPaused.Load() && isMutatingControlMethod(request.Method) {
 		response.Error = &protocol.ControlError{Code: "control_paused", Message: "local control is paused from the tray menu"}
+		return response
+	}
+	if isUpdateMethod(request.Method) {
+		m.updateControl(request, &response)
 		return response
 	}
 	if request.Contract == protocol.MobileControlContract {
@@ -1117,12 +1125,7 @@ func (m *Manager) control(request protocol.ControlRequest) (response protocol.Co
 		m.remote.Reconnect()
 		response.Result = map[string]any{"reconnecting": true}
 	case "system.shutdown":
-		active := m.backendActiveTurns()
-		for _, item := range m.instanceSnapshots() {
-			if item.ActiveTurn {
-				active++
-			}
-		}
+		active := m.activeTurnCount()
 		var params struct {
 			Force bool `json:"force"`
 		}
@@ -1195,7 +1198,7 @@ func (m *Manager) beginAttachment(params attachmentBeginParams, root string) (an
 }
 
 func isMutatingControlMethod(method string) bool {
-	return method == "conversation.create" || method == "conversation.settings.update" || method == "conversation.rename" || strings.HasPrefix(method, "conversation.queue.") || method == "plan.respond" || strings.HasPrefix(method, "turn.") || method == "action.resolve" || method == "instance.restart" || strings.HasPrefix(method, "attachment.") || strings.HasPrefix(method, "traffic.") || (strings.HasPrefix(method, "remote.") && method != "remote.status" && method != "remote.pair.list")
+	return isMutatingUpdateMethod(method) || method == "conversation.create" || method == "conversation.settings.update" || method == "conversation.rename" || strings.HasPrefix(method, "conversation.queue.") || method == "plan.respond" || strings.HasPrefix(method, "turn.") || method == "action.resolve" || method == "instance.restart" || strings.HasPrefix(method, "attachment.") || strings.HasPrefix(method, "traffic.") || (strings.HasPrefix(method, "remote.") && method != "remote.status" && method != "remote.pair.list")
 }
 
 func (m *Manager) restartErroredInstances() int {

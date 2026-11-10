@@ -61,6 +61,8 @@ cd desktop
 
 EXE 和安装包目前没有 Authenticode 签名，Windows SmartScreen 可能提示“未知发布者”。
 
+`update-manifest` job 在 `desktop-windows` 与 `android` 完成后生成并上传签名的 `update-manifest.json`（格式见 [更新清单协议](../self-update/manifest.md)），需要 secret `WAW_UPDATE_SIGNING_KEY` 与 `WAW_UPDATE_SIGNING_KEY_ID`；tag 构建缺少 Android release keystore 时 `android` job 失败。安装器支持 [Desktop 自更新](../self-update/design.md) 使用的静默升级参数 `/WAWUPDATE=1` 与 `/WAWPID=<pid>`：更新模式下不弹消息框，先等待发起更新的 daemon 退出；`PrepareToInstall` 在 `daemon stop` 后等待 EXE 可写，最长 15 秒；安装未完成时 `DeinitializeSetup` 重新启动旧 daemon。
+
 ## State and persistence
 
 安装器自身不保存会话数据，只在 Inno Setup 卸载信息中记录 `CodexTaskChosen`，用于区分首次安装与升级。`work-anywhere.exe install` 使用 `%LOCALAPPDATA%\WorkAnywhere\install\codex-cli-path-backup.json` 保存原始用户级环境变量，`uninstall` 恢复后删除该文件。自启动保存在 HKCU `Software\Microsoft\Windows\CurrentVersion\Run` 的 `WorkAnywhere` 值。

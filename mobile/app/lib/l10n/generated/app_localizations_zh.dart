@@ -676,6 +676,124 @@ class AppLocalizationsZh extends AppLocalizations {
   String agentCannotSend(String agent) {
     return '$agent 当前不支持从手机发送消息。';
   }
+
+  @override
+  String get openMenu => '打开菜单';
+
+  @override
+  String get newVersionAvailable => '有新版本';
+
+  @override
+  String get checkForUpdates => '检查更新';
+
+  @override
+  String get about => '关于';
+
+  @override
+  String newVersionSubtitle(String version) {
+    return '有新版本 $version';
+  }
+
+  @override
+  String appVersionLabel(String versionName, String versionCode) {
+    return '版本 $versionName ($versionCode)';
+  }
+
+  @override
+  String get projectHomepage => 'GitHub 项目主页';
+
+  @override
+  String get updateChecking => '正在检查更新…';
+
+  @override
+  String get updateUpToDate => '已是最新版本';
+
+  @override
+  String updateAvailableTitle(String version) {
+    return '发现新版本 $version';
+  }
+
+  @override
+  String updateDownloadSize(String size) {
+    return '下载大小 $size';
+  }
+
+  @override
+  String get updateReleaseNotes => '查看更新说明';
+
+  @override
+  String get updateNow => '立即更新';
+
+  @override
+  String get updateLater => '稍后';
+
+  @override
+  String get updateSkipVersion => '跳过此版本';
+
+  @override
+  String updateDownloading(String progress) {
+    return '正在下载 $progress';
+  }
+
+  @override
+  String get updateInstall => '安装';
+
+  @override
+  String get updateInstalling => '正在打开系统安装程序…';
+
+  @override
+  String get updatePermissionTitle => '需要安装权限';
+
+  @override
+  String get updatePermissionBody => '请在系统设置中允许 WAW 安装未知应用。返回后会自动继续安装，已下载的安装包会保留。';
+
+  @override
+  String get updateOpenSettings => '去设置';
+
+  @override
+  String get updateInstallCancelled => '安装已取消，可以再次安装。';
+
+  @override
+  String get updateRedownload => '重新下载';
+
+  @override
+  String get updateUnsupportedBuild => 'Debug 构建不支持应用内更新。';
+
+  @override
+  String get updateErrorManifest => '无法获取更新信息，请检查网络后重试。';
+
+  @override
+  String get updateErrorSignature => '更新信息校验失败，已停止更新。';
+
+  @override
+  String get updateErrorHash => '下载的安装包校验失败。';
+
+  @override
+  String get updateErrorDownload => '下载失败，请重试。';
+
+  @override
+  String get updateErrorNoAsset => '新版本暂不提供 Android 安装包。';
+
+  @override
+  String get updateErrorSigner => '安装包签名与当前应用不一致，无法安装。';
+
+  @override
+  String get updateErrorInstall => '安装失败，请重试。';
+
+  @override
+  String get updateErrorGeneric => '更新失败。';
+
+  @override
+  String get updateAdvanced => '高级';
+
+  @override
+  String get updateMirrorLabel => '更新镜像地址';
+
+  @override
+  String get updateMirrorHint => '留空则从 GitHub 下载';
+
+  @override
+  String get updateMirrorSaved => '镜像地址已保存';
 }
 
 /// The translations for Chinese, as used in China (`zh_CN`).

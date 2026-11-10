@@ -30,6 +30,7 @@ type Core struct {
 	activeID   string
 	generation uint64
 	closed     bool
+	update     updateRuntime
 }
 
 type pairingRuntime struct {

@@ -39,7 +39,7 @@ Flutter 适合共享 UI 与业务逻辑，同时保留 Swift/Kotlin 平台接入
 
 ## 内部 binding 接口
 
-当前 Flutter 通过 Pigeon `MobileCoreApi` 发出 `pair`、`restoreStored`、多 pairing 的选择/启停/排序/Relay 更新/本机删除/短探测、credential catalog 持久化、通用 versioned control `call`、`status` 和 `close`；业务 method/DTO 位于 `mobile-control-v1` envelope 内。Android host 把 Go Core 的 `EventSink` 接到 `work_anywhere/mobile_events` EventChannel，主动发送 daemon event 和 transport state；iOS 事件宿主尚未实现。
+当前 Flutter 通过 Pigeon `MobileCoreApi` 发出 `pair`、`restoreStored`、多 pairing 的选择/启停/排序/Relay 更新/本机删除/短探测、credential catalog 持久化、通用 versioned control `call`、`status`、`close`，以及应用内更新的 `appVersion`、`checkUpdate`、`downloadUpdate`、`cancelUpdateDownload`、`canInstallPackages`、`openInstallPermissionSettings`、`installUpdate`（见 [应用内更新](../app-update/design.md)）；业务 method/DTO 位于 `mobile-control-v1` envelope 内。Android host 把 Go Core 的 `EventSink` 接到 `work_anywhere/mobile_events` EventChannel，主动发送 daemon event、transport state 和不带 daemon 选择信息的 `type=update` 事件；Dart `CoreGateway.events` 只调用一次 `receiveBroadcastStream()` 并缓存为 broadcast stream，因为重复调用会替换 native 侧 handler。iOS 事件宿主尚未实现。
 
 Host 把 command 转给 gomobile facade；Go core 的 event sink 返回 `type=event` 与连接生命周期 `type=transport`。`conversation.delta` 可携带合并后的实时正文，其他事件通常是失效或终态提示；两类 envelope 都附加当前 `daemonId + selection generation`。endpoint 不把迟到 response 当事件，未注册 sink 时只保留最近 256 条且总计不超过 2 MiB，溢出后先发 `conversation.invalidated`。Android 主线程转发后，Dart controller 按当前电脑和 generation 二次过滤。网络任务永不在 platform main thread 同步等待。
 

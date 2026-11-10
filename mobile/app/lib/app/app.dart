@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import 'router.dart';
 import 'theme.dart';
+import '../features/update/update_prompter.dart';
 import '../l10n/generated/app_localizations.dart';
 
 class WorkAnywhereApp extends StatelessWidget {
@@ -19,7 +20,11 @@ class WorkAnywhereApp extends StatelessWidget {
     routerConfig: appRouter,
     builder: (context, child) => AnnotatedRegion<SystemUiOverlayStyle>(
       value: wawSystemUiOverlayStyle(Theme.of(context).brightness),
-      child: child ?? const SizedBox.shrink(),
+      child: UpdatePrompter(
+        navigatorKey: rootNavigatorKey,
+        onOpenAbout: () => appRouter.push('/about'),
+        child: child ?? const SizedBox.shrink(),
+      ),
     ),
   );
 }

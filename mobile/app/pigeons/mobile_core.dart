@@ -43,4 +43,23 @@ abstract class MobileCoreApi {
   CoreReply status();
 
   void close();
+
+  /// Installed versionName/versionCode/packageName and whether this build may
+  /// self-update (release, non-debuggable).
+  CoreReply appVersion();
+
+  @async
+  CoreReply checkUpdate(String mirrorBase);
+
+  @async
+  CoreReply downloadUpdate(int versionCode);
+
+  void cancelUpdateDownload();
+
+  bool canInstallPackages();
+
+  void openInstallPermissionSettings();
+
+  @async
+  CoreReply installUpdate(int versionCode);
 }

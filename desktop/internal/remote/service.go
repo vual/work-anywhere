@@ -1152,6 +1152,9 @@ func (s *Service) forwardEventStream(ctx context.Context, events <-chan protocol
 			if !ok {
 				return true
 			}
+			if isLocalOnlyEvent(event) {
+				continue
+			}
 			event.Contract = protocol.MobileControlContract
 			if delta, recognized := parseConversationDelta(event); recognized {
 				for _, batched := range batches.add(event, delta, time.Now()) {
@@ -1505,4 +1508,10 @@ func errString(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+// isLocalOnlyEvent reports events that belong to the local management
+// contract and must not reach Mobile (for example system.update.changed).
+func isLocalOnlyEvent(event protocol.Event) bool {
+	return strings.HasPrefix(event.Event, "system.update.")
 }

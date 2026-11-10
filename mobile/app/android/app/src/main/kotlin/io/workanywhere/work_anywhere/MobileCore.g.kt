@@ -276,6 +276,17 @@ interface MobileCoreApi {
   suspend fun call(method: String, paramsJson: String, timeoutMilliseconds: Long): CoreReply
   fun status(): CoreReply
   fun close()
+  /**
+   * Installed versionName/versionCode/packageName and whether this build may
+   * self-update (release, non-debuggable).
+   */
+  fun appVersion(): CoreReply
+  suspend fun checkUpdate(mirrorBase: String): CoreReply
+  suspend fun downloadUpdate(versionCode: Long): CoreReply
+  fun cancelUpdateDownload()
+  fun canInstallPackages(): Boolean
+  fun openInstallPermissionSettings()
+  suspend fun installUpdate(versionCode: Long): CoreReply
 
   companion object {
     /** The codec used by MobileCoreApi. */
@@ -516,6 +527,125 @@ interface MobileCoreApi {
               MobileCorePigeonUtils.wrapError(exception)
             }
             reply.reply(wrapped)
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.work_anywhere.MobileCoreApi.appVersion$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { _, reply ->
+            val wrapped: List<Any?> = try {
+              listOf(api.appVersion())
+            } catch (exception: Throwable) {
+              MobileCorePigeonUtils.wrapError(exception)
+            }
+            reply.reply(wrapped)
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.work_anywhere.MobileCoreApi.checkUpdate$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { message, reply ->
+            val args = message as List<Any?>
+            val mirrorBaseArg = args[0] as String
+            CoroutineScope(Dispatchers.Main).launch {
+              val wrapped: List<Any?> = try {
+                listOf(api.checkUpdate(mirrorBaseArg))
+              } catch (exception: Throwable) {
+                MobileCorePigeonUtils.wrapError(exception)
+              }
+              reply.reply(wrapped)
+            }
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.work_anywhere.MobileCoreApi.downloadUpdate$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { message, reply ->
+            val args = message as List<Any?>
+            val versionCodeArg = args[0] as Long
+            CoroutineScope(Dispatchers.Main).launch {
+              val wrapped: List<Any?> = try {
+                listOf(api.downloadUpdate(versionCodeArg))
+              } catch (exception: Throwable) {
+                MobileCorePigeonUtils.wrapError(exception)
+              }
+              reply.reply(wrapped)
+            }
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.work_anywhere.MobileCoreApi.cancelUpdateDownload$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { _, reply ->
+            val wrapped: List<Any?> = try {
+              api.cancelUpdateDownload()
+              listOf(null)
+            } catch (exception: Throwable) {
+              MobileCorePigeonUtils.wrapError(exception)
+            }
+            reply.reply(wrapped)
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.work_anywhere.MobileCoreApi.canInstallPackages$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { _, reply ->
+            val wrapped: List<Any?> = try {
+              listOf(api.canInstallPackages())
+            } catch (exception: Throwable) {
+              MobileCorePigeonUtils.wrapError(exception)
+            }
+            reply.reply(wrapped)
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.work_anywhere.MobileCoreApi.openInstallPermissionSettings$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { _, reply ->
+            val wrapped: List<Any?> = try {
+              api.openInstallPermissionSettings()
+              listOf(null)
+            } catch (exception: Throwable) {
+              MobileCorePigeonUtils.wrapError(exception)
+            }
+            reply.reply(wrapped)
+          }
+        } else {
+          channel.setMessageHandler(null)
+        }
+      }
+      run {
+        val channel = BasicMessageChannel<Any?>(binaryMessenger, "dev.flutter.pigeon.work_anywhere.MobileCoreApi.installUpdate$separatedMessageChannelSuffix", codec)
+        if (api != null) {
+          channel.setMessageHandler { message, reply ->
+            val args = message as List<Any?>
+            val versionCodeArg = args[0] as Long
+            CoroutineScope(Dispatchers.Main).launch {
+              val wrapped: List<Any?> = try {
+                listOf(api.installUpdate(versionCodeArg))
+              } catch (exception: Throwable) {
+                MobileCorePigeonUtils.wrapError(exception)
+              }
+              reply.reply(wrapped)
+            }
           }
         } else {
           channel.setMessageHandler(null)

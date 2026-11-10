@@ -148,6 +148,9 @@ func (a *adminServer) status(w http.ResponseWriter, r *http.Request) {
 	if result, ok := response.Result.(map[string]any); ok && response.Error == nil {
 		result["agents"] = a.manager.agentSnapshots()
 		result["startup"] = startupSnapshot()
+		if a.manager.update != nil {
+			result["update"] = a.manager.update.Status()
+		}
 	}
 	writeJSON(w, response)
 }

@@ -47,11 +47,19 @@ class CoreGateway {
   );
 
   List<DiagnosticEntry> get diagnostics => List.unmodifiable(_diagnostics);
-  Stream<Map<String, dynamic>> get events => _eventChannel
+
+  /// One shared broadcast stream for every listener. Calling
+  /// `receiveBroadcastStream()` again would replace the platform message
+  /// handler and the native sink, silently starving earlier listeners.
+  late final Stream<Map<String, dynamic>> events = _eventChannel
       .receiveBroadcastStream()
       .where((value) => value is String)
       .cast<String>()
       .map((value) => jsonDecode(value) as Map<String, dynamic>);
+
+  /// App-update progress and install results (`type == 'update'`).
+  Stream<Map<String, dynamic>> get updateEvents =>
+      events.where((event) => event['type'] == 'update');
   String exportDiagnostics() =>
       _diagnostics.map((item) => item.format()).join('\n');
 
@@ -150,6 +158,34 @@ class CoreGateway {
       _decodeReply(await _api.status());
 
   void close() => _api.close();
+
+  /// `{versionName, versionCode, packageName, updatable}` of the installed app.
+  Future<Map<String, dynamic>> appVersion() async =>
+      _result(_decodeReply(await _api.appVersion()));
+
+  /// `{state: upToDate}` or `{state: available, latest: {...}}`.
+  Future<Map<String, dynamic>> checkUpdate(String mirrorBase) async =>
+      _result(_decodeReply(await _api.checkUpdate(mirrorBase)));
+
+  /// Blocks until the APK is downloaded and verified; progress arrives on
+  /// [updateEvents].
+  Future<Map<String, dynamic>> downloadUpdate(int versionCode) async =>
+      _result(_decodeReply(await _api.downloadUpdate(versionCode)));
+
+  Future<void> cancelUpdateDownload() => _api.cancelUpdateDownload();
+
+  Future<bool> canInstallPackages() => _api.canInstallPackages();
+
+  Future<void> openInstallPermissionSettings() =>
+      _api.openInstallPermissionSettings();
+
+  /// Submits the downloaded APK to the system installer; the outcome arrives
+  /// on [updateEvents] as `installing`, `installed` or `error`.
+  Future<void> installUpdate(int versionCode) async =>
+      _decodeReply(await _api.installUpdate(versionCode));
+
+  Map<String, dynamic> _result(Map<String, dynamic> decoded) =>
+      decoded['result'] as Map<String, dynamic>? ?? decoded;
 
   Map<String, dynamic> _decodeReply(
     CoreReply reply, {

@@ -10,29 +10,35 @@ import (
 )
 
 const (
-	wmDestroy     = 0x0002
-	wmClose       = 0x0010
-	wmApp         = 0x8000
-	wmRButtonUp   = 0x0205
-	wmContextMenu = 0x007B
-	nimAdd        = 0x00000000
-	nimDelete     = 0x00000002
-	nifMessage    = 0x00000001
-	nifIcon       = 0x00000002
-	nifTip        = 0x00000004
-	imageIcon     = 1
-	trayIconSize  = 48
-	tpmReturnCmd  = 0x0100
-	mfString      = 0x0000
-	mfSeparator   = 0x0800
-	mbYesNo       = 0x00000004
-	mbIconWarning = 0x00000030
-	idYes         = 6
-	cmdOpen       = 1001
-	cmdStatus     = 1002
-	cmdPause      = 1003
-	cmdRestart    = 1004
-	cmdExit       = 1005
+	wmDestroy       = 0x0002
+	wmClose         = 0x0010
+	wmApp           = 0x8000
+	wmRButtonUp     = 0x0205
+	wmContextMenu   = 0x007B
+	nimAdd          = 0x00000000
+	nimModify       = 0x00000001
+	nimDelete       = 0x00000002
+	nifMessage      = 0x00000001
+	nifIcon         = 0x00000002
+	nifTip          = 0x00000004
+	nifInfo         = 0x00000010
+	niifInfo        = 0x00000001
+	ninBalloonClick = 0x0405
+	wmTrayNotice    = wmApp + 2
+	imageIcon       = 1
+	trayIconSize    = 48
+	tpmReturnCmd    = 0x0100
+	mfString        = 0x0000
+	mfSeparator     = 0x0800
+	mbYesNo         = 0x00000004
+	mbIconWarning   = 0x00000030
+	idYes           = 6
+	cmdOpen         = 1001
+	cmdStatus       = 1002
+	cmdPause        = 1003
+	cmdRestart      = 1004
+	cmdExit         = 1005
+	cmdUpdate       = 1006
 )
 
 type wndClassEx struct {
@@ -117,12 +123,22 @@ func trayLoop(manager Controller, ready func(uintptr, error)) {
 		ready(0, fmt.Errorf("LoadImageW tray icon: %w", callErr))
 		return
 	}
+	var data notifyIconData
 	wndProc := syscall.NewCallback(func(hwnd uintptr, message uint32, wParam, lParam uintptr) uintptr {
 		switch message {
 		case wmApp + 1:
 			event := uint32(lParam & 0xffff)
+			if event == ninBalloonClick {
+				go openURLNative(manager.ManagementURL())
+				return 0
+			}
 			if event == wmRButtonUp || event == wmContextMenu {
 				showTrayMenu(manager, hwnd)
+			}
+			return 0
+		case wmTrayNotice:
+			if notice := takeNotice(); notice != nil {
+				showBalloon(&data, *notice)
 			}
 			return 0
 		case wmClose:
@@ -145,13 +161,14 @@ func trayLoop(manager Controller, ready func(uintptr, error)) {
 		ready(0, fmt.Errorf("CreateWindowExW: %w", callErr))
 		return
 	}
-	data := notifyIconData{Size: uint32(unsafe.Sizeof(notifyIconData{})), Window: hwnd, ID: 1, Flags: nifMessage | nifIcon | nifTip, CallbackMessage: wmApp + 1, Icon: icon}
+	data = notifyIconData{Size: uint32(unsafe.Sizeof(notifyIconData{})), Window: hwnd, ID: 1, Flags: nifMessage | nifIcon | nifTip, CallbackMessage: wmApp + 1, Icon: icon}
 	copy(data.Tip[:], syscall.StringToUTF16("Work Anywhere"))
 	if ok, _, callErr := shellNotifyIcon.Call(nimAdd, uintptr(unsafe.Pointer(&data))); ok == 0 {
 		destroyWindow.Call(hwnd)
 		ready(0, fmt.Errorf("Shell_NotifyIconW: %w", callErr))
 		return
 	}
+	setNoticePoster(func() { postMessage.Call(hwnd, wmTrayNotice, 0, 0) })
 	ready(hwnd, nil)
 	var message winMessage
 	for {
@@ -162,6 +179,7 @@ func trayLoop(manager Controller, ready func(uintptr, error)) {
 		translateMessage.Call(uintptr(unsafe.Pointer(&message)))
 		dispatchMessage.Call(uintptr(unsafe.Pointer(&message)))
 	}
+	setNoticePoster(nil)
 	shellNotifyIcon.Call(nimDelete, uintptr(unsafe.Pointer(&data)))
 }
 
@@ -179,11 +197,13 @@ func showTrayMenu(manager Controller, hwnd uintptr) {
 	}
 	pauseText, _ := syscall.UTF16PtrFromString(pauseLabel)
 	restartText, _ := syscall.UTF16PtrFromString("重启异常实例")
+	updateText, _ := syscall.UTF16PtrFromString("检查更新")
 	exitText, _ := syscall.UTF16PtrFromString("退出")
 	appendMenu.Call(menu, mfString, cmdOpen, uintptr(unsafe.Pointer(openText)))
 	appendMenu.Call(menu, mfString, cmdStatus, uintptr(unsafe.Pointer(statusText)))
 	appendMenu.Call(menu, mfString, cmdPause, uintptr(unsafe.Pointer(pauseText)))
 	appendMenu.Call(menu, mfString, cmdRestart, uintptr(unsafe.Pointer(restartText)))
+	appendMenu.Call(menu, mfString, cmdUpdate, uintptr(unsafe.Pointer(updateText)))
 	appendMenu.Call(menu, mfSeparator, 0, 0)
 	appendMenu.Call(menu, mfString, cmdExit, uintptr(unsafe.Pointer(exitText)))
 	var cursor point
@@ -213,6 +233,8 @@ func showTrayMenu(manager Controller, hwnd uintptr) {
 		text, _ := syscall.UTF16PtrFromString(fmt.Sprintf("已请求重启 %d 个异常实例。", count))
 		title, _ := syscall.UTF16PtrFromString("Work Anywhere")
 		messageBox.Call(hwnd, uintptr(unsafe.Pointer(text)), uintptr(unsafe.Pointer(title)), 0x40)
+	case cmdUpdate:
+		go manager.CheckForUpdates()
 	case cmdExit:
 		active := 0
 		for _, item := range manager.TrayInstances() {
@@ -246,4 +268,18 @@ func openURLNative(url string) {
 	target, _ := syscall.UTF16PtrFromString(url)
 	shellExecute := shell32.NewProc("ShellExecuteW")
 	shellExecute.Call(0, uintptr(unsafe.Pointer(verb)), uintptr(unsafe.Pointer(target)), 0, 0, 1)
+}
+
+// showBalloon reuses the tray icon data so NIM_MODIFY keeps the icon.
+func showBalloon(data *notifyIconData, notice Notice) {
+	update := *data
+	update.Flags = nifInfo
+	update.InfoFlags = niifInfo
+	update.Info = [256]uint16{}
+	update.InfoTitle = [64]uint16{}
+	copy(update.Info[:len(update.Info)-1], syscall.StringToUTF16(notice.Message))
+	copy(update.InfoTitle[:len(update.InfoTitle)-1], syscall.StringToUTF16(notice.Title))
+	update.Info[len(update.Info)-1] = 0
+	update.InfoTitle[len(update.InfoTitle)-1] = 0
+	shellNotifyIcon.Call(nimModify, uintptr(unsafe.Pointer(&update)))
 }

@@ -114,6 +114,7 @@ metadata 与请求会话 ID 匹配、没有待启动或活跃 Turn 时，允许�
 - 本机控制协议使用版本化 envelope，业务错误使用稳定 code/message，而不是泄露内部 panic。
 - Relay 出站连接器通过 scope allowlist 复用本控制语义，不绕过 daemon 直接操作 App Server stdio；当前实现见 [`remote-relay-connector`](../remote-relay-connector/design.md)。
 - 管理页实现 daemon/Relay/配对管理，不实现聊天、Timeline 或 Prompt UI。
+- `system.update.status/check/apply/cancel/skip/settings` 与 `system.autostart.set` 一样只属于本机管理 contract：Mobile contract 调用返回 `forbidden`，Relay scope 也不包含它们；`apply`、`skip`、`settings` 属于修改类方法。`system.update.changed` 事件不经 Remote 转发。参数与结果见 [Desktop 自更新](../self-update/design.md)。
 - 本机 control 不直接实现网络身份；网络配对和 Mobile 身份由 outbound Relay connector 负责。push provider 与 action 的完整稳定 DTO 尚未完成。
 
 ## Code ownership

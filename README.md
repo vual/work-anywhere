@@ -71,6 +71,7 @@ Desktop V1 提供：
 - 有界内存会话投影、DPAPI 保护的 JSON 配置、临时附件、结构化日志和显式开启的完整协议流量诊断。
 - App Server delta 在加密前按语义批量合并，Mobile 按 `syncEpoch + sequence` 实时展示；缺口、终态或内存超限时回到权威快照。
 - 系统托盘、本机管理页和命令行控制工具。
+- 安装版自动检查签名的更新清单，用户确认后下载并静默升级。
 - daemon 无法在请求前建立连接时直通官方 Codex，优先保证 Desktop 可用。
 - 接入本机 Claude Code：按项目浏览会话和完整历史，新建会话、发送文字/图片、实时查看回复，处理工具审批、提问和计划确认，中断 Turn，选择模型、思考等级和权限模式；电脑端正在使用的会话只读，见 [Claude Code provider 设计](desktop/docs/claude-code-provider/design.md)。
 
@@ -88,6 +89,7 @@ Android Mobile 提供：
 - 项目与会话浏览、搜索、实时增量更新、历史分页和大内容按需读取。
 - 在已有 Codex 或 Claude Code 项目中新建对话、发送文字/图片和中断 Turn；电脑端正在使用的 Claude Code 会话只读显示。
 - 会话菜单支持重命名对话、复制对话串 ID 和刷新。
+- 侧边栏提供管理电脑、检查更新和关于；GitHub 渠道 APK 可在应用内下载、校验并安装新版本。
 - 按会话选择计划模式、模型、思考等级和执行权限。
 - 在 Turn 运行中继续输入，并按 provider 支持编辑、立即引导或取消排队消息（Claude Code 不支持运行中排队）。
 - 多问题回答弹窗、待处理提醒和命令审批的允许/拒绝操作。
@@ -345,6 +347,20 @@ $wa = '<repo>\desktop\dist\windows-amd64\work-anywhere.exe'
 - 管理页只监听随机 loopback 端口，并使用一次性 token、SameSite session、Origin 和 CSRF 校验。
 - 完整进程环境和普通消息正文不落盘；完整 JSONL 流量默认不记录。
 - 官方 Codex session 文件和 Claude Code 转录（`~/.claude/projects/*/*.jsonl`）是各自会话的唯一权威数据源，Work Anywhere 不维护消息历史数据库。daemon 只在重命名 Claude Code 会话时向转录追加一行 `custom-title`（与 CLI `/rename` 相同），其余内容由 `claude.exe` 自身写入。
+
+## 检查与安装更新
+
+- **Desktop**：用安装包安装的副本会在 daemon 启动 30 秒后检查一次，之后约每 24 小时检查一次。发现新版本时，管理页顶部显示更新横幅，托盘对每个版本弹一次通知。点击“立即更新”后，daemon 会下载安装包、校验签名清单和 SHA-256，然后静默升级并自动以新版本重启，同时保留自启动和 Codex 集成选择。ChatGPT Desktop 正在使用 Bridge 时需要先完全退出它；有活跃 Turn 时需要先确认中断。便携版只提示新版本，需要手动下载。也可以用命令行操作：
+
+  ```powershell
+  & $wa update status
+  & $wa update check
+  & $wa update apply
+  ```
+
+- **Android**：点击工作台左上角 App 图标打开侧边栏，选择“检查更新”。App 回到前台时也会每 24 小时自动检查一次。确认更新后，App 下载并校验 APK，再拉起系统安装确认界面；首次使用时需要授予“安装未知应用”权限。只有用同一 release 证书签名的 APK 能覆盖升级。
+
+更新清单由 Release workflow 用 Ed25519 签名，客户端只信任内置公钥。详见 [Desktop 自更新](desktop/docs/self-update/design.md) 和 [Mobile 应用内更新](mobile/docs/app-update/design.md)。
 
 ## 停止与卸载
 

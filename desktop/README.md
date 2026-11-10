@@ -47,6 +47,8 @@ To create a per-user Windows installer, install Inno Setup 6 and run:
 
 The installer is written to `dist\windows-amd64\work-anywhere-setup-0.1.0.exe`. It installs under `%LOCALAPPDATA%\Programs\WorkAnywhere`, adds a Start menu "Work Anywhere" entry (opens the admin page and starts the daemon), enables login autostart by default, and optionally integrates ChatGPT Codex Desktop by writing the user-level `CODEX_CLI_PATH` (the previous value is preserved for uninstall, and you are prompted to fully restart ChatGPT Desktop). The daemon runs on its own, so Claude Code-only setups do not need ChatGPT Desktop. In Task Manager both the daemon and any ChatGPT-launched bridge appear as `work-anywhere.exe`. See the [installer design](docs/windows-installer/design.md).
 
+Installed copies check the signed update manifest from GitHub Releases automatically. When a new version is available, the admin page and tray offer "Update now"; the daemon then downloads and verifies the installer, upgrades silently, and restarts on the new version. Portable copies only report new versions. See [Desktop self-update](docs/self-update/design.md).
+
 Login autostart can also be managed from the admin page or the CLI:
 
 ```powershell
@@ -103,6 +105,7 @@ remote register [display-name]
 remote enroll <token> [display-name]
 remote pair start [ttl]|list|approve|reject|cancel|revoke
 remote reconnect
+update status|check|apply [--yes] [--interrupt]|cancel
 traffic on|off <instance-id>
 call <control-method> [json-params]
 ui

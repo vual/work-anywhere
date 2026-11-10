@@ -32,8 +32,16 @@ try {
         [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $bindingJar, $true)
         $javap = if ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME 'bin\javap.exe' } else { 'javap' }
         $signatures = & $javap -classpath $bindingJar mobilecore.Core
-        if ($LASTEXITCODE -ne 0 -or ($signatures -join "`n") -notmatch 'reorderPairings\(java\.lang\.String\)') {
-            throw 'Generated AAR is missing reorderPairings(String)'
+        if ($LASTEXITCODE -ne 0) { throw 'javap failed on mobilecore.Core' }
+        $joined = $signatures -join "`n"
+        $required = @(
+            'reorderPairings\(java\.lang\.String\)',
+            'checkUpdate\(long, java\.lang\.String, java\.lang\.String\)',
+            'downloadUpdate\(long, java\.lang\.String\)',
+            'cancelUpdateDownload\(\)'
+        )
+        foreach ($pattern in $required) {
+            if ($joined -notmatch $pattern) { throw "Generated AAR is missing $pattern" }
         }
     } finally {
         $archive.Dispose()

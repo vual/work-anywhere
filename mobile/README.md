@@ -55,6 +55,8 @@ App 不使用底部导航栏。没有 pairing 时根页面直接展示添加配�
 
 Daemon 下拉项必须显示连接状态：连接中为 loading icon，在线为绿色点，离线为灰色点；状态同时提供可访问性文本，不能只靠颜色。顶栏中间优先显示待处理或运行中任务提示并可点击进入对应对话；无活跃任务时左侧仅显示 App icon。Agent 在顶栏下一行横向排列，支持左右滑动和直接切换。运行中的对话在列表右侧显示蓝色 loading icon。添加/管理配对、通知和隐私设置从 Daemon 下拉底部或页面 overflow 进入，不占用常驻导航。
 
+点击左上角 App icon 打开侧边栏，包含“管理电脑”“检查更新”和“关于”；“检查更新”进入关于页并自动检查一次，有新版本时 App icon 显示小红点。更新流程见 [应用内更新](docs/app-update/design.md)。
+
 会话详情页由“初始 snapshot + sequence 增量”驱动。任何 gap、过期 cursor、重连或不确定的写操作都会先重新读取 snapshot，不在本地猜测任务是否已执行。
 
 ## Repository layout
@@ -109,7 +111,7 @@ CI 的 `Mobile` workflow 执行 endpoint/Core tests、Pigeon no-diff、Flutter a
 - `WAW_ANDROID_KEYSTORE_BASE64`：keystore 文件的 base64 编码
 - `WAW_ANDROID_KEYSTORE_PASSWORD`、`WAW_ANDROID_KEY_ALIAS`、`WAW_ANDROID_KEY_PASSWORD`
 
-未配置 keystore 时，release APK 会回退为 debug 签名，workflow 会给出警告。debug 签名的 APK 不能被正式签名版本覆盖升级，只能卸载后重装。
+未配置 keystore 时 `android` job 直接失败，不发布 debug 签名的 APK，因为 [应用内更新](docs/app-update/design.md) 要求新旧 APK 使用同一签名证书。早期用 debug 签名分发的 APK 不能被正式签名版本覆盖升级，只能卸载后重装。`update-manifest` job 随后用 `WAW_UPDATE_SIGNING_KEY` 和 `WAW_UPDATE_SIGNING_KEY_ID` 生成签名的更新清单。
 
 ### 真机扫码排查
 

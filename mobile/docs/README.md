@@ -11,12 +11,14 @@
 | 技术栈、分层与平台边界 | [`architecture/design.md`](architecture/design.md) | 协议同步、交互、交付计划 | `core/`, `app/lib/`, `app/android/`, `app/ios/` |
 | 配对、E2EE、请求与状态同步 | [`protocol-and-sync/design.md`](protocol-and-sync/design.md) | Relay wire/E2EE、Desktop control、交互 | `core/mobilecore/`, `app/lib/core/` |
 | 单工作台、Daemon/Agent/Project/Conversation 交互 | [`product-interaction/design.md`](product-interaction/design.md) | 架构、协议同步 | `app/lib/features/`, `app/lib/app/` |
+| 应用内更新 | [`app-update/design.md`](app-update/design.md) | 架构、交互、交付计划、[Desktop 更新清单协议](../../desktop/docs/self-update/manifest.md) | `core/update/`, `core/mobilecore/update.go`, `app/lib/features/{update,about}/`, `app/lib/features/workspace/app_drawer.dart`, `UpdateInstaller.kt` |
 | 分阶段实施与验收 | [`delivery-plan/design.md`](delivery-plan/design.md) | [当前验收记录](delivery-plan/verification.md)、全部设计 | `mobile/app/` 与跨模块前置改动 |
 
 ## Cross-module ownership
 
 - 外层 protobuf schema、配对 transcript、Noise binding 和 push frame 由 [Relay wire protocol](../../relay/docs/wire-protocol/design.md) 所有；Mobile 不维护 fork。
 - 密文内 control method、Agent/Project/Conversation DTO、业务错误、revision/cursor 和 action 仲裁由 [Desktop local control](../../desktop/docs/local-control/design.md) 所有；Codex-first 查询扩展在实现前同步写入 Desktop 设计。
+- 更新清单的格式、签名和校验规则由 [Desktop 更新清单协议](../../desktop/docs/self-update/manifest.md) 所有；Mobile 只消费 `android-apk` 平台键，并复用同一份测试向量。
 - Mobile 负责端上身份私钥、连接状态机、视图 projection、系统权限和交互；不得把 Relay 当作历史或命令队列。
 - Mobile Go core 与 Relay/Desktop 由同一组 repository golden vectors 和端到端测试验证；复用语言/包不能替代真实产物互操作测试。
 

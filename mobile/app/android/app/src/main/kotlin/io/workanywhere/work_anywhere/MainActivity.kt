@@ -107,8 +107,17 @@ private class ReflectiveMobileCore(context: Context) : MobileCoreApi {
     }.getOrNull()
     private val mainHandler = Handler(Looper.getMainLooper())
     private var nativeEventSink: mobilecore.EventSink? = null
+    private val updates = UpdateInstaller(context.applicationContext)
+    private val artifacts = mutableMapOf<Long, UpdateArtifact>()
+
+    init {
+        runCatching { updates.pruneInstalled() }
+    }
 
     fun setEventSink(sink: EventChannel.EventSink?) {
+        UpdateEvents.listener = sink?.let { flutterSink ->
+            { eventJSON: String -> mainHandler.post { flutterSink.success(eventJSON) } }
+        }
         val callback = sink?.let { flutterSink ->
             object : mobilecore.EventSink {
                 override fun onEvent(eventJSON: String) {
@@ -203,9 +212,76 @@ private class ReflectiveMobileCore(context: Context) : MobileCoreApi {
 
     override fun close() {
         core?.let { nativeCore ->
+            runCatching { nativeCore.javaClass.getMethod("cancelUpdateDownload").invoke(nativeCore) }
             runCatching { nativeCore.javaClass.getMethod("close").invoke(nativeCore) }
         }
     }
+
+    override fun appVersion(): CoreReply = runCatching {
+        hostSuccess(updates.appVersion())
+    }.getOrElse { failure("app_version_unavailable", it.message ?: "Unable to read the installed version") }
+
+    override suspend fun checkUpdate(mirrorBase: String): CoreReply = withContext(Dispatchers.IO) {
+        if (!updates.isUpdatable()) {
+            return@withContext envelopeFailure("update_unsupported_build", "Debug builds do not check for updates")
+        }
+        invoke(
+            "checkUpdate",
+            arrayOf<Class<*>>(java.lang.Long.TYPE, String::class.java, String::class.java),
+            arrayOf<Any>(updates.installedVersionCode(), updates.appVersion().getString("packageName"), mirrorBase),
+        )
+    }
+
+    override suspend fun downloadUpdate(versionCode: Long): CoreReply = withContext(Dispatchers.IO) {
+        val reply = invoke(
+            "downloadUpdate",
+            arrayOf<Class<*>>(java.lang.Long.TYPE, String::class.java),
+            arrayOf<Any>(versionCode, updates.cacheDir().absolutePath),
+        )
+        if (coreSucceeded(reply)) {
+            runCatching {
+                val result = JSONObject(reply.payload).getJSONObject("result")
+                synchronized(artifacts) {
+                    artifacts.clear()
+                    artifacts[versionCode] = UpdateArtifact(
+                        path = result.getString("path"),
+                        versionCode = result.getLong("versionCode"),
+                        packageName = result.getString("packageName"),
+                        signingCertSha256 = result.getString("signingCertSha256"),
+                    )
+                }
+            }
+        }
+        reply
+    }
+
+    override fun cancelUpdateDownload() {
+        core?.let { nativeCore ->
+            runCatching { nativeCore.javaClass.getMethod("cancelUpdateDownload").invoke(nativeCore) }
+        }
+    }
+
+    override fun canInstallPackages(): Boolean = updates.canInstallPackages()
+
+    override fun openInstallPermissionSettings() = updates.openInstallPermissionSettings()
+
+    override suspend fun installUpdate(versionCode: Long): CoreReply = withContext(Dispatchers.IO) {
+        val artifact = synchronized(artifacts) { artifacts[versionCode] }
+            ?: return@withContext envelopeFailure("update_install_failed", "Download the update before installing")
+        val problem = updates.install(artifact)
+        if (problem != null) envelopeFailure(problem.first, problem.second) else hostSuccess(JSONObject().put("submitted", true))
+    }
+
+    private fun hostSuccess(result: JSONObject): CoreReply =
+        CoreReply(ok = true, payload = JSONObject().put("ok", true).put("result", result).toString())
+
+    private fun envelopeFailure(code: String, message: String): CoreReply = CoreReply(
+        ok = true,
+        payload = JSONObject()
+            .put("ok", false)
+            .put("error", JSONObject().put("code", code).put("message", message))
+            .toString(),
+    )
 
     private fun invoke(name: String, types: Array<Class<*>>, arguments: Array<Any>): CoreReply {
         val nativeCore = core

@@ -703,6 +703,124 @@ class AppLocalizationsEn extends AppLocalizations {
   String agentCannotSend(String agent) {
     return '$agent can\'t receive messages from your phone right now.';
   }
+
+  @override
+  String get openMenu => 'Open menu';
+
+  @override
+  String get newVersionAvailable => 'New version available';
+
+  @override
+  String get checkForUpdates => 'Check for updates';
+
+  @override
+  String get about => 'About';
+
+  @override
+  String newVersionSubtitle(String version) {
+    return 'Version $version available';
+  }
+
+  @override
+  String appVersionLabel(String versionName, String versionCode) {
+    return 'Version $versionName ($versionCode)';
+  }
+
+  @override
+  String get projectHomepage => 'GitHub project';
+
+  @override
+  String get updateChecking => 'Checking for updates…';
+
+  @override
+  String get updateUpToDate => 'WAW is up to date';
+
+  @override
+  String updateAvailableTitle(String version) {
+    return 'Version $version is available';
+  }
+
+  @override
+  String updateDownloadSize(String size) {
+    return 'Download size $size';
+  }
+
+  @override
+  String get updateReleaseNotes => 'Release notes';
+
+  @override
+  String get updateNow => 'Update now';
+
+  @override
+  String get updateLater => 'Later';
+
+  @override
+  String get updateSkipVersion => 'Skip this version';
+
+  @override
+  String updateDownloading(String progress) {
+    return 'Downloading $progress';
+  }
+
+  @override
+  String get updateInstall => 'Install';
+
+  @override
+  String get updateInstalling => 'Opening the system installer…';
+
+  @override
+  String get updatePermissionTitle => 'Install permission needed';
+
+  @override
+  String get updatePermissionBody => 'Allow WAW to install unknown apps in system settings. Installation continues when you return, and the downloaded package is kept.';
+
+  @override
+  String get updateOpenSettings => 'Open settings';
+
+  @override
+  String get updateInstallCancelled => 'Installation was cancelled. You can install again.';
+
+  @override
+  String get updateRedownload => 'Download again';
+
+  @override
+  String get updateUnsupportedBuild => 'Debug builds do not support in-app updates.';
+
+  @override
+  String get updateErrorManifest => 'Could not get update information. Check your network and try again.';
+
+  @override
+  String get updateErrorSignature => 'Update information failed verification, so the update was stopped.';
+
+  @override
+  String get updateErrorHash => 'The downloaded package failed verification.';
+
+  @override
+  String get updateErrorDownload => 'Download failed. Try again.';
+
+  @override
+  String get updateErrorNoAsset => 'The new version has no Android package yet.';
+
+  @override
+  String get updateErrorSigner => 'The package is signed differently from this app and cannot be installed.';
+
+  @override
+  String get updateErrorInstall => 'Installation failed. Try again.';
+
+  @override
+  String get updateErrorGeneric => 'Update failed.';
+
+  @override
+  String get updateAdvanced => 'Advanced';
+
+  @override
+  String get updateMirrorLabel => 'Update mirror URL';
+
+  @override
+  String get updateMirrorHint => 'Leave empty to download from GitHub';
+
+  @override
+  String get updateMirrorSaved => 'Mirror URL saved';
 }
 
 /// The translations for English, as used in the United States (`en_US`).

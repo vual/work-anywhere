@@ -276,6 +276,15 @@ protocol MobileCoreApi {
   func call(method: String, paramsJson: String, timeoutMilliseconds: Int64) async throws -> CoreReply
   func status() throws -> CoreReply
   func close() throws
+  /// Installed versionName/versionCode/packageName and whether this build may
+  /// self-update (release, non-debuggable).
+  func appVersion() throws -> CoreReply
+  func checkUpdate(mirrorBase: String) async throws -> CoreReply
+  func downloadUpdate(versionCode: Int64) async throws -> CoreReply
+  func cancelUpdateDownload() throws
+  func canInstallPackages() throws -> Bool
+  func openInstallPermissionSettings() throws
+  func installUpdate(versionCode: Int64) async throws -> CoreReply
 }
 
 /// Generated setup class from Pigeon to handle messages through the `binaryMessenger`.
@@ -491,6 +500,109 @@ class MobileCoreApiSetup {
       }
     } else {
       closeChannel.setMessageHandler(nil)
+    }
+    let appVersionChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.work_anywhere.MobileCoreApi.appVersion\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
+    if let api = api {
+      appVersionChannel.setMessageHandler { _, reply in
+        do {
+          let result = try api.appVersion()
+          reply(wrapResult(result))
+        } catch {
+          reply(wrapError(error))
+        }
+      }
+    } else {
+      appVersionChannel.setMessageHandler(nil)
+    }
+    let checkUpdateChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.work_anywhere.MobileCoreApi.checkUpdate\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
+    if let api = api {
+      checkUpdateChannel.setMessageHandler { message, reply in
+        let args = message as! [Any?]
+        let mirrorBaseArg = args[0] as! String
+        Task { @MainActor in
+          do {
+            let result = try await api.checkUpdate(mirrorBase: mirrorBaseArg)
+            reply(wrapResult(result))
+          } catch {
+            reply(wrapError(error))
+          }
+        }
+      }
+    } else {
+      checkUpdateChannel.setMessageHandler(nil)
+    }
+    let downloadUpdateChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.work_anywhere.MobileCoreApi.downloadUpdate\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
+    if let api = api {
+      downloadUpdateChannel.setMessageHandler { message, reply in
+        let args = message as! [Any?]
+        let versionCodeArg = args[0] as! Int64
+        Task { @MainActor in
+          do {
+            let result = try await api.downloadUpdate(versionCode: versionCodeArg)
+            reply(wrapResult(result))
+          } catch {
+            reply(wrapError(error))
+          }
+        }
+      }
+    } else {
+      downloadUpdateChannel.setMessageHandler(nil)
+    }
+    let cancelUpdateDownloadChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.work_anywhere.MobileCoreApi.cancelUpdateDownload\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
+    if let api = api {
+      cancelUpdateDownloadChannel.setMessageHandler { _, reply in
+        do {
+          try api.cancelUpdateDownload()
+          reply(wrapResult(nil))
+        } catch {
+          reply(wrapError(error))
+        }
+      }
+    } else {
+      cancelUpdateDownloadChannel.setMessageHandler(nil)
+    }
+    let canInstallPackagesChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.work_anywhere.MobileCoreApi.canInstallPackages\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
+    if let api = api {
+      canInstallPackagesChannel.setMessageHandler { _, reply in
+        do {
+          let result = try api.canInstallPackages()
+          reply(wrapResult(result))
+        } catch {
+          reply(wrapError(error))
+        }
+      }
+    } else {
+      canInstallPackagesChannel.setMessageHandler(nil)
+    }
+    let openInstallPermissionSettingsChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.work_anywhere.MobileCoreApi.openInstallPermissionSettings\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
+    if let api = api {
+      openInstallPermissionSettingsChannel.setMessageHandler { _, reply in
+        do {
+          try api.openInstallPermissionSettings()
+          reply(wrapResult(nil))
+        } catch {
+          reply(wrapError(error))
+        }
+      }
+    } else {
+      openInstallPermissionSettingsChannel.setMessageHandler(nil)
+    }
+    let installUpdateChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.work_anywhere.MobileCoreApi.installUpdate\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
+    if let api = api {
+      installUpdateChannel.setMessageHandler { message, reply in
+        let args = message as! [Any?]
+        let versionCodeArg = args[0] as! Int64
+        Task { @MainActor in
+          do {
+            let result = try await api.installUpdate(versionCode: versionCodeArg)
+            reply(wrapResult(result))
+          } catch {
+            reply(wrapError(error))
+          }
+        }
+      }
+    } else {
+      installUpdateChannel.setMessageHandler(nil)
     }
   }
 }

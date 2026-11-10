@@ -69,6 +69,7 @@
 - 锁定依赖，生成 SBOM，执行 secret/dependency/license scan、崩溃脱敏检查和可复现构建记录。
 - 完成弱网/电量/内存/大时间线性能、24h soak、VoiceOver/TalkBack、本地化和 upgrade migration。
 - 准备隐私说明、加密出口合规信息、商店截图/元数据、签名与 staged rollout/rollback runbook。
+- GitHub 渠道 Android APK 的 [应用内更新](../app-update/design.md) 代码已实现（侧边栏、关于页、下载与 PackageInstaller 安装）；Release 已强制 release keystore 并生成签名更新清单。待完成：Flutter analyze/test 与 Android 构建在 CI 通过，以及真机 E2E 验收。
 
 验收：P0/P1 crash-free 与连接成功指标只含非敏感计数；无阻断 security/accessibility finding；内部、封闭、公开测试逐级通过，rollback 不删除用户 pairing key。
 

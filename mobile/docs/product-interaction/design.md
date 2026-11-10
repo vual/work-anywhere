@@ -36,7 +36,10 @@ App 不使用底部导航栏。无 pairing 时根页面是添加配对；至少�
 添加配对（无 Daemon）
 
 工作台（有 Daemon）
-  ├─ 左上角 App icon
+  ├─ 左上角 App icon → 左侧侧边栏
+  │    ├─ 管理电脑
+  │    ├─ 检查更新 → 关于页（自动检查）
+  │    └─ 关于 → 关于页
   ├─ 顶栏中间活跃任务提示
   ├─ 顶栏右侧 Daemon selector
   ├─ 下一行横向 Agent selector
@@ -230,6 +233,35 @@ Provider capability 为 `bots` 时，同一位置展示 Bot 列表而不是项�
 
 Daemon selector 底部提供“添加电脑”和“管理电脑”。管理页卡片显示本地别名、Relay origin 和连接状态，电脑图标相对“别名 + 状态”两行信息整体垂直居中；每行支持拖动排序、启用/禁用及右侧更多菜单编辑名称和 Relay origin、删除电脑。删除前显示电脑名称与本机配对信息删除的确认弹窗；取消不修改状态，失败保留列表并提示重试。成功后移除本机加密 catalog 中的该条 credential 和相关选择偏好；删除当前电脑时选择排序最前的其他已启用电脑并重新同步，没有可用电脑时清空工作台内容，最后一台删除后返回配对页。删除只影响本机配对，Desktop 侧授权记录仍需在 Desktop 管理页撤销。页面不放置常驻底部栏。
 
+### 侧边栏与关于页
+
+**侧边栏**
+
+- **打开与关闭**：点击工作台左上角 App icon，从左侧滑出 modal drawer，宽度为屏幕宽度的 80%，最大 304dp。点击遮罩、向左滑动或按系统返回键都会关闭侧边栏；侧边栏打开时，返回键先关闭侧边栏，不退出页面。
+- **App icon**：保持现有尺寸和位置，触控区域扩大到 48dp，tooltip 和无障碍标签为“打开菜单”。
+- **顶部**：App icon、应用名 `WAW` 和灰色小字版本号。
+- **菜单项**（固定顺序）：
+  1. “管理电脑” → `/computers`
+  2. “检查更新” → `/about?check=1`
+  3. “关于” → `/about`
+
+  点击后先关闭侧边栏，再打开对应页面。
+- **新版本标记**：有未跳过的新版本时，App icon 右上角显示小红点，同时提供“有新版本”的无障碍文本；“检查更新”项的副标题显示“有新版本 x.y.z”。
+- **与电脑下拉菜单的分工**：电脑下拉菜单保留“添加电脑”和“管理电脑”，不放更新或关于入口。侧边栏只放 App 级入口，不放与当前电脑或 Agent 相关的操作。
+- **未配对时**：配对页暂不提供侧边栏，未配对用户依靠前台自动检查弹出的更新提示。
+
+**关于页 `/about`**
+
+- **布局**：复用 WawBackButton 顶栏，标题为“关于”。内容自上而下依次为：
+  - 居中的 `waw-app-icon.svg` 和应用名；
+  - 版本号 `versionName (versionCode)`；
+  - “检查更新”按钮和更新状态区；
+  - GitHub 项目链接，用系统浏览器打开；
+  - 页面底部可折叠的“高级”区域，内含“更新镜像地址”。
+- **自动检查**：通过 `check=1` 进入时，页面首次构建后自动执行一次检查，效果等同于点击“检查更新”。页面重建、旋转或从下级页面返回时不重复触发；检查或下载已在进行中时，只显示当前进度。
+- **更新状态**：检查中、已是最新、有新版本、下载中和失败几种状态的展示与操作，见 [应用内更新](../app-update/design.md#交互)。
+- **Debug 构建**：只显示版本号；“检查更新”按钮禁用，并说明 debug 构建不支持应用内更新。
+
 设置项：
 
 - 通知权限状态与跳转系统设置；通知文案始终通用，V1 不提供正文预览开关。
@@ -288,7 +320,7 @@ Daemon selector 底部提供“添加电脑”和“管理电脑”。管理页�
 
 ## 代码归属
 
-当前路径：`mobile/app/lib/features/{pairing,workspace,project,conversation}/`、`mobile/app/lib/app/` 与 `mobile/app/lib/core/`。启动图标源位于 `mobile/app/branding/launcher-icon.svg`，平台图标分别位于 `mobile/app/android/app/src/main/res/mipmap-*/` 和 `mobile/app/ios/Runner/Assets.xcassets/AppIcon.appiconset/`。Markdown 正文 renderer 位于 `mobile/app/lib/features/conversation/markdown_renderer.dart`；`actions` 当前内嵌在会话页；独立 action schema 尚未实现。
+当前路径：`mobile/app/lib/features/{pairing,workspace,project,conversation,about,update}/`（侧边栏为 `workspace/app_drawer.dart`）、`mobile/app/lib/app/` 与 `mobile/app/lib/core/`。启动图标源位于 `mobile/app/branding/launcher-icon.svg`，平台图标分别位于 `mobile/app/android/app/src/main/res/mipmap-*/` 和 `mobile/app/ios/Runner/Assets.xcassets/AppIcon.appiconset/`。Markdown 正文 renderer 位于 `mobile/app/lib/features/conversation/markdown_renderer.dart`；`actions` 当前内嵌在会话页；独立 action schema 尚未实现。
 
 可点击交互参考：[Mobile 高保真原型 V3](../../../designs/work-anywhere-mobile/index-v3.html)。原型采用白底扁平列表、胶囊上下文与单一蓝色动作色，用于确认信息层级、页面状态和交互路径，不代表 Mobile 运行代码已经实现。
 
@@ -299,6 +331,7 @@ Daemon selector 底部提供“添加电脑”和“管理电脑”。管理页�
 - E2E 覆盖首次配对、拒绝/过期、恢复上次 Daemon/Agent、多 Daemon/Agent 切换、项目 10 条展开、项目会话 15 条分页、最近对话 20 条、跨项目搜索、运行中蓝色 icon、流式输出、运行中消息排队及编辑/立即引导/取消、cursor gap、action race、图片失败、interrupt race 和 push cold start。
 - Markdown widget 测试覆盖 GFM 常用格式、文本选择、代码块、链接确认入口和远程图片拦截；链接只允许 `http/https`，打开失败保留在当前页面并显示可解释提示。
 - VoiceOver/TalkBack、200% 字体、reduced motion、窄屏/平板、深色模式和本地化伪语言人工验收。
+- 侧边栏（实现后）：App icon 点击打开、遮罩/左滑/返回键关闭、三个菜单项的跳转目标、新版本小红点与无障碍文本；关于页 `check=1` 只自动检查一次，debug 构建禁用检查按钮。
 - Android/iOS 启动图标逐档核对尺寸、白色不透明背景与黑色连线；真机启动器和主屏幕核对系统裁切后的图形。
 - 用户测试重点记录：能否区分 Desktop 离线与任务失败、能否理解“等待电脑确认”、是否会在 ambiguous write 后误重复发送。
 

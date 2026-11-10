@@ -71,6 +71,7 @@ Desktop V1 provides:
 - Bounded in-memory conversation projections, DPAPI-protected JSON configuration, transient attachments, structured logs, and explicitly enabled full-protocol traffic diagnostics.
 - Semantic delta batching before encryption, with Mobile applying `syncEpoch + sequence` updates and falling back to authoritative snapshots after gaps, terminal events, or memory limits.
 - A system tray, local administration page, and command-line control interface.
+- Installer-based copies check a signed update manifest and, after you confirm, download and silently upgrade.
 - Pre-request fallback to the official Codex executable when the daemon cannot be reached, prioritizing Desktop availability.
 - Local Claude Code integration: browse conversations and full history by project, create conversations, send text/images with live replies, answer tool approvals, questions, and plan confirmations, interrupt Turns, and choose the model, reasoning effort, and permission mode. Sessions open on the computer stay read-only; see the [Claude Code provider design](desktop/docs/claude-code-provider/design.md).
 
@@ -88,6 +89,7 @@ Mobile for Android provides:
 - Project and conversation navigation, search, live updates, paginated history, and on-demand large-content loading.
 - New conversations within existing Codex or Claude Code projects, text/image input, and Turn interruption. Claude Code sessions open on the computer are shown read-only.
 - A conversation menu to rename the conversation, copy its thread ID, and refresh.
+- A sidebar with computer management, update checks, and About; GitHub-distributed APKs can download, verify, and install new versions in-app.
 - Per-conversation plan mode, model, reasoning effort, and execution permissions.
 - Queued input during running Turns, including edit, guide-now, and cancel where supported by the provider (Claude Code does not support queueing during a running Turn).
 - Multi-question response dialogs, pending-action indicators, and allow/deny command approvals.
@@ -345,6 +347,20 @@ Runtime data is stored under:
 - The administration page binds to a random loopback port and uses a one-time token, SameSite session, Origin checks, and CSRF protection.
 - Full process environments and ordinary message bodies are not persisted, and complete JSONL traffic is not recorded by default.
 - Official Codex session files and Claude Code transcripts (`~/.claude/projects/*/*.jsonl`) are the sole authoritative sources for their conversations. Work Anywhere does not maintain a message-history database. The daemon writes to a Claude Code transcript only when renaming the conversation, appending one `custom-title` line exactly like the CLI `/rename`; everything else is written by `claude.exe` itself.
+
+## Checking for and installing updates
+
+- **Desktop**: installer-based copies check once 30 seconds after the daemon starts, then about every 24 hours. When a new version is found, the admin page shows an update banner and the tray shows one notification per version. After you click "Update now", the daemon downloads the installer, verifies the signed manifest and SHA-256, upgrades silently, and restarts on the new version, keeping your autostart and Codex integration choices. Fully quit ChatGPT Desktop first if its bridge is running; active turns require confirmation before they are interrupted. Portable copies only report the new version and must be updated manually. The CLI works too:
+
+  ```powershell
+  & $wa update status
+  & $wa update check
+  & $wa update apply
+  ```
+
+- **Android**: tap the app icon at the top left of the workspace to open the sidebar and choose "Check for updates". The app also checks automatically every 24 hours when it returns to the foreground. After you confirm, it downloads and verifies the APK, then opens the system install confirmation; the first time, you must allow installing unknown apps. Only APKs signed with the same release certificate can upgrade the installed app.
+
+The Release workflow signs the update manifest with Ed25519, and clients trust only their compiled-in public keys. See [Desktop self-update](desktop/docs/self-update/design.md) and [Mobile in-app updates](mobile/docs/app-update/design.md).
 
 ## Stopping and uninstalling
 

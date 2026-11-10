@@ -1299,6 +1299,222 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'{agent} 当前不支持从手机发送消息。'**
   String agentCannotSend(String agent);
+
+  /// No description provided for @openMenu.
+  ///
+  /// In zh, this message translates to:
+  /// **'打开菜单'**
+  String get openMenu;
+
+  /// No description provided for @newVersionAvailable.
+  ///
+  /// In zh, this message translates to:
+  /// **'有新版本'**
+  String get newVersionAvailable;
+
+  /// No description provided for @checkForUpdates.
+  ///
+  /// In zh, this message translates to:
+  /// **'检查更新'**
+  String get checkForUpdates;
+
+  /// No description provided for @about.
+  ///
+  /// In zh, this message translates to:
+  /// **'关于'**
+  String get about;
+
+  /// No description provided for @newVersionSubtitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'有新版本 {version}'**
+  String newVersionSubtitle(String version);
+
+  /// No description provided for @appVersionLabel.
+  ///
+  /// In zh, this message translates to:
+  /// **'版本 {versionName} ({versionCode})'**
+  String appVersionLabel(String versionName, String versionCode);
+
+  /// No description provided for @projectHomepage.
+  ///
+  /// In zh, this message translates to:
+  /// **'GitHub 项目主页'**
+  String get projectHomepage;
+
+  /// No description provided for @updateChecking.
+  ///
+  /// In zh, this message translates to:
+  /// **'正在检查更新…'**
+  String get updateChecking;
+
+  /// No description provided for @updateUpToDate.
+  ///
+  /// In zh, this message translates to:
+  /// **'已是最新版本'**
+  String get updateUpToDate;
+
+  /// No description provided for @updateAvailableTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'发现新版本 {version}'**
+  String updateAvailableTitle(String version);
+
+  /// No description provided for @updateDownloadSize.
+  ///
+  /// In zh, this message translates to:
+  /// **'下载大小 {size}'**
+  String updateDownloadSize(String size);
+
+  /// No description provided for @updateReleaseNotes.
+  ///
+  /// In zh, this message translates to:
+  /// **'查看更新说明'**
+  String get updateReleaseNotes;
+
+  /// No description provided for @updateNow.
+  ///
+  /// In zh, this message translates to:
+  /// **'立即更新'**
+  String get updateNow;
+
+  /// No description provided for @updateLater.
+  ///
+  /// In zh, this message translates to:
+  /// **'稍后'**
+  String get updateLater;
+
+  /// No description provided for @updateSkipVersion.
+  ///
+  /// In zh, this message translates to:
+  /// **'跳过此版本'**
+  String get updateSkipVersion;
+
+  /// No description provided for @updateDownloading.
+  ///
+  /// In zh, this message translates to:
+  /// **'正在下载 {progress}'**
+  String updateDownloading(String progress);
+
+  /// No description provided for @updateInstall.
+  ///
+  /// In zh, this message translates to:
+  /// **'安装'**
+  String get updateInstall;
+
+  /// No description provided for @updateInstalling.
+  ///
+  /// In zh, this message translates to:
+  /// **'正在打开系统安装程序…'**
+  String get updateInstalling;
+
+  /// No description provided for @updatePermissionTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'需要安装权限'**
+  String get updatePermissionTitle;
+
+  /// No description provided for @updatePermissionBody.
+  ///
+  /// In zh, this message translates to:
+  /// **'请在系统设置中允许 WAW 安装未知应用。返回后会自动继续安装，已下载的安装包会保留。'**
+  String get updatePermissionBody;
+
+  /// No description provided for @updateOpenSettings.
+  ///
+  /// In zh, this message translates to:
+  /// **'去设置'**
+  String get updateOpenSettings;
+
+  /// No description provided for @updateInstallCancelled.
+  ///
+  /// In zh, this message translates to:
+  /// **'安装已取消，可以再次安装。'**
+  String get updateInstallCancelled;
+
+  /// No description provided for @updateRedownload.
+  ///
+  /// In zh, this message translates to:
+  /// **'重新下载'**
+  String get updateRedownload;
+
+  /// No description provided for @updateUnsupportedBuild.
+  ///
+  /// In zh, this message translates to:
+  /// **'Debug 构建不支持应用内更新。'**
+  String get updateUnsupportedBuild;
+
+  /// No description provided for @updateErrorManifest.
+  ///
+  /// In zh, this message translates to:
+  /// **'无法获取更新信息，请检查网络后重试。'**
+  String get updateErrorManifest;
+
+  /// No description provided for @updateErrorSignature.
+  ///
+  /// In zh, this message translates to:
+  /// **'更新信息校验失败，已停止更新。'**
+  String get updateErrorSignature;
+
+  /// No description provided for @updateErrorHash.
+  ///
+  /// In zh, this message translates to:
+  /// **'下载的安装包校验失败。'**
+  String get updateErrorHash;
+
+  /// No description provided for @updateErrorDownload.
+  ///
+  /// In zh, this message translates to:
+  /// **'下载失败，请重试。'**
+  String get updateErrorDownload;
+
+  /// No description provided for @updateErrorNoAsset.
+  ///
+  /// In zh, this message translates to:
+  /// **'新版本暂不提供 Android 安装包。'**
+  String get updateErrorNoAsset;
+
+  /// No description provided for @updateErrorSigner.
+  ///
+  /// In zh, this message translates to:
+  /// **'安装包签名与当前应用不一致，无法安装。'**
+  String get updateErrorSigner;
+
+  /// No description provided for @updateErrorInstall.
+  ///
+  /// In zh, this message translates to:
+  /// **'安装失败，请重试。'**
+  String get updateErrorInstall;
+
+  /// No description provided for @updateErrorGeneric.
+  ///
+  /// In zh, this message translates to:
+  /// **'更新失败。'**
+  String get updateErrorGeneric;
+
+  /// No description provided for @updateAdvanced.
+  ///
+  /// In zh, this message translates to:
+  /// **'高级'**
+  String get updateAdvanced;
+
+  /// No description provided for @updateMirrorLabel.
+  ///
+  /// In zh, this message translates to:
+  /// **'更新镜像地址'**
+  String get updateMirrorLabel;
+
+  /// No description provided for @updateMirrorHint.
+  ///
+  /// In zh, this message translates to:
+  /// **'留空则从 GitHub 下载'**
+  String get updateMirrorHint;
+
+  /// No description provided for @updateMirrorSaved.
+  ///
+  /// In zh, this message translates to:
+  /// **'镜像地址已保存'**
+  String get updateMirrorSaved;
 }
 
 class _AppLocalizationsDelegate

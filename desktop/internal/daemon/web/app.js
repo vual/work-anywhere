@@ -77,6 +77,7 @@ async function refresh(){
   q('instances').innerHTML=s.instances.map(i=>`<article class="card"><div><h3>${escapeHtml(i.name||i.id.slice(0,12))}</h3><div class="meta">${escapeHtml(i.codexHome)} · ${escapeHtml(i.runtime.version||'未知版本')}</div></div><div class="state">${escapeHtml(i.state)}</div></article>`).join('')||'<div class="card meta">未连接 ChatGPT Desktop（可选）</div>';
   renderStartup(s.startup||{});
   renderRemote(s.remote||{});
+  renderUpdate(s.update);
 }
 
 const claudeReasons={disabled:'已在设置中停用',not_found:'未找到 Claude Code 配置目录，请先安装并登录 Claude Code',start_failed:'启动失败'};
@@ -97,6 +98,60 @@ function renderStartup(startup){
   q('autostart-meta').textContent=startup.autostartError?`无法读取自启动设置：${startup.autostartError}`:!autostart.supported?'当前平台不支持自启动':autostart.enabled&&!autostart.current?'自启动指向其他位置的 work-anywhere.exe，取消后重新勾选即可指向当前程序':'';
   const codex=startup.codexIntegration||{};
   q('codex-integration').textContent=!codex.supported?'':codex.installed?'ChatGPT Codex Desktop 集成：已启用（CODEX_CLI_PATH 指向当前程序）':codex.codexCliPath?`ChatGPT Codex Desktop 集成：CODEX_CLI_PATH 指向其他程序（${codex.codexCliPath}）`:'ChatGPT Codex Desktop 集成：未启用，可运行 work-anywhere install 启用';
+}
+
+const updateMessages={update_manifest_unavailable:'无法获取更新信息，请检查网络或镜像地址。',update_manifest_invalid:'更新清单格式无效。',update_signature_invalid:'更新清单签名校验失败，已拒绝。',update_hash_mismatch:'安装包校验失败，已删除，请重试。',update_download_failed:'下载安装包失败，可稍后重试，已下载部分会续传。',update_no_asset:'新版本没有适用于本机的安装包。',update_unsupported_install:'便携版不能自动更新，请从 GitHub Releases 下载新版本。',update_active_turns:'有正在运行的 Turn。',update_blocked_by_bridge:'ChatGPT Desktop 正在使用 Work Anywhere，请完全退出 ChatGPT Desktop 后重试。',update_in_progress:'更新已在进行中。',update_install_failed:'上次升级未完成，已恢复旧版本。'};
+const updateStates={checking:'正在检查',upToDate:'已是最新',available:'可更新',downloading:'正在下载',downloaded:'已下载',applying:'正在安装',error:'需要处理'};
+let updateNoticeShown=false;
+function updateMessage(error){return error?(updateMessages[error.code]||error.message||error.code):'';}
+function formatSize(size){return size>0?`${(size/1048576).toFixed(1)} MiB`:'';}
+function renderUpdate(update){
+  const banner=q('update-banner');
+  if(!update){banner.hidden=true;q('update-check-meta').textContent='';return;}
+  q('update-auto').checked=!!update.autoCheck;
+  if(document.activeElement!==q('update-mirror'))q('update-mirror').value=update.mirrorBase||'';
+  const checked=update.lastCheckedAt?`上次检查：${new Date(update.lastCheckedAt).toLocaleString()}`:'尚未检查';
+  const kind=update.installKind==='portable'?'便携版，不能自动更新':'';
+  q('update-check-meta').textContent=[`当前版本 ${update.currentVersion}`,update.state==='upToDate'?'已是最新':'',checked,kind].filter(Boolean).join(' · ');
+  if(update.updatedFrom&&!updateNoticeShown){updateNoticeShown=true;notify(`已从 ${update.updatedFrom} 更新到 ${update.currentVersion}`,'success');}
+  const latest=update.latest;
+  const state=update.state;
+  const active=['available','downloading','downloaded','applying'].includes(state)||(state==='error'&&(latest||update.error));
+  banner.hidden=!active;
+  if(!active)return;
+  q('update-title').textContent=latest?`发现新版本 ${latest.version}`:'更新失败';
+  q('update-meta').textContent=[`当前版本 ${update.currentVersion}`,latest?formatSize(latest.size):'',latest&&!update.canApply?(update.installKind==='portable'?'便携版请手动下载':'开发版本不能自动更新'):''].filter(Boolean).join(' · ');
+  q('update-state').textContent=updateStates[state]||state;
+  q('update-state').className=state==='error'?'state warn':'state';
+  const progress=q('update-progress');
+  const total=update.progress&&update.progress.total;
+  progress.hidden=state!=='downloading'||!total;
+  if(total)progress.value=Math.floor(update.progress.received*100/total);
+  const message=updateMessage(update.error);
+  q('update-error').textContent=message+(update.error&&update.error.logPath?`（安装日志：${update.error.logPath}）`:'');
+  q('update-error').hidden=!message;
+  const canAct=!!latest&&update.canApply;
+  q('update-apply').hidden=!canAct||state==='downloading'||state==='applying';
+  q('update-apply').textContent=state==='downloaded'?'立即安装':state==='error'?'重试更新':'立即更新';
+  q('update-skip').hidden=!latest||!['available','error'].includes(state);
+  q('update-cancel').hidden=state!=='downloading';
+  const notes=q('update-notes');
+  const notesUrl=latest&&typeof latest.notesUrl==='string'&&latest.notesUrl.startsWith('https://')?latest.notesUrl:'';
+  notes.hidden=!notesUrl;
+  if(notesUrl)notes.href=notesUrl;
+}
+async function applyUpdate(){
+  const status=await call('system.update.status');
+  if(!status.latest)throw new Error('没有可安装的新版本');
+  const version=status.latest.version;
+  try{await call('system.update.apply',{version});}
+  catch(error){
+    if(error.code==='update_active_turns'){
+      if(!confirm(`${error.message}\n更新会中断正在运行的 Turn，确定继续吗？`))return;
+      await call('system.update.apply',{version,confirmInterrupt:true});
+    }else throw error;
+  }
+  notify('正在更新 Work Anywhere；下载完成后会自动安装并重启，完成后请重新运行 work-anywhere ui 打开管理页。','info');
 }
 
 function renderRemote(remote){
@@ -168,7 +223,7 @@ function notify(message,kind='error'){
   while(box.children.length>4)box.firstElementChild.remove();
   if(kind!=='error')setTimeout(()=>toast.remove(),4000);
 }
-function showError(error){notify(remoteMessages[error.code]||error.message||String(error));}
+function showError(error){notify(remoteMessages[error.code]||(error.code==='update_active_turns'?'':updateMessages[error.code])||error.message||String(error));}
 async function action(fn){try{await fn();await refresh();}catch(error){showError(error);}}
 
 q('refresh').onclick=()=>action(async()=>{});
@@ -186,6 +241,12 @@ q('relay-configure').onclick=()=>action(async()=>{
 q('relay-legacy').onclick=()=>action(async()=>{try{await call('remote.enroll',{token:q('relay-token').value.trim(),displayName:q('relay-name').value.trim()});}finally{q('relay-token').value='';}});
 q('relay-reset').onclick=()=>{if(!confirm('重置会删除远程身份和所有手机配对，需要重新扫码，继续吗？'))return;action(async()=>{await call('remote.configure',{relayUrl:q('relay-url').value.trim(),enabled:true,resetIdentity:true});q('pair-uri').value='';await renderPairQR('');});};
 q('relay-reconnect').onclick=()=>action(()=>call('remote.reconnect'));
+q('update-apply').onclick=()=>action(applyUpdate);
+q('update-skip').onclick=()=>action(async()=>{const status=await call('system.update.status');if(status.latest)await call('system.update.skip',{version:status.latest.version});});
+q('update-cancel').onclick=()=>action(()=>call('system.update.cancel'));
+q('update-check').onclick=()=>action(async()=>{const status=await call('system.update.check');notify(status.state==='upToDate'?`已是最新版本 ${status.currentVersion}`:status.latest?`发现新版本 ${status.latest.version}`:'检查完成',status.state==='upToDate'?'success':'info');});
+q('update-auto').onchange=(event)=>action(()=>call('system.update.settings',{autoCheck:event.target.checked}));
+q('update-mirror-save').onclick=()=>action(async()=>{await call('system.update.settings',{mirrorBase:q('update-mirror').value.trim()});notify('更新镜像地址已保存','success');});
 q('pair-start').onclick=()=>action(async()=>{const result=await call('remote.pair.start',{ttlSeconds:300});if(result&&result.uri){q('pair-uri').value=result.uri;await renderPairQR(result.uri);}});
 q('pair-refresh').onclick=()=>action(()=>call('remote.pair.list'));
 q('pair-copy').onclick=async()=>{try{await navigator.clipboard.writeText(q('pair-uri').value);notify('配对 URI 已复制','success');}catch(error){showError(new Error('复制失败，请手动复制 URI'));}};

@@ -136,6 +136,9 @@ jobs:
   android:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    outputs:
+      version_code: ${{ steps.apk.outputs.version_code }}
+      cert_sha256: ${{ steps.apk.outputs.cert_sha256 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -171,7 +174,10 @@ jobs:
             echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
             echo "WAW_ANDROID_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
           else
-            echo "::warning::WAW_ANDROID_KEYSTORE_BASE64 is not set; the APK is signed with debug keys."
+            # In-app updates compare the APK signer with the installed app, so
+            # a debug-signed release would break every later update.
+            echo "::error::WAW_ANDROID_KEYSTORE_BASE64 is not set; refusing to publish a debug-signed APK."
+            exit 1
           fi
 
       - name: Build release APK
@@ -187,6 +193,19 @@ jobs:
           flutter test
           flutter build apk --release --build-name="$VERSION" --build-number="${{ github.run_number }}"
 
+      - name: Inspect APK signer
+        id: apk
+        working-directory: mobile/app/build/app/outputs/flutter-apk
+        run: |
+          APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n 1)apksigner"
+          CERT="$("$APKSIGNER" verify --print-certs app-release.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1)"
+          if ! echo "$CERT" | grep -Eq '^[0-9a-f]{64}$'; then
+            echo "::error::could not read the APK signing certificate digest"
+            exit 1
+          fi
+          echo "version_code=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          echo "cert_sha256=$CERT" >> "$GITHUB_OUTPUT"
+
       - name: Upload release assets
         working-directory: mobile/app/build/app/outputs/flutter-apk
         env:
@@ -196,3 +215,58 @@ jobs:
           cp app-release.apk "$APK"
           sha256sum "$APK" > "$APK.sha256"
           gh release upload "$TAG" "$APK" "$APK.sha256" --clobber --repo "$GITHUB_REPOSITORY"
+
+  # Signs update-manifest.json (desktop/docs/self-update/manifest.md) once all
+  # platform assets exist. Any failure leaves the release without a manifest,
+  # which clients report as update_manifest_unavailable.
+  update-manifest:
+    needs: [desktop-windows, android]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.3"
+          cache-dependency-path: desktop/go.sum
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${TAG#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/assets"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$RUNNER_TEMP/assets" \
+            --pattern "work-anywhere-setup-$VERSION.exe" \
+            --pattern "work-anywhere-$VERSION-windows-amd64.exe" \
+            --pattern "work-anywhere-$VERSION-android.apk"
+          echo "PUBLISHED_AT=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json publishedAt --jq .publishedAt)" >> "$GITHUB_ENV"
+
+      - name: Build and verify manifest
+        working-directory: desktop
+        env:
+          WAW_UPDATE_SIGNING_KEY: ${{ secrets.WAW_UPDATE_SIGNING_KEY }}
+          WAW_UPDATE_SIGNING_KEY_ID: ${{ secrets.WAW_UPDATE_SIGNING_KEY_ID }}
+        run: |
+          A="$RUNNER_TEMP/assets"
+          go run ./internal/tools/updatemanifest build \
+            -version "$VERSION" \
+            -setup "$A/work-anywhere-setup-$VERSION.exe" \
+            -portable "$A/work-anywhere-$VERSION-windows-amd64.exe" \
+            -apk "$A/work-anywhere-$VERSION-android.apk" \
+            -apk-version-code "${{ needs.android.outputs.version_code }}" \
+            -apk-cert-sha256 "${{ needs.android.outputs.cert_sha256 }}" \
+            -published-at "$PUBLISHED_AT" \
+            -out "$RUNNER_TEMP/update-manifest.json"
+          # Verifies against the keys compiled into the clients, so a secret
+          # that clients do not trust fails here instead of in the field.
+          go run ./internal/tools/updatemanifest verify -in "$RUNNER_TEMP/update-manifest.json" -version "$VERSION"
+
+      - name: Upload manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" "$RUNNER_TEMP/update-manifest.json" --clobber --repo "$GITHUB_REPOSITORY"

@@ -21,6 +21,7 @@
 | 管理页、托盘与进程生命周期 | [`administration-and-lifecycle/design.md`](administration-and-lifecycle/design.md) | 平台支持、App Server 托管、控制面 | `internal/daemon/admin.go`, `internal/daemon/admin_agents.go`, `internal/platform/autostart`, `internal/platform/tray`, `internal/platform/process` |
 | 构建、安装和官方版本兼容 | [`build-install-and-compatibility/design.md`](build-install-and-compatibility/design.md)（[启动与协议基线](build-install-and-compatibility/protocol-baseline.md)） | 平台支持、运行时发现、Bridge IPC | `scripts`, `packaging`, `internal/platform/installation`, `testdata` |
 | Windows 安装包 | [`windows-installer/design.md`](windows-installer/design.md) | 构建安装、平台支持、生命周期 | `scripts/build-installer.ps1`, `packaging/windows/installer.iss`, `internal/platform/installation`, `internal/platform/autostart` |
+| 自更新与更新清单 | [`self-update/design.md`](self-update/design.md)（[更新清单协议](self-update/manifest.md)，Mobile 共用） | Windows 安装包、管理页与生命周期、本机控制、[Mobile 应用内更新](../../mobile/docs/app-update/design.md) | `internal/update`, `internal/daemon/update.go`, `internal/cli/update.go`, `internal/tools/updatemanifest`, `packaging/windows/installer.iss`, `.github/workflows/release.yml` |
 
 ## Directory rules
 

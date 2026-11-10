@@ -48,6 +48,7 @@ daemon PID、启动时间、管理端口、一次性 token、session、托盘状
 - Group 关闭后不得遗留已成功挂接的受管根进程及其后代。根进程退出清理自己的 Job；其余成员继续服务。Close 幂等并与 Add/退出清理互斥。
 - 自启动只写当前用户 HKCU，不需要管理员权限；卸载必须删除该值。
 - 不实现 Windows Service、自动空闲退出和桌面聊天 UI。
+- 管理页顶部更新横幅（版本、更新说明、立即更新/跳过、下载进度与取消）、“启动设置”中的自动检查开关与镜像地址、托盘“检查更新”菜单和每版本一次的气泡通知，规则见 [Desktop 自更新](../self-update/design.md)。用户确认更新后，daemon 启动独立的安装器进程，再走与托盘退出相同的 graceful shutdown（有活跃 Turn 时须先确认中断）。
 
 ## Code ownership
 
