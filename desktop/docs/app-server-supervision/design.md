@@ -17,7 +17,7 @@ stopped → starting → waiting_initialize → ready
 ```
 
 - 首次 Desktop `initialize` 发给真实 App Server并缓存请求和响应。
-- App Server 重启时用最新缓存参数自动 initialize。
+- App Server 重启时用最新缓存参数自动 initialize；该重放尚未完成时，若新 frontend 以不同 capabilities 连接且实例空闲，新请求取代重放并再次重启（见 [JSON-RPC 与 Actions](../json-rpc-and-actions/design.md)）。
 - 新 runtime 注册且实例空闲、无待处理 action 时立即重启。
 - 有活跃 Turn 或待处理 action 时标记 `upgrade_pending`，在安全边界后切换。
 - App Server 异常退出时清理 pending request；实例空闲且存在初始化缓存时最多自动重启一次，使用 250 ms 延迟。活跃 Turn、待处理 action、待启动 Turn、未完成写请求、结果未知的写请求或已用过自动恢复机会时保持 `error`，不自动重放工作。

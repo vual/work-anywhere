@@ -108,6 +108,65 @@ func TestInitializeErrorNotCachedAndConflictsRejected(t *testing.T) {
 	}
 }
 
+// After a runtime upgrade the daemon restarts the App Server and replays the
+// previous frontend's initialize. The upgraded frontend must replace that
+// replay instead of failing with a capability conflict.
+func TestInitializeSupersedesReplayedHandshake(t *testing.T) {
+	i, w, cleanup := testInstance(t)
+	defer cleanup()
+	restarts := 0
+	i.restartHook = func() error {
+		restarts++
+		i.mu.Lock()
+		i.generation++
+		i.requests = make(map[string]requestOrigin)
+		i.cachedInitializeResponse, i.initializeInFlight, i.initializedSent = nil, false, false
+		i.mu.Unlock()
+		w.Reset()
+		return nil
+	}
+	old := []byte(`{"id":1,"method":"initialize","params":{"clientInfo":{"name":"codex_desktop","version":"old"},"capabilities":{"experimentalApi":true}}}`)
+	i.cachedInitializeRequest = old
+	i.initializeInFlight = true
+	if err := i.sendInternalInitialize(old); err != nil {
+		t.Fatal(err)
+	}
+	c := compatDesktop(i, "upgraded")
+	upgraded := []byte(`{"id":7,"method":"initialize","params":{"clientInfo":{"name":"codex_desktop","version":"new"},"capabilities":{"experimentalApi":true,"requestAttestation":true}}}`)
+	if err := i.HandleDesktop(c, upgraded); err != nil {
+		t.Fatal(err)
+	}
+	if restarts != 1 || len(c.outbound) != 0 || !bytes.Contains(w.Bytes(), []byte(`"requestAttestation":true`)) {
+		t.Fatalf("upgraded initialize not forwarded: restarts=%d out=%d written=%s", restarts, len(c.outbound), w.Bytes())
+	}
+	if !sameInitializeCapabilities(i.cachedInitializeRequest, upgraded) {
+		t.Fatal("replayed handshake still cached")
+	}
+	request, _ := jsonrpc.Parse(w.Bytes())
+	i.handleServerFrame(i.generation, []byte(fmt.Sprintf(`{"id":%s,"result":{"userAgent":"test"}}`, request.ID)))
+	if response := compatResponse(t, c); len(response.Error) != 0 || string(response.ID) != "7" || i.state != "ready" {
+		t.Fatalf("upgraded frontend not initialized: %+v state=%s", response, i.state)
+	}
+}
+
+func TestInitializeReplayKeptWhileBusy(t *testing.T) {
+	i, _, cleanup := testInstance(t)
+	defer cleanup()
+	i.restartHook = func() error { t.Fatal("restarted busy instance"); return nil }
+	old := []byte(`{"id":1,"method":"initialize","params":{"capabilities":{"x":true}}}`)
+	i.cachedInitializeRequest = old
+	i.initializeInFlight = true
+	if err := i.sendInternalInitialize(old); err != nil {
+		t.Fatal(err)
+	}
+	i.actions["a"] = &pendingAction{}
+	c := compatDesktop(i, "a")
+	_ = i.HandleDesktop(c, []byte(`{"id":2,"method":"initialize","params":{"capabilities":{"x":false}}}`))
+	if len(compatResponse(t, c).Error) == 0 {
+		t.Fatal("busy instance accepted incompatible initialize")
+	}
+}
+
 func TestInitializeBusyCapabilityChangeDoesNotReturnOldSuccess(t *testing.T) {
 	i, _, cleanup := testInstance(t)
 	defer cleanup()

@@ -30,7 +30,7 @@ Turn 通知驱动会话状态：`idle`、`running`、`waiting_action`、`complet
 - 后续 Desktop 重连的 `initialize` 使用缓存 response 本地回答，`initialized` 被 daemon 吸收。
 - capability 参数不同且实例空闲时重启 App Server；运行中则保存最新参数，在安全边界后重启。
 - 初始化兼容判断只比较 `params.capabilities`；缺失、`null` 和空对象视为相同，client name/version 变化不会触发重启。
-- 多个 frontend 同时等待首次 initialize 时仅合并相同 capabilities，并分别恢复各自 ID。不兼容并发请求返回明确错误；忙碌时保存能力切换请求但不返回旧缓存成功，等待安全边界后重启。未知 capabilities、extensions 与顶层 trace 保留。
+- 多个 frontend 同时等待首次 initialize 时仅合并相同 capabilities，并分别恢复各自 ID。不兼容并发请求返回明确错误；例外是正在进行的握手只是 daemon 在重启后自动重放的旧缓存 initialize、没有 frontend 等待且实例无活跃 Turn/action 时，新 frontend 的请求取代重放：清空旧缓存、重启 App Server 并以新参数初始化（Codex Desktop 升级后首次启动即走此路径）。忙碌时保存能力切换请求但不返回旧缓存成功，等待安全边界后重启。未知 capabilities、extensions 与顶层 trace 保留。
 
 ## Pending actions
 

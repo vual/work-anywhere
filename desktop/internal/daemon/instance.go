@@ -148,8 +148,10 @@ type Instance struct {
 	initializeInFlight       bool
 	initializedSent          bool
 	initializeWaiters        []initializeWaiter
-	autoRestartAttempted     bool
-	uncertainWrite           bool
+	// restartHook replaces Restart in tests that cannot spawn an App Server.
+	restartHook          func() error
+	autoRestartAttempted bool
+	uncertainWrite       bool
 }
 
 type InstanceSnapshot struct {
@@ -620,6 +622,13 @@ func (i *Instance) Restart() error {
 	return i.Start()
 }
 
+func (i *Instance) restartProcess() error {
+	if i.restartHook != nil {
+		return i.restartHook()
+	}
+	return i.Restart()
+}
+
 func (i *Instance) Stop(release bool) { i.stopProcess(release) }
 
 func (i *Instance) stopProcess(release bool) {
@@ -700,13 +709,27 @@ func (i *Instance) HandleDesktop(conn *clientConn, raw []byte) error {
 		cached := append([]byte(nil), i.cachedInitializeResponse...)
 		cachedRequest := append([]byte(nil), i.cachedInitializeRequest...)
 		if len(cached) == 0 && i.initializeInFlight {
-			if !sameInitializeCapabilities(cachedRequest, raw) {
+			if sameInitializeCapabilities(cachedRequest, raw) {
+				i.initializeWaiters = append(i.initializeWaiters, initializeWaiter{DesktopID: conn.id, OriginalID: append(json.RawMessage(nil), message.ID...)})
+				i.mu.Unlock()
+				return nil
+			}
+			// A restart (for example after a Codex Desktop upgrade) replays the
+			// previous frontend's handshake. Nobody waits on that replay, so a
+			// connecting frontend with different capabilities supersedes it
+			// instead of being rejected.
+			_, replaying := i.requests[internalInitializeKey]
+			if !replaying || len(i.initializeWaiters) > 0 || len(i.activeTurns) > 0 || len(i.actions) > 0 {
 				i.mu.Unlock()
 				return initializeConflict(conn, message.ID)
 			}
-			i.initializeWaiters = append(i.initializeWaiters, initializeWaiter{DesktopID: conn.id, OriginalID: append(json.RawMessage(nil), message.ID...)})
+			i.cachedInitializeRequest, i.cachedInitialized = nil, nil
+			i.initializeInFlight = false
 			i.mu.Unlock()
-			return nil
+			if err := i.restartProcess(); err != nil {
+				return err
+			}
+			i.mu.Lock()
 		}
 		if len(i.cachedInitializeRequest) == 0 {
 			i.cachedInitializeRequest = append([]byte(nil), raw...)
@@ -729,7 +752,7 @@ func (i *Instance) HandleDesktop(conn *clientConn, raw []byte) error {
 					i.cachedInitializeRequest, i.cachedInitializeResponse = nil, nil
 					i.initializeInFlight = false
 					i.mu.Unlock()
-					if restartErr := i.Restart(); restartErr != nil {
+					if restartErr := i.restartProcess(); restartErr != nil {
 						return restartErr
 					}
 					cached = nil
@@ -1185,22 +1208,25 @@ func (i *Instance) InterruptActive() error {
 	return firstErr
 }
 
+const internalInitializeID = "wa:c:daemon:initialize"
+
+var internalInitializeKey = string(mustJSON(internalInitializeID))
+
 func (i *Instance) sendInternalInitialize(cached []byte) error {
 	message, err := jsonrpc.Parse(bytes.TrimSpace(cached))
 	if err != nil {
 		return err
 	}
-	const internalID = "wa:c:daemon:initialize"
-	rewritten, err := jsonrpc.RewriteID(bytes.TrimSpace(cached), internalID)
+	rewritten, err := jsonrpc.RewriteID(bytes.TrimSpace(cached), internalInitializeID)
 	if err != nil {
 		return err
 	}
 	i.mu.Lock()
-	i.requests[string(mustJSON(internalID))] = requestOrigin{originalID: message.ID, method: "initialize", internal: true, startedAt: time.Now()}
+	i.requests[internalInitializeKey] = requestOrigin{originalID: message.ID, method: "initialize", internal: true, startedAt: time.Now()}
 	i.mu.Unlock()
 	i.manager.traffic.Record(i.descriptor.ID, "daemon_to_server", rewritten)
 	if err := i.writeServer(append(rewritten, '\n')); err != nil {
-		i.removeRequest(string(mustJSON(internalID)))
+		i.removeRequest(internalInitializeKey)
 		return err
 	}
 	return nil
