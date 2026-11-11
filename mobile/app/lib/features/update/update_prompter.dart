@@ -54,8 +54,9 @@ class _UpdatePrompterState extends ConsumerState<UpdatePrompter> {
     if (_prompting || !mounted) return;
     final controller = ref.read(updateProvider.notifier);
     final release = await controller.checkAutomatically();
+    if (release == null || !mounted) return;
     final navigatorContext = widget.navigatorKey.currentContext;
-    if (release == null || navigatorContext == null || !mounted) return;
+    if (navigatorContext == null || !navigatorContext.mounted) return;
     _prompting = true;
     try {
       final choice = await showUpdatePrompt(navigatorContext, release);
