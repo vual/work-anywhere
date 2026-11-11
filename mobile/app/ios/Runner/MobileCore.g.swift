@@ -501,6 +501,8 @@ class MobileCoreApiSetup {
     } else {
       closeChannel.setMessageHandler(nil)
     }
+    /// Installed versionName/versionCode/packageName and whether this build may
+    /// self-update (release, non-debuggable).
     let appVersionChannel = FlutterBasicMessageChannel(name: "dev.flutter.pigeon.work_anywhere.MobileCoreApi.appVersion\(channelSuffix)", binaryMessenger: binaryMessenger, codec: codec)
     if let api = api {
       appVersionChannel.setMessageHandler { _, reply in

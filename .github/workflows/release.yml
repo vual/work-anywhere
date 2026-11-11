@@ -196,11 +196,26 @@ jobs:
       - name: Inspect APK signer
         id: apk
         working-directory: mobile/app/build/app/outputs/flutter-apk
+        shell: bash
+        env:
+          WAW_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.WAW_ANDROID_KEYSTORE_PASSWORD }}
+          WAW_ANDROID_KEY_ALIAS: ${{ secrets.WAW_ANDROID_KEY_ALIAS }}
         run: |
-          APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n 1)apksigner"
-          CERT="$("$APKSIGNER" verify --print-certs app-release.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1)"
+          set -euo pipefail
+          # Release keystore certificate: the identity every in-app update must keep.
+          KEY_CERT="$(keytool -exportcert -keystore "$WAW_ANDROID_KEYSTORE" -storepass "$WAW_ANDROID_KEYSTORE_PASSWORD" \
+            -alias "$WAW_ANDROID_KEY_ALIAS" | sha256sum | cut -d' ' -f1)"
+          # Cross-check against the certificate actually embedded in the APK.
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
+          OUT="$("$APKSIGNER" verify --print-certs app-release.apk 2>&1)" || { echo "$OUT"; echo "::error::apksigner verify failed"; exit 1; }
+          echo "$OUT" | grep -v -i "public key" || true
+          CERT="$(echo "$OUT" | grep -m1 -oiE 'certificate SHA-256 digest: [0-9a-f:]+' | sed 's/.*: //' | tr -d ':' | tr 'A-F' 'a-f' || true)"
           if ! echo "$CERT" | grep -Eq '^[0-9a-f]{64}$'; then
             echo "::error::could not read the APK signing certificate digest"
+            exit 1
+          fi
+          if [ "$CERT" != "$KEY_CERT" ]; then
+            echo "::error::APK is not signed with the release keystore ($CERT != $KEY_CERT)"
             exit 1
           fi
           echo "version_code=${{ github.run_number }}" >> "$GITHUB_OUTPUT"

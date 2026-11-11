@@ -129,7 +129,7 @@ Mobile 的稳定错误码：`update_permission_required`、`update_signer_mismat
 
 ## 前置条件
 
-- [Release workflow](../../../.github/workflows/release.yml) 的 `android` job 在缺少 release keystore secret 时直接失败，不再发布 debug 签名 APK；它通过 job outputs 把 `versionCode` 和签名证书 SHA-256 传给 `update-manifest` job，见 [清单协议的 Generation](../../../desktop/docs/self-update/manifest.md#generation)。
+- [Release workflow](../../../.github/workflows/release.yml) 的 `android` job 在缺少 release keystore secret 时直接失败，不再发布 debug 签名 APK；它通过 job outputs 把 `versionCode` 和签名证书 SHA-256 传给 `update-manifest` job；该证书摘要从 APK 中读取，并且必须与 release keystore 证书的摘要一致，否则 job 失败。见 [清单协议的 Generation](../../../desktop/docs/self-update/manifest.md#generation)。
 - 客户端内置的可信公钥与 Release 签名密钥必须一致，否则任何清单都会以 `update_signature_invalid` 被拒绝；见 [清单协议的 Signing keys](../../../desktop/docs/self-update/manifest.md#signing-keys)。
 - 已经用 debug 签名分发出去的 APK 无法通过本功能升级到正式签名版本，用户需要卸载后手动安装一次。
 
