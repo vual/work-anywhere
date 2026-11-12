@@ -33,6 +33,10 @@ type adminServer struct {
 	sessions map[string]adminSession
 }
 
+// adminSessionIdle is how long an admin session survives without an
+// authorized request; every authorized request extends it.
+const adminSessionIdle = 8 * time.Hour
+
 type adminSession struct {
 	CSRF    string
 	Expires time.Time
@@ -130,10 +134,18 @@ func (a *adminServer) exchange(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "expired token", 401)
 		return
 	}
+	now := time.Now()
+	for id, session := range a.sessions {
+		if now.After(session.Expires) {
+			delete(a.sessions, id)
+		}
+	}
 	sessionID, csrf := randomToken(32), randomToken(24)
-	a.sessions[sessionID] = adminSession{CSRF: csrf, Expires: time.Now().Add(8 * time.Hour)}
+	a.sessions[sessionID] = adminSession{CSRF: csrf, Expires: time.Now().Add(adminSessionIdle)}
 	a.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{Name: "wa_session", Value: sessionID, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: false, MaxAge: 8 * 3600})
+	// Browser-session cookie: the daemon enforces idle expiry, so a fixed
+	// MaxAge would only cut off a page that is still in use.
+	http.SetCookie(w, &http.Cookie{Name: "wa_session", Value: sessionID, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: false})
 	writeJSON(w, map[string]string{"csrf": csrf})
 }
 
@@ -221,6 +233,9 @@ func (a *adminServer) authorize(r *http.Request) (adminSession, bool) {
 	if provided != session.CSRF {
 		return adminSession{}, false
 	}
+	// Idle expiry: an open page keeps its session alive through polling.
+	session.Expires = time.Now().Add(adminSessionIdle)
+	a.sessions[cookie.Value] = session
 	return session, true
 }
 

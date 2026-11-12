@@ -7,6 +7,9 @@ let pairQrGeneration=0;
 let remoteErrorShown=null;
 let remoteIdentity=null;
 let remotePhase='';
+let pollTimer=null;
+let pollErrorShown='';
+let sessionLost=false;
 const remoteMessages={relay_upgrade_required:'Relay 版本不支持自动注册，请升级 Relay 或使用旧版邀请码注册。',invite_required:'此 Relay 需要邀请码，请填写邀请码后点击“启用远程访问”。',invalid_invite:'邀请码无效或已过期。',enrollment_disabled:'Relay 已暂停新设备注册。',device_revoked:'设备已被 Relay 撤销，请联系部署者。',identity_conflict:'设备身份或 Relay 地址不匹配，请检查地址；需要恢复时可明确重置远程身份。',auth_failed:'设备认证失败，请检查 Relay 配置或联系部署者。',daemon_capacity_reached:'Relay 登记设备数量已达上限，请联系部署者。',rate_limited:'请求过于频繁，稍后将重试。',temporarily_unavailable:'暂时无法连接 Relay，将自动重试。'};
 const pending=new Map();
 const q=(id)=>document.getElementById(id);
@@ -53,6 +56,7 @@ function openSocket(){
 }
 
 async function call(method,params={}){
+  if(sessionLost)throw sessionExpiredError();
   const connection=await openSocket();
   const id=`ui-${Date.now()}-${++sequence}`;
   return new Promise((resolve,reject)=>{
@@ -62,9 +66,16 @@ async function call(method,params={}){
   });
 }
 
+function codedError(message,code){const error=new Error(message);error.code=code;return error;}
+const sessionExpiredError=()=>codedError('管理会话已失效，请从托盘菜单“打开管理页”或运行 work-anywhere ui 重新打开。','admin_session_expired');
+
 async function refresh(){
-  const r=await fetch('/api/status',{headers:{'X-WA-CSRF':csrf}});
-  if(!r.ok)throw new Error('管理会话无效，请重新打开管理页');
+  if(sessionLost)throw sessionExpiredError();
+  let r;
+  try{r=await fetch('/api/status',{headers:{'X-WA-CSRF':csrf}});}
+  catch{throw codedError('无法连接 daemon，它可能已退出或重启；请从托盘菜单重新打开管理页。','daemon_unreachable');}
+  if(r.status===401)throw sessionExpiredError();
+  if(!r.ok)throw new Error(`daemon 状态请求失败（HTTP ${r.status}）`);
   const body=await r.json();
   if(body.error)throw new Error(body.error.message);
   const s=body.result;
@@ -172,7 +183,9 @@ function renderRemote(remote){
   const remoteError=remote.lastError?(remoteMessages[remote.lastErrorCode]||remote.lastError):'';
   q('relay-error').textContent=remoteError;
   q('relay-error').hidden=!remoteError;
-  // Pop up only when the error changes, not on every periodic refresh.
+  // Pop up only when the error changes, not on every periodic refresh, and
+  // withdraw the previous popup once the Relay state moves on.
+  if(remoteErrorShown&&remoteErrorShown!==remoteError)dismiss(remoteErrorShown);
   if(remoteError&&remoteError!==remoteErrorShown)notify(remoteError);
   remoteErrorShown=remoteError;
   const attempts=Array.isArray(remote.pairAttempts)?remote.pairAttempts:[];
@@ -223,7 +236,34 @@ function notify(message,kind='error'){
   while(box.children.length>4)box.firstElementChild.remove();
   if(kind!=='error')setTimeout(()=>toast.remove(),4000);
 }
-function showError(error){notify(remoteMessages[error.code]||(error.code==='update_active_turns'?'':updateMessages[error.code])||error.message||String(error));}
+function dismiss(message){
+  if(!message)return;
+  for(const toast of [...q('toasts').children]){if(toast.dataset.message===message)toast.remove();}
+}
+
+// Periodic refresh failures pop up once per distinct message. An expired
+// session cannot recover in this page, so polling stops instead of
+// re-raising the same error every few seconds.
+function refreshFailed(error){
+  if(error.code==='admin_session_expired'){
+    if(sessionLost)return;
+    sessionLost=true;
+    if(pollTimer){clearInterval(pollTimer);pollTimer=null;}
+    if(socket)socket.close();
+    dismiss(pollErrorShown);pollErrorShown='';
+    q('daemon').textContent='会话已失效';
+    notify(error.message);
+    return;
+  }
+  if(error.code==='daemon_unreachable')q('daemon').textContent='未连接';
+  if(error.message!==pollErrorShown){dismiss(pollErrorShown);pollErrorShown=error.message;notify(error.message);}
+}
+async function poll(){
+  try{await refresh();dismiss(pollErrorShown);pollErrorShown='';}
+  catch(error){refreshFailed(error);}
+}
+
+function showError(error){if(error&&error.code==='admin_session_expired'){refreshFailed(error);return;}notify(remoteMessages[error.code]||(error.code==='update_active_turns'?'':updateMessages[error.code])||error.message||String(error));}
 async function action(fn){try{await fn();await refresh();}catch(error){showError(error);}}
 
 q('refresh').onclick=()=>action(async()=>{});
@@ -253,5 +293,5 @@ q('pair-copy').onclick=async()=>{try{await navigator.clipboard.writeText(q('pair
 q('pair-attempts').onclick=(event)=>{const button=event.target.closest('[data-pair-action]');if(!button)return;const id=button.dataset.pairId;const operation=button.dataset.pairAction;action(async()=>{if(operation==='approve'||operation==='reject'){if(operation==='reject'&&!confirm('确定拒绝这个移动端配对请求吗？'))return;await call('remote.pair.resolve',{pairingId:id,approved:operation==='approve'});}else if(operation==='cancel'){if(!confirm('确定取消这个待处理的配对请求吗？'))return;await call('remote.pair.cancel',{pairingId:id});}});};
 q('pairings').onclick=(event)=>{const button=event.target.closest('[data-pair-action="revoke"]');if(!button)return;if(!confirm('撤销后该移动端将无法继续访问此 Desktop，确定继续吗？'))return;action(()=>call('remote.pair.revoke',{pairingId:button.dataset.pairId}));};
 
-async function run(){try{await exchange();await refresh();openSocket().catch(showError);setInterval(()=>refresh().catch(showError),5000);}catch(error){showError(error);q('daemon').textContent='未连接';}}
+async function run(){try{await exchange();await refresh();openSocket().catch(showError);pollTimer=setInterval(poll,5000);}catch(error){showError(error);q('daemon').textContent='未连接';}}
 run();

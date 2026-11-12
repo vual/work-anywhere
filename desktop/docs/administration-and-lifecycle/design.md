@@ -17,7 +17,7 @@ daemon 有三种启动入口：登录自启动项（HKCU `Software\Microsoft\Win
 
 ## Interfaces
 
-管理页 Relay 区只有一个“启用远程访问”主按钮：保存地址后自动注册和连接；Relay 为 `invite` 模式时显示邀请码输入框，已填写时同一按钮在保存地址后用邀请码调用 `remote.register`，未填写则提示先填写。旧版注册入口仅在 `relay_upgrade_required` 时显示。状态展示注册阶段与重试时间，仅连接成功时允许生成二维码。操作结果与错误以页面顶部弹出提示显示：错误提示保留到用户关闭，成功提示数秒后自动关闭，相同内容不重复堆叠；Relay 状态错误同时在 Relay 区内联显示，且仅在错误内容变化时弹出，周期刷新不会重复弹出。切换地址和重置远程身份需要本机确认，清除配对 URI/QR 和旧身份后重新注册。管理权限与 CSRF/Origin 校验沿用下述本机边界。
+管理页 Relay 区只有一个“启用远程访问”主按钮：保存地址后自动注册和连接；Relay 为 `invite` 模式时显示邀请码输入框，已填写时同一按钮在保存地址后用邀请码调用 `remote.register`，未填写则提示先填写。旧版注册入口仅在 `relay_upgrade_required` 时显示。状态展示注册阶段与重试时间，仅连接成功时允许生成二维码。操作结果与错误以页面顶部弹出提示显示：错误提示保留到用户关闭，成功提示数秒后自动关闭，相同内容不重复堆叠；Relay 状态错误同时在 Relay 区内联显示，且仅在错误内容变化时弹出，周期刷新不会重复弹出；错误恢复或变化后撤回原先的 Relay 弹出提示。页面每 5 秒刷新状态：刷新失败同样只在错误内容变化时弹出，恢复后撤回；session 失效（HTTP 401）时停止刷新、关闭 WebSocket，只弹出一次提示，引导从托盘“打开管理页”或 `work-anywhere ui` 重新打开。切换地址和重置远程身份需要本机确认，清除配对 URI/QR 和旧身份后重新注册。管理权限与 CSRF/Origin 校验沿用下述本机边界。
 
 - `work-anywhere.exe daemon start|status|stop|force-stop`
 - `work-anywhere.exe ui`
@@ -27,7 +27,7 @@ daemon 有三种启动入口：登录自启动项（HKCU `Software\Microsoft\Win
 - 管理页通过同一受保护 WebSocket 调用 `remote.configure`, `remote.enroll`, `remote.reconnect`, `remote.pair.*`；配对决定提交后页面显示等待状态，Relay 拒绝时恢复可重试状态。
 - 托盘命令通过 daemon 内部调用执行，与 CLI 使用相同状态约束。
 
-管理页 URL 包含一次性 fragment token。页面通过 exchange 获取 HttpOnly、SameSite session 后清除 fragment；后续状态请求和 WebSocket 连接校验 session、Origin 和 CSRF。
+管理页 URL 包含一次性 fragment token。页面通过 exchange 获取 HttpOnly、SameSite session 后清除 fragment；后续状态请求和 WebSocket 连接校验 session、Origin 和 CSRF。session 按空闲过期：每次通过校验的请求把期限延长到 8 小时后，打开中的页面因周期刷新保持有效；cookie 不设固定 MaxAge，期限只由 daemon 判定。session 只在内存中，daemon 重启后全部失效；换取新 session 时清理已过期 session。
 
 ## State and persistence
 
@@ -66,7 +66,8 @@ daemon PID、启动时间、管理端口、一次性 token、session、托盘状
 ## Verification
 
 - daemon 单例、start/status/stop/force-stop 测试。
-- 管理页 token exchange、Origin/CSRF 和过期 session 测试。
+- 管理页 token exchange、Origin/CSRF、空闲过期与使用中续期 session 测试（`internal/daemon/admin_session_test.go`）。
+- 人工：管理页 session 失效后只出现一次提示且停止刷新；Relay 恢复连接后连接失败提示自动撤回。
 - autostart 注册表读写（测试专用值名）、`daemon start --background` 参数解析、`agentSnapshots` 与 Claude Code 未启用原因测试。
 - 人工：登录后任务管理器只出现 `work-anywhere.exe`；管理页切换自启动后 Run 键同步增删。
 - Bridge 断开后 daemon/App Server 保持；正常退出后 Job 子进程清理。
